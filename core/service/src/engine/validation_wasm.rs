@@ -410,6 +410,7 @@ fn ensure_requested_present(
 /// An entry for a scheme that was not requested is skipped, but does not cause a failure.
 /// Still, even if it was not requested, it still count towards the scheme set the preimage
 /// which is signed such that a verifier keeps working when a newer node signs under more schemes.
+#[allow(clippy::type_complexity)]
 fn requested_entries<'a>(
     list: &'a [TypedSignature],
     requested: &[SigningSchemeType],
@@ -978,8 +979,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, NodeSigningIdentity, PrivateSigKey,
-                PublicSigKey, gen_sig_keys, internal_sign,
+                NodeSigningIdentity, PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign,
             },
             signing::SigningSchemeType,
         },
@@ -997,9 +997,8 @@ mod tests {
 
     use super::{
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP,
-        Eip712VerificationParams, ExpectedSigner, ResponseSignatures, SignedPayloads,
-        UserDecTrustedValidationContext, UserDecryptionInvariants, user_decrypt_eip712_hash,
-        validate_user_decrypt_responses, verify_response_signatures,
+        Eip712VerificationParams, UserDecTrustedValidationContext, UserDecryptionInvariants,
+        validate_user_decrypt_responses,
     };
 
     /// Asking for no scheme at all is a rejection, whatever the response carries.
@@ -1047,153 +1046,6 @@ mod tests {
             eip712_domain,
         )?
         .external_signature)
-    }
-
-    #[test]
-    fn test_verify_response_signatures_external_user_decryption() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
-        let (vk1, _sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
-        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
-        let kms_addrs = pks
-            .iter()
-            .map(|(i, pk)| (*i, pk.address()))
-            .collect::<HashMap<u32, alloy_primitives::Address>>();
-
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
-        let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
-
-        let ciphertext_handle = vec![5, 6, 7, 8];
-
-        let mut enc_key_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(
-            &eph_client_pk,
-            &mut enc_key_buf,
-            crate::consts::SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-
-        let domain = dummy_domain();
-        let extra_data = vec![1, 2, 3, 4];
-        let request = ParsedUserDecryptionRequest::new(
-            None, // No signature is needed
-            client_vk.address(),
-            enc_key_buf,
-            vec![CiphertextHandle::new(ciphertext_handle.clone())],
-            domain.verifying_contract.unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1],
-            extra_data,
-        );
-
-        let payload = UserDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-            digest: vec![1, 2, 3, 4],
-            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                fhe_type: tfhe::FheTypes::Uint4 as i32,
-                signcrypted_ciphertext: vec![1, 2, 3, 4],
-                external_handle: ciphertext_handle.clone(),
-                packing_factor: 1,
-            }],
-            party_id: 1,
-            degree: 1,
-        };
-        let external_sig = compute_external_user_decrypt_signature(
-            &sk0,
-            &payload,
-            &domain,
-            request.enc_key(),
-            request.extra_data(),
-        )
-        .unwrap();
-
-        let verify = |external: &[u8],
-                      response: &UserDecryptionResponsePayload,
-                      eip712_domain: &Eip712Domain| {
-            let response_bytes = bc2wrap::serialize(response).unwrap();
-            verify_response_signatures(
-                &ResponseSignatures {
-                    internal: &[],
-                    external,
-                    list: &[],
-                },
-                &SignedPayloads {
-                    dsep: &DSEP_USER_DECRYPTION,
-                    internal_bytes: &response_bytes,
-                    payload: &super::user_dec_payload(&response_bytes, request.extra_data()),
-                    eip712_hash: user_decrypt_eip712_hash(response, &request, eip712_domain)
-                        .unwrap(),
-                },
-                request.signing_schemes(),
-                &ExpectedSigner::Known {
-                    party_id: 1,
-                    address: kms_addrs[&1],
-                    verf_key: &pks[&1],
-                },
-                &HashMap::new(),
-            )
-        };
-
-        // incorrect external signature length
-        {
-            assert!(
-                verify(&external_sig[0..64], &payload, &domain)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
-            );
-        }
-
-        // bad signature due to bad signing key
-        {
-            let (_vk_bad, sk_bad) = gen_sig_keys(&mut rng);
-            let bad_external_sig = compute_external_user_decrypt_signature(
-                &sk_bad,
-                &payload,
-                &domain,
-                request.enc_key(),
-                request.extra_data(),
-            )
-            .unwrap();
-            assert!(verify(&bad_external_sig, &payload, &domain).is_err());
-        }
-
-        // bad signature due to bad domain
-        {
-            let bad_domain = alloy_sol_types::eip712_domain!(
-                name: "Authorization token",
-                version: "1",
-                chain_id: 1234, // incorrect chain ID
-                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-            );
-            assert!(verify(&external_sig, &payload, &bad_domain).is_err());
-        }
-
-        // check that we detect the error if payload is modified
-        {
-            let mut bad_payload = payload.clone();
-            bad_payload.party_id = 2; // modify ID
-            assert!(
-                verify(&external_sig, &bad_payload, &domain)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("an ECDSA signature of party 1 recovered to")
-            );
-        }
-
-        // happy path
-        {
-            assert_eq!(
-                verify(&external_sig, &payload, &domain).unwrap(),
-                (1, kms_addrs[&1])
-            );
-        }
     }
 
     #[test]
@@ -1274,27 +1126,6 @@ mod tests {
         // done here — they are a single `UserDecryptionInvariants` equality in
         // `classify_user_decrypt_response`, exercised via `test_validate_user_decrypt_responses`.
 
-        // no signatures are provided, so the requested ECDSA is left unverified
-        {
-            let params = Eip712VerificationParams {
-                response_external_signature: &[],
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &dummy_domain,
-            };
-            assert!(
-                authenticate_user_decrypt_and_check_meta_data(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &[],
-                    &[],
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains("carries no verified Ecdsa256k1 signature")
-            );
-        }
-
         // if the ID is changed to something that does not exist, return error
         {
             let mut other_resp = pivot_resp.clone();
@@ -1341,7 +1172,7 @@ mod tests {
             );
         }
 
-        // Signature failures are covered by `test_verify_response_signatures_external_user_decryption`.
+        // The response has to echo the request's extra data.
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature_buf = internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
@@ -1381,6 +1212,54 @@ mod tests {
                 &params,
             )
             .unwrap();
+        }
+
+        // The EIP-712 message covers the whole payload and is bound to the domain, so the
+        // same external signature fails for a changed payload or under another domain.
+        {
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
+            let changed = UserDecryptionResponsePayload {
+                degree: 2,
+                ..pivot_resp.clone()
+            };
+            let err = authenticate_user_decrypt_and_check_meta_data(
+                &trusted_ctx,
+                &changed,
+                &[],
+                &[],
+                &params,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("an ECDSA signature of party 1 recovered to"),
+                "{err}"
+            );
+
+            let other_domain = alloy_sol_types::eip712_domain!(
+                name: "Authorization token",
+                version: "1",
+                chain_id: 1234, // incorrect chain ID
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let params = Eip712VerificationParams {
+                trusted_eip712_domain: &other_domain,
+                ..params
+            };
+            assert!(
+                authenticate_user_decrypt_and_check_meta_data(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &[],
+                    &[],
+                    &params,
+                )
+                .is_err()
+            );
         }
 
         // The internal signature alone is not enough: a domain is always available for user
