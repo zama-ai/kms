@@ -324,6 +324,7 @@ pub struct FailingRamStorage {
     available_epoch_writes: Option<usize>,
     corrupt_epoch_writes: bool,
     skip_epoch_writes: bool,
+    fail_data_exists: bool,
     inner: RamStorage,
 }
 
@@ -335,6 +336,7 @@ impl FailingRamStorage {
             available_epoch_writes: None,
             corrupt_epoch_writes: false,
             skip_epoch_writes: false,
+            fail_data_exists: false,
             inner: RamStorage::new(),
         }
     }
@@ -362,6 +364,13 @@ impl FailingRamStorage {
         self.skip_epoch_writes = skip_epoch_writes
     }
 
+    /// When set, [`StorageReader::data_exists`] and [`Storage::store_bytes`] return an error, as
+    /// a backend does when its existence query fails for a reason other than a missing entry.
+    /// The real backends run that query inside `store_bytes` before they write.
+    pub fn set_fail_data_exists(&mut self, fail_data_exists: bool) {
+        self.fail_data_exists = fail_data_exists
+    }
+
     /// Consumes one epoch-write budget unit, or returns an error if the budget is exhausted.
     /// A budget of `None` is unlimited and consumes nothing.
     fn consume_epoch_write(&mut self) -> anyhow::Result<()> {
@@ -378,6 +387,9 @@ impl FailingRamStorage {
 #[cfg(test)]
 impl StorageReader for FailingRamStorage {
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        if self.fail_data_exists {
+            anyhow::bail!("existence check failed!")
+        }
         self.inner.data_exists(data_id, data_type).await
     }
 
@@ -424,6 +436,9 @@ impl Storage for FailingRamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
+        if self.fail_data_exists {
+            anyhow::bail!("existence check failed!")
+        }
         self.inner.store_bytes(bytes, data_id, data_type).await
     }
 

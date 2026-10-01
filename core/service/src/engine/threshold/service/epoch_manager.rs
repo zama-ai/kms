@@ -896,7 +896,7 @@ impl<
             );
         }
 
-        // Store the public material fetched from peers only now, so that the early returns above
+        // Store the public material fetched from peers after all early returns, so that they
         // leave nothing behind.
         let pub_storage = crypto_storage.inner.get_public_storage();
         let (created_public, public_res) = {
@@ -3559,8 +3559,9 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    /// A failed reshare deletes the public material it stored from peers, but keeps the public
-    /// material that existed before, since that may belong to other epochs of the same key.
+    /// A failed reshare deletes the public key material and the CRS it stored from peers, but
+    /// keeps the public material that existed before, since that may belong to other epochs of
+    /// the same key.
     #[tokio::test]
     async fn test_failed_reshare_deletes_public_bytes_fetched_from_peers() {
         let mut rng = AesRng::seed_from_u64(50);
@@ -3570,7 +3571,12 @@ pub(crate) mod tests {
         let new_epoch_id = EpochId::new_random(&mut rng);
         let key_id = derive_request_id("fetched_key_failed").unwrap();
         let preproc_id = derive_request_id("fetched_key_failed_preproc").unwrap();
+        let crs_id = derive_request_id("fetched_crs_failed").unwrap();
         let params = crate::consts::TEST_PARAM;
+        let crs_config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(crs_config, 256).unwrap();
 
         store_public_bytes(
             crypto_storage,
@@ -3619,7 +3625,10 @@ pub(crate) mod tests {
                     (PubDataType::CompressedXofKeySet, vec![1; 32]),
                     (PubDataType::PublicKey, vec![2; 32]),
                 ]),
-                vec![],
+                vec![VerifiedCrsInfo {
+                    crs_id,
+                    crs_digest: vec![3; 32],
+                }],
             ),
             vec![VerifiedPublicMaterial::from_peer(
                 VerifiedFheKeys::Compressed(compressed_keyset),
@@ -3633,7 +3642,7 @@ pub(crate) mod tests {
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![],
+            vec![(crs, Some(b"crs".to_vec()))],
         )
         .await
         .unwrap_err();
@@ -3651,6 +3660,13 @@ pub(crate) mod tests {
                 .unwrap(),
             "the compressed keyset stored from peers must be rolled back"
         );
+        assert!(
+            !guard
+                .data_exists(&crs_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap(),
+            "the CRS stored from peers must be rolled back"
+        );
         assert_eq!(
             guard
                 .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
@@ -3658,6 +3674,106 @@ pub(crate) mod tests {
                 .unwrap(),
             b"public key",
             "the public key that existed before must be kept"
+        );
+    }
+
+    /// If an existing public artifact differs from the bytes fetched from peers, the reshare
+    /// fails before it writes any private material, and deletes the public material it already
+    /// stored from peers.
+    #[tokio::test]
+    async fn test_reshare_rejects_existing_public_bytes_that_differ_from_peers() {
+        let mut rng = AesRng::seed_from_u64(51);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_mismatch").unwrap();
+        let preproc_id = derive_request_id("fetched_key_mismatch_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            b"other public key",
+        )
+        .await;
+
+        let (keyset, _compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::ServerKey, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::from_peer(
+                VerifiedFheKeys::Uncompressed(keyset.public_keys),
+                vec![
+                    (PubDataType::ServerKey, b"server key".to_vec()),
+                    (PubDataType::PublicKey, b"public key".to_vec()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("differs from the bytes fetched from a peer"),
+            "unexpected error: {err}"
+        );
+
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists(&key_id, &PubDataType::ServerKey.to_string())
+                    .await
+                    .unwrap(),
+                "the server key stored from peers must be rolled back"
+            );
+            assert_eq!(
+                guard
+                    .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                    .await
+                    .unwrap(),
+                b"other public key",
+                "the public key that existed before must be kept"
+            );
+        }
+        let private_storage = crypto_storage.get_private_storage();
+        let guard = private_storage.lock().await;
+        assert!(
+            !guard
+                .data_exists_at_epoch(
+                    &key_id,
+                    &new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap(),
+            "no private material may be written"
         );
     }
 }
