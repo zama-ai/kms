@@ -343,6 +343,30 @@ fn verify_epoch_info(
                         tonic::Code::InvalidArgument,
                     )
                 })?;
+            // Every party checks this, so a request that a set 2 party would reject in
+            // `get_verified_fhe_public_materials` does not start the protocol on a set 1 party.
+            let has_digest = |key_type: PubDataType| {
+                key_digests
+                    .get(&key_type)
+                    .is_some_and(|digest| !digest.is_empty())
+            };
+            if !has_digest(PubDataType::PublicKey)
+                || !(has_digest(PubDataType::ServerKey)
+                    || has_digest(PubDataType::CompressedXofKeySet))
+            {
+                return Err(MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*epoch_id_as_request_id),
+                    anyhow::anyhow!(
+                        "Key {key_id} needs a {} digest and a {} or {} digest, got {:?}",
+                        PubDataType::PublicKey,
+                        PubDataType::ServerKey,
+                        PubDataType::CompressedXofKeySet,
+                        key_digests.keys().collect::<Vec<_>>()
+                    ),
+                    tonic::Code::InvalidArgument,
+                ));
+            }
             Ok(VerifiedKeyInfo {
                 key_id,
                 preproc_id,
@@ -2784,6 +2808,21 @@ pub(crate) mod tests {
         );
     }
 
+    /// Key digests that pass [`verify_epoch_info`]: a compressed keyset digest and a public key
+    /// digest. Their values are not checked there.
+    fn test_key_digests() -> Vec<KeyDigest> {
+        vec![
+            KeyDigest {
+                key_type: PubDataType::CompressedXofKeySet.to_string(),
+                digest: vec![1; 32],
+            },
+            KeyDigest {
+                key_type: PubDataType::PublicKey.to_string(),
+                digest: vec![2; 32],
+            },
+        ]
+    }
+
     #[test]
     fn test_verify_epoch_info() {
         let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
@@ -2800,10 +2839,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2825,10 +2861,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2845,7 +2878,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2862,7 +2895,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2879,7 +2912,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2896,7 +2929,7 @@ pub(crate) mod tests {
                 key_id: Some(bad_req_id.clone()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2913,7 +2946,7 @@ pub(crate) mod tests {
                 key_id: None,
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2930,7 +2963,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(bad_req_id.clone()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2947,7 +2980,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2964,7 +2997,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
@@ -2981,7 +3014,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: None,
@@ -2989,6 +3022,48 @@ pub(crate) mod tests {
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Every party checks the key digests, so a request without them is rejected before the
+        // protocol starts: each key needs a public key digest and a server key or compressed
+        // keyset digest, and an empty digest counts as missing.
+        let previous_epoch_with_digests = |key_digests| PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests,
+            }],
+            crs_info: vec![],
+        };
+        let key_digest = |key_type: PubDataType, digest: Vec<u8>| KeyDigest {
+            key_type: key_type.to_string(),
+            digest,
+        };
+        verify_epoch_info(
+            &new_epoch_id,
+            previous_epoch_with_digests(vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ]),
+        )
+        .unwrap();
+        for key_digests in [
+            vec![],
+            vec![key_digest(PubDataType::PublicKey, vec![2; 32])],
+            vec![key_digest(PubDataType::CompressedXofKeySet, vec![1; 32])],
+            vec![
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![]),
+            ],
+        ] {
+            let err = verify_epoch_info(&new_epoch_id, previous_epoch_with_digests(key_digests))
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+            let msg = err.internal_err().to_string();
+            assert!(msg.contains("digest"), "unexpected error: {msg}");
+        }
     }
 
     /// Builds key material whose metadata records `preproc_id`. Cheap enough for a unit test
@@ -3227,7 +3302,7 @@ pub(crate) mod tests {
                         // Observe the use of wrong preproc_id here
                         preproc_id: Some(wrong_preproc_id.into()),
                         key_parameters: FheParameter::Test as i32,
-                        key_digests: vec![],
+                        key_digests: test_key_digests(),
                     }],
                     crs_info: vec![],
                 }),
