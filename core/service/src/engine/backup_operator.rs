@@ -2,7 +2,7 @@ use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
-use crate::consts::DEFAULT_EPOCH_ID;
+use crate::consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID};
 use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
@@ -50,7 +50,7 @@ use kms_grpc::{
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
-    rpc_types::PrivDataType,
+    rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics_names::{
     OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_FETCH_PK, OP_RESTORE_FROM_BACKUP,
@@ -780,7 +780,7 @@ fn backup_verf_keys_for(
 /// rather than at recovery. Like a key read from public storage, the set is only as good as the
 /// operator's comparison of it against the gateway and their own records; the server logs every
 /// key at boot for that purpose.
-pub async fn operator_backup_keys_from_vault(vault: &Vault) -> anyhow::Result<VerfKeySet> {
+async fn operator_backup_keys_from_vault(vault: &Vault) -> anyhow::Result<VerfKeySet> {
     let materials = read_all_recovery_material(&vault.storage).await?;
     let mut sets: Vec<&VerfKeySet> = Vec::new();
     for (id, material) in materials.iter() {
@@ -802,6 +802,41 @@ pub async fn operator_backup_keys_from_vault(vault: &Vault) -> anyhow::Result<Ve
             "The recovery material in the backup vault names {} operator key sets",
             sets.len()
         ),
+    }
+}
+
+/// The ECDSA verification key a node in recovery mode runs with.
+///
+/// Public storage may have been lost along with private storage, so when it no longer holds the
+/// key, the key is taken from the recovery material in `backup_vault`, which also names the
+/// operator's keys, signed under them. Recovery therefore only needs a backup vault holding
+/// material from a single operator key set. Every key taken from there is logged, to be checked
+/// by hand.
+pub async fn recovery_mode_verf_key<S: StorageReader>(
+    public_storage: &S,
+    backup_vault: Option<&Vault>,
+) -> anyhow::Result<PublicSigKey> {
+    match public_storage
+        .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+        .await
+    {
+        Ok(verf_key) => Ok(verf_key),
+        Err(e) => {
+            tracing::warn!(
+                "No verification key in public storage ({e}); taking the backup verification \
+                 keys from the recovery material in the backup vault"
+            );
+            let vault = backup_vault.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No verification key in public storage and no backup vault to take it from"
+                )
+            })?;
+            let verf_keys = operator_backup_keys_from_vault(vault).await?;
+            for fingerprint in verf_keys.all_fingerprints() {
+                tracing::warn!("VALIDATE THIS VERIFICATION KEY BEFORE PROCEEDING! {fingerprint}");
+            }
+            Ok(verf_keys.ecdsa()?.clone())
+        }
     }
 }
 
@@ -1635,44 +1670,83 @@ mod tests {
         assert_eq!(selected, second);
     }
 
-    /// Material another operator signed is refused as a bad request, not as the node's own error.
+    /// The material validates under the operator's own keys, whether the node holds its signing
+    /// identity or, in recovery mode, only its ECDSA key. In recovery mode the other keys come from
+    /// the material, which reduces security to purely ECDSA. Another operator's keys are refused
+    /// as a bad request, not as the node's own error.
     #[tokio::test]
-    async fn recovery_material_signed_by_another_operator_is_rejected() {
+    async fn recovery_material_validates_only_under_the_operators_keys() {
         let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
         let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
         let id = RequestId::from_bytes([1; 32]);
         let vault = uninstalled_vault();
         store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
-
         let (_, material) = recovery_context(&vault, None, Some(id)).await.unwrap();
-        let foreign =
-            validated_backup_verf_keys(&material, &id, Some(&other_sk), &other_sk.verf_key())
-                .unwrap_err();
-        assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
+        let own_keys = VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap();
+
+        // (case, the node's signing identity if it holds one, whose ECDSA key it has, accepted)
+        let cases = [
+            ("own identity", Some(&sk), &sk, true),
+            ("own ECDSA key alone", None, &sk, true),
+            ("another identity", Some(&other_sk), &other_sk, false),
+            ("another ECDSA key alone", None, &other_sk, false),
+        ];
+        for (case, identity, ecdsa_owner, accepted) in cases {
+            let result =
+                validated_backup_verf_keys(&material, &id, identity, &ecdsa_owner.verf_key());
+            if accepted {
+                assert_eq!(result.expect(case), own_keys, "{case}");
+            } else {
+                assert_eq!(
+                    result.expect_err(case).code(),
+                    tonic::Code::InvalidArgument,
+                    "{case}"
+                );
+            }
+        }
     }
 
-    /// A node in recovery mode has only its ECDSA key, and may have lost the public storage its
-    /// other keys were published to. It still recovers, taking them from the material, but this
-    /// reduces security to purely ECDSA.
+    /// A node in recovery mode runs with the ECDSA key from public storage, and takes it from the
+    /// recovery material in its backup vault only once public storage no longer holds it.
     #[tokio::test]
-    async fn recovery_mode_validates_with_the_ecdsa_key_alone() {
+    async fn recovery_mode_verf_key_falls_back_to_the_backup_vault() {
         let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
-        let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
-        let id = RequestId::from_bytes([1; 32]);
-        let vault = uninstalled_vault();
-        store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
+        let published = seeded_identity(&mut AesRng::seed_from_u64(1)).verf_key();
+        let mut vault = make_unencrypted_vault();
+        store_dummy_recovery_material(&mut vault.storage, &RequestId::from_bytes([1; 32]), &sk)
+            .await;
 
-        let (_, material) = recovery_context(&vault, None, Some(id)).await.unwrap();
+        // Public storage still holds a key, so that key is used, whatever the vault names.
+        let mut public_storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut public_storage,
+            &SIGNING_KEY_ID,
+            &published,
+            &PubDataType::VerfKey.to_string(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            validated_backup_verf_keys(&material, &id, None, &sk.verf_key())
-                .expect("the ECDSA key alone must be enough to recover"),
-            VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap(),
-            "recovery mode must use the keys the node published"
+            recovery_mode_verf_key(&public_storage, Some(&vault))
+                .await
+                .unwrap(),
+            published
         );
 
-        let foreign =
-            validated_backup_verf_keys(&material, &id, None, &other_sk.verf_key()).unwrap_err();
-        assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
+        // Public storage is lost, so the key comes from the recovery material.
+        let lost = RamStorage::new();
+        assert_eq!(
+            recovery_mode_verf_key(&lost, Some(&vault)).await.unwrap(),
+            sk.verf_key()
+        );
+
+        // With no backup vault, or one holding no recovery material, there is nothing to boot with.
+        assert!(recovery_mode_verf_key(&lost, None).await.is_err());
+        assert!(
+            recovery_mode_verf_key(&lost, Some(&make_unencrypted_vault()))
+                .await
+                .is_err()
+        );
     }
 
     /// A node that lost its public storage takes its backup key set from the recovery material,

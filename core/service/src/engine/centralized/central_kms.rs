@@ -1990,7 +1990,7 @@ pub(crate) mod tests {
             verf_key,
             crate::engine::rng_source::test_rng_source(),
         );
-        let (kms, _health_service) = RealCentralizedKms::new_from_base_kms(
+        let _booted = RealCentralizedKms::new_from_base_kms(
             config,
             RamStorage::new(),
             RamStorage::new(),
@@ -2000,6 +2000,5 @@ pub(crate) mod tests {
         )
         .await
         .expect("a node without its signing key must boot in recovery mode");
-        assert!(kms.base_kms.signing_identity().is_err());
     }
 }

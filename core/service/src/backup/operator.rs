@@ -999,7 +999,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme},
             signatures::{
-                gen_sig_keys,
+                SigningSchemeType, gen_sig_keys,
                 test_support::{seeded_identity, seeded_verf_key_set},
             },
         },
@@ -1081,11 +1081,39 @@ mod tests {
         )
         .unwrap();
         let verf_keys = VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
-        rvm.validate(&verf_keys).unwrap();
-
-        // Another operator's keys do not verify it.
         let other = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
-        assert!(rvm.validate(&other).is_err());
+        let mut stripped = rvm.clone();
+        stripped.signatures.pop();
+
+        // (case, material, keys to validate with, accepted)
+        let cases = [
+            ("the operator's keys", &rvm, verf_keys.clone(), true),
+            (
+                "a superset of the backup schemes",
+                &rvm,
+                VerfKeySet::from_identity(
+                    &identity,
+                    &[
+                        SigningSchemeType::Ecdsa256k1,
+                        SigningSchemeType::Ed25519,
+                        SigningSchemeType::MlDsa87,
+                    ],
+                )
+                .unwrap(),
+                true,
+            ),
+            ("another operator's keys", &rvm, other.clone(), false),
+            (
+                "a set below the backup schemes, with the right ECDSA key",
+                &rvm,
+                VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap(),
+                false,
+            ),
+            ("a stripped signature", &stripped, verf_keys.clone(), false),
+        ];
+        for (case, material, keys, accepted) in cases {
+            assert_eq!(material.validate(&keys).is_ok(), accepted, "{case}");
+        }
 
         // It carries the operator's keys, so a node that knows only its ECDSA key can recover the
         // rest from it, but only when that key is the one the material names.
@@ -1099,29 +1127,6 @@ mod tests {
             rvm.recover_verf_keys_using_ecdsa(other.ecdsa().unwrap())
                 .is_err()
         );
-
-        // Nor does a set below the backup floor, even one holding the right ECDSA key.
-        use crate::cryptography::signatures::SigningSchemeType;
-        let ecdsa_only_keys =
-            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(rvm.validate(&ecdsa_only_keys).is_err());
-
-        // A published superset of the backup schemes still verifies it.
-        let superset = VerfKeySet::from_identity(
-            &identity,
-            &[
-                SigningSchemeType::Ecdsa256k1,
-                SigningSchemeType::Ed25519,
-                SigningSchemeType::MlDsa87,
-            ],
-        )
-        .unwrap();
-        rvm.validate(&superset).unwrap();
-
-        // Nor does the material verify once a signature is stripped.
-        let mut stripped = rvm.clone();
-        stripped.signatures.pop();
-        assert!(stripped.validate(&verf_keys).is_err());
     }
 
     fn valid_custodian_msg(
