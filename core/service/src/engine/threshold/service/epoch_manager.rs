@@ -372,6 +372,10 @@ pub struct RealThresholdEpochManager<
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
+    /// Held by a reshare from its first storage write through its rollback, so that a rollback
+    /// cannot delete public material that a concurrent reshare found present and kept.
+    /// See [`Self::store_reshared_keys`].
+    pub(crate) reshare_storage_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) _init: PhantomData<Init>,
     pub(crate) _reshare: PhantomData<Reshare>,
 }
@@ -745,10 +749,14 @@ impl<
     /// instead (see [`VerifiedPublicMaterial::into_parts`] and the optional raw bytes next to each
     /// CRS) is stored as-is next to the private material, and deleted again if storing fails;
     /// public material that existed before is never deleted.
+    ///
+    /// `reshare_storage_lock` is held from the first storage write to the return, so the
+    /// storage and rollback of concurrent reshares do not interleave.
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
+        reshare_storage_lock: &tokio::sync::Mutex<()>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
@@ -896,6 +904,10 @@ impl<
             );
         }
 
+        // Without this lock, a concurrent reshare of the same key could find the public material
+        // stored below, keep it as existing, and lose it when this reshare rolls back.
+        let _reshare_storage_guard = reshare_storage_lock.lock().await;
+
         // Store the public material fetched from peers after all early returns, so that they
         // leave nothing behind.
         let pub_storage = crypto_storage.inner.get_public_storage();
@@ -1006,6 +1018,7 @@ impl<
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
+        let reshare_storage_lock = Arc::clone(&self.reshare_storage_lock);
 
         let task = async move {
             let (mut session_z128, mut session_z64, session_online) =
@@ -1097,6 +1110,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &session_maker,
+                &reshare_storage_lock,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -1162,6 +1176,7 @@ impl<
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
+        let reshare_storage_lock = Arc::clone(&self.reshare_storage_lock);
 
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
@@ -1275,6 +1290,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &session_maker,
+                &reshare_storage_lock,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -2055,6 +2071,7 @@ pub(crate) mod tests {
                 reshare_pubinfo_meta_store: MetaStore::new(10, 10),
                 tracker: Arc::new(TaskTracker::new()),
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
+                reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
                 _reshare: PhantomData,
             }
         }
@@ -3038,6 +3055,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3267,6 +3285,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3357,6 +3376,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3418,6 +3438,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3514,6 +3535,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3613,6 +3635,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3710,6 +3733,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3774,6 +3798,94 @@ pub(crate) mod tests {
                 .await
                 .unwrap(),
             "no private material may be written"
+        );
+    }
+
+    /// The storage of a reshare waits for [`RealThresholdEpochManager::reshare_storage_lock`],
+    /// so that it cannot interleave with the storage and rollback of a concurrent reshare.
+    #[tokio::test]
+    async fn test_reshare_storage_waits_for_reshare_storage_lock() {
+        let mut rng = AesRng::seed_from_u64(52);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_locked").unwrap();
+        let preproc_id = derive_request_id("fetched_key_locked_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        let verified_previous_epoch = make_verified_previous_epoch(
+            *DEFAULT_EPOCH_ID,
+            &key_id,
+            &preproc_id,
+            params,
+            HashMap::from([
+                (PubDataType::CompressedXofKeySet, vec![1; 32]),
+                (PubDataType::PublicKey, vec![2; 32]),
+            ]),
+            vec![],
+        );
+
+        let domain = dummy_domain();
+
+        let concurrent_reshare_guard = epoch_manager.reshare_storage_lock.lock().await;
+        let mut store = Box::pin(RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &verified_previous_epoch,
+            vec![VerifiedPublicMaterial::from_peer(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (
+                        PubDataType::CompressedXofKeySet,
+                        b"compressed keyset".to_vec(),
+                    ),
+                    (PubDataType::PublicKey, b"public key".to_vec()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &domain,
+            vec![],
+        ));
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut store)
+                .await
+                .is_err(),
+            "the reshare must wait while another reshare holds the lock"
+        );
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                    .await
+                    .unwrap(),
+                "nothing may be stored while another reshare holds the lock"
+            );
+        }
+
+        drop(concurrent_reshare_guard);
+        store.await.unwrap();
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let guard = public_storage.lock().await;
+        assert!(
+            guard
+                .data_exists(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                .await
+                .unwrap()
         );
     }
 }
