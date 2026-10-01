@@ -158,7 +158,7 @@ impl std::fmt::Debug for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
             .field("custodian_keys", &self.custodian_keys)
-            .field("signing_key", &"ommitted")
+            .field("signing_key", &"omitted")
             .field("verification_key", &self.verification_key)
             .field("threshold", &self.threshold)
             .finish()
@@ -615,7 +615,7 @@ impl Operator {
                 shares,
             };
             // The custodian's identity is the digest of its keys for the backup signing schemes;
-            // see `Custodian::verification_key`.
+            // see `Custodian::verification_key_set`.
             let custodian_verf_id = custodian_verf_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
                 BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
             })?;
@@ -1009,6 +1009,70 @@ mod tests {
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
+
+    /// A wire recovery request naming `operator_verf_key` and carrying one backup ciphertext.
+    fn recovery_request_naming(
+        rng: &mut AesRng,
+        operator_verf_key: &VerfKeySet,
+    ) -> RecoveryRequest {
+        let (_dec_key, enc_key) = {
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, rng);
+            encryption.keygen().unwrap()
+        };
+        let mut ephem_op_enc_key = Vec::new();
+        safe_serialize(&enc_key, &mut ephem_op_enc_key, SAFE_SER_SIZE_LIMIT).unwrap();
+        let mut verf_key_bytes = Vec::new();
+        safe_serialize(operator_verf_key, &mut verf_key_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
+        let ct = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
+        };
+        RecoveryRequest {
+            ephem_op_enc_key,
+            operator_verf_key: verf_key_bytes,
+            cts: HashMap::from([(1, OperatorBackupOutput::try_from(ct).unwrap())]),
+        }
+    }
+
+    #[test]
+    fn recovery_request_with_backup_schemes_is_accepted() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+        let request: InternalRecoveryRequest = recovery_request_naming(&mut rng, &operator_keys)
+            .try_into()
+            .expect("a request naming every backup scheme must be accepted");
+        assert_eq!(request.operator_verf_key(), &operator_keys);
+        assert_eq!(request.signcryptions().len(), 1);
+    }
+
+    /// The operator's key set in a recovery request comes from outside, so one that does not
+    /// cover every backup scheme is refused rather than used to verify the backup.
+    #[test]
+    fn recovery_request_with_weaker_operator_keys_is_rejected() {
+        let mut rng = AesRng::seed_from_u64(8);
+        let (ecdsa, _) = gen_sig_keys(&mut rng);
+        let ecdsa_only = VerfKeySet::ecdsa_only(ecdsa);
+        let without_mldsa87 = seeded_verf_key_set(
+            &mut rng,
+            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+        );
+        for weak in [ecdsa_only, without_mldsa87] {
+            let request = recovery_request_naming(&mut rng, &weak);
+            assert!(
+                InternalRecoveryRequest::try_from(request).is_err(),
+                "a request naming only {:?} was accepted",
+                weak.schemes()
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_request_with_malformed_operator_keys_is_rejected() {
+        let mut rng = AesRng::seed_from_u64(9);
+        let operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+        let mut request = recovery_request_naming(&mut rng, &operator_keys);
+        request.operator_verf_key = vec![0; 8];
+        assert!(InternalRecoveryRequest::try_from(request).is_err());
+    }
 
     #[test]
     fn validate_recovery_validation_material() {

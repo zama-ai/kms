@@ -2,12 +2,13 @@ use crate::backup::BackupCiphertext;
 use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
-use crate::client::test_tools::ServerHandle;
+use crate::client::test_tools::{ServerHandle, custodian_backup_vault, setup_recovery_mode};
 use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
 use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::cryptography::signatures::VerfKeySet;
 use crate::engine::context::{ContextInfo, SchemeDigests};
@@ -16,6 +17,7 @@ use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
+use crate::util::key_setup::{delete_all_verf_material, ensure_all_verf_material};
 use crate::vault::storage::crypto_material::data_exists_at_epoch;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -114,6 +116,27 @@ impl CentralizedBackupTestEnv {
             .from_path(self.material_dir.path())
             .await
             .unwrap()
+    }
+
+    /// Spawn a KMS server in recovery mode on this env's material directory; see
+    /// [`setup_recovery_mode`]. The wrapper must outlive the returned server.
+    ///
+    /// Returns the server, its client and the verification key the server booted under.
+    async fn spawn_recovery_mode_server(
+        &self,
+    ) -> (
+        ServerHandle,
+        CoreServiceEndpointClient<Channel>,
+        PublicSigKey,
+    ) {
+        let path = self.material_dir.path();
+        setup_recovery_mode(
+            FileStorage::new(Some(path), StorageType::PUB, None).unwrap(),
+            FileStorage::new(Some(path), StorageType::PRIV, None).unwrap(),
+            custodian_backup_vault(path, None).await,
+            None,
+        )
+        .await
     }
 
     /// Construct a fresh internal Client backed by this env's material dir.
@@ -498,6 +521,166 @@ async fn test_recovery_names_the_context_after_rotation_central() {
 
     kms_server.assert_shutdown().await;
     drop(kms_client);
+    let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        &key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        env.test_path(),
+    )
+    .await;
+}
+
+/// A node that lost its signing key, its root signing seed, its context anchor and every published
+/// verification key boots in recovery mode under the ECDSA key named in its backup vault. Custodian
+/// recovery restores the signing material and the anchor. After the operator republishes the
+/// verification keys, the node boots normally and serves a decryption.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recovery_without_signing_material_central() {
+    use crate::vault::storage::crypto_material::{
+        get_core_root_signing_seed, get_core_signing_identity,
+    };
+    use crate::vault::storage::{delete_at_request_id, read_custodian_context_anchor};
+
+    let (amount_custodians, threshold) = (3, 1);
+    let mut env = CentralizedBackupTestEnv::new(
+        "recovery_without_signing_material_central",
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let key_id: RequestId =
+        derive_request_id("recovery_without_signing_material_central_key").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    run_key_gen_centralized(
+        env.kms_client.as_mut().unwrap(),
+        env.internal_client.as_ref().unwrap(),
+        &key_id,
+        &epoch_id,
+        FheParameter::Test,
+        None,
+        None,
+        Some(env.material_dir.path()),
+    )
+    .await;
+    env.shutdown().await;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+
+    // Capture the signing material while the disk is intact.
+    let mut priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
+    let mut pub_storage = FileStorage::new(env.test_path(), StorageType::PUB, None).unwrap();
+    let signing_key: PrivateSigKey = read_versioned_at_request_id(
+        &priv_storage,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    .unwrap();
+    let seed = get_core_root_signing_seed(&priv_storage).await.unwrap();
+    assert!(seed.is_some(), "custodian backup needs a root signing seed");
+    let verf_key: PublicSigKey = read_versioned_at_request_id(
+        &pub_storage,
+        &SIGNING_KEY_ID,
+        &PubDataType::VerfKey.to_string(),
+    )
+    .await
+    .unwrap();
+
+    // Lose the signing material, the anchor and every published verification key.
+    for (req_id, data_type) in [
+        (*SIGNING_KEY_ID, PrivDataType::SigningKey),
+        (*SIGNING_KEY_ID, PrivDataType::SigningSeed),
+        (env.req_new_cus, PrivDataType::CustodianContextAnchor),
+    ] {
+        delete_at_request_id(&mut priv_storage, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+    delete_all_verf_material(&mut pub_storage).await.unwrap();
+    assert_eq!(
+        get_core_root_signing_seed(&priv_storage).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        None
+    );
+
+    let (kms_server, mut kms_client, boot_verf_key) = env.spawn_recovery_mode_server().await;
+    assert_eq!(
+        boot_verf_key, verf_key,
+        "the backup vault must name the key the node published"
+    );
+
+    let mut rng = AesRng::seed_from_u64(13);
+    let recovery_req_resp = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+            custodian_context_id: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let cus_rec_req = emulate_custodian(
+        &mut rng,
+        recovery_req_resp,
+        env.req_new_cus,
+        env.mnemonics.clone(),
+    )
+    .await;
+    kms_client
+        .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
+        .await
+        .unwrap();
+    kms_client
+        .restore_from_backup(tonic::Request::new(Empty {}))
+        .await
+        .unwrap();
+
+    let recovered_signing_key: PrivateSigKey = read_versioned_at_request_id(
+        &priv_storage,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovered_signing_key, signing_key);
+    assert_eq!(
+        get_core_root_signing_seed(&priv_storage).await.unwrap(),
+        seed
+    );
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        Some(env.req_new_cus),
+        "recovery anchors the context it restored under"
+    );
+
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    // The operator republishes the verification keys from the restored identity.
+    let identity = get_core_signing_identity(&priv_storage).await.unwrap();
+    ensure_all_verf_material(&mut pub_storage, &identity)
+        .await
+        .unwrap();
+    let republished_verf_key: PublicSigKey = read_versioned_at_request_id(
+        &pub_storage,
+        &SIGNING_KEY_ID,
+        &PubDataType::VerfKey.to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(republished_verf_key, verf_key);
+
+    // The normal boot verifies the public material against the restored signing key, and the
+    // decryption response is signed with it.
     let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
     run_decryption_centralized(
