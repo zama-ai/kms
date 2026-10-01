@@ -52,11 +52,54 @@ pub struct ReleasePCRValues {
     pub pcr2: Vec<u8>,
 }
 
-pub type TrustRootValue = (
+/// The trust root of one MPC identity: the verifiers built from its CA certificate, the
+/// contexts that list the MPC identity, and the identity of the CA certificate.
+type TrustRootValue = (
     Arc<dyn ClientCertVerifier>,
     Arc<WebPkiServerVerifier>,
     HashSet<SessionId>,
+    CaIdentity,
 );
+
+/// The DER-encoded subject and subject public key info of a CA certificate.
+///
+/// Two CA certificates with the same subject and the same key belong to the same party, even if
+/// other fields such as the SANs differ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CaIdentity {
+    subject: Vec<u8>,
+    public_key: Vec<u8>,
+}
+
+impl CaIdentity {
+    fn from_pem(ca_cert: &Pem) -> anyhow::Result<Self> {
+        let cert = ca_cert
+            .parse_x509()
+            .map_err(|e| anyhow!("Could not parse X509 structure: {e}"))?;
+        Ok(Self {
+            subject: cert.subject().as_raw().to_vec(),
+            public_key: cert.public_key().raw.to_vec(),
+        })
+    }
+}
+
+/// Returns the MPC identities in `ca_certs` whose trust root in `trust_roots` comes from a CA
+/// certificate with another subject or another public key, in sorted order.
+fn conflicting_ca_certs(
+    trust_roots: &HashMap<MpcIdentity, TrustRootValue>,
+    ca_certs: &HashMap<MpcIdentity, Pem>,
+) -> anyhow::Result<Vec<MpcIdentity>> {
+    let mut conflicts = Vec::new();
+    for (mpc_identity, ca_cert) in ca_certs {
+        if let Some((_, _, _, trusted_ca)) = trust_roots.get(mpc_identity)
+            && *trusted_ca != CaIdentity::from_pem(ca_cert)?
+        {
+            conflicts.push(mpc_identity.clone());
+        }
+    }
+    conflicts.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(conflicts)
+}
 
 type UserDataVerifier = dyn Fn(ReleasePCRValues, Vec<u8>) -> anyhow::Result<bool> + Send + Sync;
 
@@ -77,10 +120,10 @@ struct Verifiers {
 /// multiple trust root sets configurable at runtime which is handy when working
 /// with multiple MPC contexts.
 ///
-/// The TLS certificates are expected to embed the context id in their serial
-/// number. Depending on the context id and the certificate subject name, this
-/// verifier will choose a verifier with just one appropriate CA certificate in
-/// the trust root store to actually verify the certificate.
+/// The verifier keeps one trust root per MPC identity, built from the CA
+/// certificate of that party, and chooses it by the subject name of the peer
+/// certificate. One MPC identity can belong to multiple contexts, and all of
+/// them must give it the same CA certificate (see [`Self::add_context`]).
 pub struct AttestedVerifier {
     root_hint_subjects: Vec<DistinguishedName>,
     supported_algs: WebPkiSupportedAlgorithms,
@@ -155,6 +198,31 @@ Crypto provider should exist at this point"
         })
     }
 
+    /// Returns the MPC identities in `ca_certs` that already have a trust root built from a CA
+    /// certificate with another subject or another public key, in sorted order.
+    ///
+    /// A party has one CA certificate, tied to its signing key. A different CA certificate for a
+    /// known MPC identity therefore belongs to another party, and [`Self::add_context`] rejects
+    /// it. This check changes nothing, so a caller can use it to build a detailed error first.
+    pub fn conflicting_ca_certs(
+        &self,
+        ca_certs: &HashMap<MpcIdentity, Pem>,
+    ) -> anyhow::Result<Vec<MpcIdentity>> {
+        let trust_roots = self
+            .trust_roots
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire read lock: {e}"))?;
+        conflicting_ca_certs(&trust_roots, ca_certs)
+    }
+
+    /// Adds the trust roots and the PCR values of the context `context_id`.
+    ///
+    /// An MPC identity without a trust root gets one from its CA certificate in `ca_certs`. An
+    /// MPC identity with a trust root keeps it, and `context_id` is added to its contexts.
+    ///
+    /// Returns an error, and changes no trust root, if a CA certificate in `ca_certs` has another
+    /// subject or another public key than the trust root of its MPC identity (see
+    /// [`Self::conflicting_ca_certs`]), or if a CA certificate cannot be parsed.
     pub fn add_context(
         &self,
         context_id: SessionId,
@@ -165,32 +233,52 @@ Crypto provider should exist at this point"
             .trust_roots
             .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
+        let conflicts = conflicting_ca_certs(&trust_roots, &ca_certs)?;
+        if !conflicts.is_empty() {
+            let names: Vec<_> = conflicts
+                .iter()
+                .map(|identity| identity.0.as_str())
+                .collect();
+            bail!(
+                "Context {context_id} gives the MPC identities [{}] a CA certificate with another subject or public key than their trust root",
+                names.join(", ")
+            );
+        }
+
+        // Build every new trust root before inserting any, so a failure changes nothing.
+        let mut known_identities = Vec::new();
+        let mut new_trust_roots = Vec::new();
         for (mpc_identity, ca_cert) in ca_certs {
-            match trust_roots.get_mut(&mpc_identity) {
-                Some((_, _, contexts)) => {
-                    if !contexts.insert(context_id) {
-                        tracing::warn!(
-                            "MPC identity {mpc_identity} is already present in context {context_id}"
-                        )
-                    }
-                }
-                None => {
-                    let mut roots = RootCertStore::empty();
-                    roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
-                    let roots = Arc::new(roots);
-                    let client_verifier = WebPkiClientVerifier::builder(roots.clone()).build()?;
-                    let server_verifier = WebPkiServerVerifier::builder(roots).build()?;
-                    trust_roots.insert(
-                        mpc_identity,
-                        (
-                            client_verifier,
-                            server_verifier,
-                            HashSet::from([context_id]),
-                        ),
-                    );
-                }
+            if trust_roots.contains_key(&mpc_identity) {
+                known_identities.push(mpc_identity);
+                continue;
+            }
+            let mut roots = RootCertStore::empty();
+            roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
+            let roots = Arc::new(roots);
+            let client_verifier = WebPkiClientVerifier::builder(roots.clone()).build()?;
+            let server_verifier = WebPkiServerVerifier::builder(roots).build()?;
+            let ca_identity = CaIdentity::from_pem(&ca_cert)?;
+            new_trust_roots.push((
+                mpc_identity,
+                (
+                    client_verifier,
+                    server_verifier,
+                    HashSet::from([context_id]),
+                    ca_identity,
+                ),
+            ));
+        }
+        for mpc_identity in known_identities {
+            if let Some((_, _, contexts, _)) = trust_roots.get_mut(&mpc_identity)
+                && !contexts.insert(context_id)
+            {
+                tracing::warn!(
+                    "MPC identity {mpc_identity} is already present in context {context_id}"
+                )
             }
         }
+        trust_roots.extend(new_trust_roots);
         if let Some(new_release_pcrs) = release_pcrs {
             let mut release_pcrs = self
                 .release_pcrs
@@ -210,7 +298,7 @@ Crypto provider should exist at this point"
             .trust_roots
             .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
-        trust_roots.retain(|_, (_, _, contexts)| {
+        trust_roots.retain(|_, (_, _, contexts, _)| {
             contexts.remove(&context_id);
             !contexts.is_empty()
         });
@@ -233,7 +321,7 @@ Crypto provider should exist at this point"
             .trust_roots
             .read()
             .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
-        let (client_verifier, server_verifier, contexts) = trust_roots
+        let (client_verifier, server_verifier, contexts, _) = trust_roots
             .get(&MpcIdentity(subject.clone()))
             .cloned()
             .ok_or_else(|| {
@@ -650,16 +738,98 @@ pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<Strin
     Ok(subject_str.to_string())
 }
 
-pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
-    cert_pems: I,
-) -> anyhow::Result<HashMap<MpcIdentity, Pem>> {
-    cert_pems
-        .map(|c| {
-            c.parse_x509()
-                .map_err(|e| anyhow::anyhow!("Could not parse X509 structure: {e}"))
-                .and_then(|ref x509_cert| {
-                    extract_subject_from_cert(x509_cert).map(|s| (MpcIdentity(s), c.clone()))
-                })
-        })
-        .collect::<Result<HashMap<MpcIdentity, Pem>, _>>()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tls_certs::create_selfsigned_cert_from_keypair;
+    use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+
+    fn verifier() -> AttestedVerifier {
+        _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+        AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .unwrap()
+    }
+
+    /// The CA certificates of `nodes`, each a self-signed certificate for the MPC identity from
+    /// the key pair. With the flag set, the certificate also lists a wildcard SAN.
+    fn ca_certs(nodes: &[(&str, &KeyPair, bool)]) -> HashMap<MpcIdentity, Pem> {
+        let mut ca_certs = HashMap::new();
+        for (identity, keypair, wildcard) in nodes {
+            let (_, certificate, _) =
+                create_selfsigned_cert_from_keypair(identity, *wildcard, false, *keypair).unwrap();
+            let (_, pem) = x509_parser::pem::parse_x509_pem(certificate.pem().as_bytes()).unwrap();
+            ca_certs.insert(MpcIdentity(identity.to_string()), pem);
+        }
+        ca_certs
+    }
+
+    fn contexts_of(verifier: &AttestedVerifier, identity: &str) -> Option<HashSet<SessionId>> {
+        verifier
+            .trust_roots
+            .read()
+            .unwrap()
+            .get(&MpcIdentity(identity.to_string()))
+            .map(|(_, _, contexts, _)| contexts.clone())
+    }
+
+    /// Sunshine: a CA certificate issued again with the same key and subject is not a conflict,
+    /// and the second context joins the trust root.
+    #[test]
+    fn add_context_accepts_ca_reissued_with_same_key() {
+        let verifier = verifier();
+        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let first = ca_certs(&[("node-1.example.com", &keypair, false)]);
+        let reissued = ca_certs(&[("node-1.example.com", &keypair, true)]);
+        let (context_a, context_b) = (SessionId::from(1u128), SessionId::from(2u128));
+        verifier.add_context(context_a, first, None).unwrap();
+
+        assert!(verifier.conflicting_ca_certs(&reissued).unwrap().is_empty());
+        verifier.add_context(context_b, reissued, None).unwrap();
+        assert_eq!(
+            contexts_of(&verifier, "node-1.example.com"),
+            Some(HashSet::from([context_a, context_b]))
+        );
+    }
+
+    /// Negative: a CA certificate for another key is a conflict, and `add_context` rejects the
+    /// whole context without adding a trust root for its other MPC identities.
+    #[test]
+    fn add_context_rejects_other_ca_for_known_mpc_identity() {
+        let verifier = verifier();
+        let first_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let other_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let second_node_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let (context_a, context_b) = (SessionId::from(1u128), SessionId::from(2u128));
+        verifier
+            .add_context(
+                context_a,
+                ca_certs(&[("node-1.example.com", &first_key, false)]),
+                None,
+            )
+            .unwrap();
+        let conflicting = ca_certs(&[
+            ("node-1.example.com", &other_key, false),
+            ("node-2.example.com", &second_node_key, false),
+        ]);
+
+        assert_eq!(
+            verifier.conflicting_ca_certs(&conflicting).unwrap(),
+            vec![MpcIdentity("node-1.example.com".to_string())]
+        );
+        let err = verifier
+            .add_context(context_b, conflicting, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("node-1.example.com"), "{err}");
+        assert_eq!(
+            contexts_of(&verifier, "node-1.example.com"),
+            Some(HashSet::from([context_a]))
+        );
+        assert_eq!(contexts_of(&verifier, "node-2.example.com"), None);
+    }
 }

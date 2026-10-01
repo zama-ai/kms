@@ -50,6 +50,7 @@ use threshold_types::{
 };
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tonic::Code;
+use x509_parser::pem::Pem;
 
 struct Context {
     // I may not belong to all the contexts I am aware of
@@ -479,7 +480,6 @@ impl SessionMaker {
         info: &ContextInfo,
     ) -> anyhow::Result<()> {
         let mut role_assignment_map = HashMap::new();
-        let mut ca_certs_map = HashMap::new();
 
         let num_nodes = info.mpc_nodes.len();
         for node in &info.mpc_nodes {
@@ -518,29 +518,19 @@ impl SessionMaker {
                     info.context_id()
                 ));
             }
-
-            if let Some(ca_cert) = &node.ca_cert {
-                let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
-                    .map_err(|e| anyhow::anyhow!("x509 parsing error for party: {}", e))?
-                    .1;
-                ca_certs_map.insert(MpcIdentity(node.mpc_identity.clone()), ca_cert);
-            }
         }
+        let ca_certs_map = ca_certs_of(info)?;
 
         let role_assignment = RoleAssignment {
             inner: role_assignment_map,
         };
 
-        self.add_context(
-            *info.context_id(),
-            my_role,
-            role_assignment,
-            info.threshold as u8,
-        )
-        .await;
-
+        // Update the TLS verifier before the context map, so that a context the verifier
+        // rejects leaves no entry in the context map.
         match self.verifier.as_ref() {
             Some(verifier) => {
+                self.reject_ca_conflicts(verifier, info.context_id(), &ca_certs_map)
+                    .await?;
                 let context_id_as_session_id = info.context_id().derive_session_id()?;
                 let release_pcrs = if info.pcr_values.is_empty() {
                     tracing::warn!(
@@ -558,7 +548,77 @@ impl SessionMaker {
             _ => { /* do nothing */ }
         }
 
+        self.add_context(
+            *info.context_id(),
+            my_role,
+            role_assignment,
+            info.threshold as u8,
+        )
+        .await;
+
         Ok(())
+    }
+
+    /// Returns an error if `info` gives an MPC identity a CA certificate with another subject or
+    /// public key than the CA certificate that the TLS verifier trusts for it.
+    ///
+    /// This check changes nothing, so a caller can reject a new context before it stores the
+    /// context. [`Self::add_context_info`] runs the same check. Without a TLS verifier, every
+    /// context passes.
+    pub(crate) async fn check_ca_certs(&self, info: &ContextInfo) -> anyhow::Result<()> {
+        let Some(verifier) = self.verifier.as_ref() else {
+            return Ok(());
+        };
+        let ca_certs = ca_certs_of(info)?;
+        self.reject_ca_conflicts(verifier, info.context_id(), &ca_certs)
+            .await
+    }
+
+    /// Returns an error that names the contexts involved if `ca_certs`, the CA certificates of
+    /// the context `context_id`, conflict with the trust roots of `verifier`.
+    async fn reject_ca_conflicts(
+        &self,
+        verifier: &AttestedVerifier,
+        context_id: &ContextId,
+        ca_certs: &HashMap<MpcIdentity, Pem>,
+    ) -> anyhow::Result<()> {
+        let conflicts = verifier.conflicting_ca_certs(ca_certs)?;
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+        Err(self.ca_conflict_error(context_id, &conflicts).await)
+    }
+
+    /// Returns the error for the context `context_id`, which gives each MPC identity in
+    /// `mpc_identities` another CA certificate than the contexts in the context map that list it.
+    async fn ca_conflict_error(
+        &self,
+        context_id: &ContextId,
+        mpc_identities: &[MpcIdentity],
+    ) -> anyhow::Error {
+        let context_map = self.context_map.read().await;
+        let mut details = Vec::new();
+        for mpc_identity in mpc_identities {
+            let mut listed_by = Vec::new();
+            for (other_context_id, context) in context_map.iter() {
+                let lists_identity = context
+                    .role_assignment
+                    .iter()
+                    .any(|(_, identity)| identity.mpc_identity() == *mpc_identity);
+                if lists_identity {
+                    listed_by.push(other_context_id.to_string());
+                }
+            }
+            listed_by.sort();
+            details.push(format!(
+                "{mpc_identity} (in contexts {})",
+                listed_by.join(", ")
+            ));
+        }
+        anyhow::anyhow!(
+            "Context {context_id} gives a CA certificate with another subject or public key to MPC identities that other contexts already list: {}",
+            details.join("; ")
+        )
     }
 
     /// Removes a context from both the TLS verifier and the session context map.
@@ -943,6 +1003,23 @@ impl SessionMaker {
             .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
         Ok(context_info.role_assignment.len())
     }
+}
+
+/// Returns the CA certificates of the nodes in `info`, by MPC identity. A node without a CA
+/// certificate has no entry.
+///
+/// Returns an error if a CA certificate is not valid PEM.
+fn ca_certs_of(info: &ContextInfo) -> anyhow::Result<HashMap<MpcIdentity, Pem>> {
+    let mut ca_certs = HashMap::new();
+    for node in &info.mpc_nodes {
+        if let Some(ca_cert) = &node.ca_cert {
+            let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
+                .map_err(|e| anyhow::anyhow!("x509 parsing error for party: {}", e))?
+                .1;
+            ca_certs.insert(MpcIdentity(node.mpc_identity.clone()), ca_cert);
+        }
+    }
+    Ok(ca_certs)
 }
 
 /// This is the same as [SessionMaker] but it does not allow mutation of the inner state.
@@ -1564,6 +1641,183 @@ mod tests {
         assert!(
             verify_certificate().is_err(),
             "the trust root must be removed after its last live context is removed"
+        );
+    }
+
+    /// A session maker with a TLS verifier, and that verifier.
+    fn session_maker_with_verifier(seed: u64) -> (SessionMaker, Arc<AttestedVerifier>) {
+        _ = default_provider().install_default();
+        let verifier = Arc::new(
+            AttestedVerifier::new(
+                None,
+                false,
+                #[cfg(feature = "insecure")]
+                true,
+            )
+            .unwrap(),
+        );
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+        ));
+        let session_maker = SessionMaker::new_uninitialized(
+            networking_manager,
+            Some(Arc::clone(&verifier)),
+            Arc::new(RngSource::from_rngs(TaskRngs::insecure_seed_from_u64(seed))),
+        );
+        (session_maker, verifier)
+    }
+
+    /// A self-signed certificate for `identity` from `keypair`. With `wildcard`, the certificate
+    /// also lists `*.{identity}` as a SAN.
+    fn test_certificate(identity: &str, wildcard: bool, keypair: &KeyPair) -> rcgen::Certificate {
+        let (_, certificate, _) =
+            threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
+                identity, wildcard, false, keypair,
+            )
+            .unwrap();
+        certificate
+    }
+
+    /// A context in which party `i` (one-based) has the MPC identity and the CA certificate
+    /// `nodes[i - 1]`.
+    fn tls_test_context(
+        context_id: ContextId,
+        nodes: &[(&str, &rcgen::Certificate)],
+    ) -> ContextInfo {
+        ContextInfo {
+            mpc_nodes: nodes
+                .iter()
+                .enumerate()
+                .map(|(i, (identity, certificate))| NodeInfo {
+                    mpc_identity: identity.to_string(),
+                    party_id: i as u32 + 1,
+                    external_url: format!("https://{identity}:8443"),
+                    ca_cert: Some(certificate.pem().into_bytes()),
+                    public_storage_url: String::new(),
+                    public_storage_prefix: None,
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::new(),
+                })
+                .collect(),
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        }
+    }
+
+    fn is_trusted(
+        verifier: &AttestedVerifier,
+        identity: &str,
+        certificate: &rcgen::Certificate,
+    ) -> bool {
+        let server_name = ServerName::try_from(identity.to_string()).unwrap();
+        verifier
+            .verify_server_cert(certificate.der(), &[], &server_name, &[], UnixTime::now())
+            .is_ok()
+    }
+
+    /// Negative: `check_ca_certs` and `add_context_info` reject a context that gives a known MPC
+    /// identity a CA certificate for another key. The error names the contexts involved, and
+    /// neither the context map nor the TLS verifier changes.
+    #[tokio::test]
+    async fn add_context_info_rejects_other_ca_for_known_mpc_identity() {
+        let (session_maker, verifier) = session_maker_with_verifier(8);
+        let shared = "shared.example.com";
+        let other = "other.example.com";
+        let shared_certificate = test_certificate(
+            shared,
+            false,
+            &KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap(),
+        );
+        let replaced_certificate = test_certificate(
+            shared,
+            false,
+            &KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap(),
+        );
+        let other_certificate = test_certificate(
+            other,
+            false,
+            &KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap(),
+        );
+        let mut rng = AesRng::seed_from_u64(9);
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+        session_maker
+            .add_context_info(
+                None,
+                &tls_test_context(context_a, &[(shared, &shared_certificate)]),
+            )
+            .await
+            .unwrap();
+
+        let context_b_info = tls_test_context(
+            context_b,
+            &[(shared, &replaced_certificate), (other, &other_certificate)],
+        );
+        let check_err = session_maker
+            .check_ca_certs(&context_b_info)
+            .await
+            .unwrap_err()
+            .to_string();
+        let err = session_maker
+            .add_context_info(None, &context_b_info)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(check_err, err, "both checks must report the same conflict");
+
+        assert!(err.contains(shared), "{err}");
+        assert!(err.contains(&context_a.to_string()), "{err}");
+        assert!(err.contains(&context_b.to_string()), "{err}");
+        assert!(!session_maker.context_exists(&context_b).await);
+        assert!(is_trusted(&verifier, shared, &shared_certificate));
+        assert!(!is_trusted(&verifier, shared, &replaced_certificate));
+        assert!(
+            !is_trusted(&verifier, other, &other_certificate),
+            "a rejected context must add no trust root"
+        );
+    }
+
+    /// Sunshine: a CA certificate issued again with the same key and subject but other SANs
+    /// belongs to the same party, so `check_ca_certs` and `add_context_info` accept a second
+    /// context with it.
+    #[tokio::test]
+    async fn add_context_info_accepts_ca_reissued_with_same_key() {
+        let (session_maker, verifier) = session_maker_with_verifier(10);
+        let shared = "shared.example.com";
+        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let first_certificate = test_certificate(shared, false, &keypair);
+        let reissued_certificate = test_certificate(shared, true, &keypair);
+        let mut rng = AesRng::seed_from_u64(11);
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        session_maker
+            .add_context_info(
+                None,
+                &tls_test_context(context_a, &[(shared, &first_certificate)]),
+            )
+            .await
+            .unwrap();
+        let context_b_info = tls_test_context(context_b, &[(shared, &reissued_certificate)]);
+        session_maker.check_ca_certs(&context_b_info).await.unwrap();
+        session_maker
+            .add_context_info(None, &context_b_info)
+            .await
+            .unwrap();
+
+        assert!(session_maker.context_exists(&context_b).await);
+        session_maker.remove_context(&context_a).await.unwrap();
+        assert!(
+            is_trusted(&verifier, shared, &first_certificate),
+            "the trust root must remain while context B lists the MPC identity"
         );
     }
 }

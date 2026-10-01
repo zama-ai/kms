@@ -1057,12 +1057,23 @@ where
     /// verification or registration is skipped with a warning and stays in storage. Returns an
     /// error only if the contexts cannot be read from storage.
     pub(crate) async fn load_mpc_context_from_storage(&self) -> anyhow::Result<()> {
-        let contexts = self
+        let mut contexts = self
             .inner
             .crypto_storage
             .read_all_context_info()
             .await
             .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+        // Storage returns the contexts in no fixed order. Of two contexts that conflict, the one
+        // registered first wins, so register them in a fixed order. The default context goes
+        // last: `ensure_default_threshold_context_in_storage` rewrites it from the peer
+        // configuration at every boot, and a configuration change must not displace a context
+        // that `NewMpcContext` created.
+        contexts.sort_by_key(|context| {
+            (
+                *context.context_id() == *DEFAULT_MPC_CONTEXT,
+                *context.context_id().as_bytes(),
+            )
+        });
 
         let mut loaded_count = 0;
         for context in &contexts {
@@ -1266,6 +1277,19 @@ where
                 tonic::Code::AlreadyExists,
             ));
         }
+        // Reject a CA conflict before the context reaches storage. `atomic_update_context`
+        // checks it again when it registers the context.
+        self.session_maker
+            .check_ca_certs(&new_context)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(new_context.context_id.into()),
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
         atomic_update_context(
             &self.session_maker,
             &self.inner.crypto_storage,
@@ -2050,6 +2074,180 @@ mod tests {
                 .await
                 .expect("loading must not delete stored contexts");
         }
+    }
+
+    const CONFLICT_TEST_IDENTITY: &str = "shared.example.com";
+
+    /// A self-signed CA certificate in PEM for [`CONFLICT_TEST_IDENTITY`], from a new key.
+    fn new_ca_cert_pem() -> Vec<u8> {
+        _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let keypair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let (_, certificate, _) =
+            threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
+                CONFLICT_TEST_IDENTITY,
+                false,
+                false,
+                &keypair,
+            )
+            .unwrap();
+        certificate.pem().into_bytes()
+    }
+
+    /// A one-node context in which this node, with `verification_key`, has the MPC identity
+    /// [`CONFLICT_TEST_IDENTITY`] and the CA certificate `ca_cert`.
+    fn one_node_context_with_ca(
+        verification_key: &PublicSigKey,
+        context_id: ContextId,
+        ca_cert: Vec<u8>,
+    ) -> ContextInfo {
+        ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: CONFLICT_TEST_IDENTITY.to_string(),
+                party_id: 1,
+                external_url: format!("https://{CONFLICT_TEST_IDENTITY}:8443"),
+                ca_cert: Some(ca_cert),
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(verification_key),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        }
+    }
+
+    /// A threshold context manager on `crypto_storage` with a TLS verifier, built as the
+    /// threshold KMS builds it at boot.
+    async fn context_manager_with_verifier(
+        sig_key: PrivateSigKey,
+        crypto_storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
+    ) -> ThresholdContextManager<RamStorage, RamStorage> {
+        _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let verifier = Arc::new(
+            threshold_networking::tls::AttestedVerifier::new(
+                None,
+                false,
+                #[cfg(feature = "insecure")]
+                true,
+            )
+            .unwrap(),
+        );
+        let networking_manager = Arc::new(tokio::sync::RwLock::new(
+            threshold_networking::grpc::GrpcNetworkingManager::new(
+                None,
+                threshold_networking::grpc::CoreToCoreNetworkConfig::default(),
+            )
+            .unwrap(),
+        ));
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let session_maker = SessionMaker::new_initialized(
+            std::collections::HashMap::new(),
+            networking_manager,
+            Some(verifier),
+            base_kms.rng_source(),
+        )
+        .await;
+        ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::new(TaskTracker::new()),
+        )
+    }
+
+    /// If the default context and another stored context give one MPC identity CA certificates
+    /// for different keys, boot registers the other context and rejects the default context,
+    /// regardless of the order in which storage returns them.
+    #[tokio::test]
+    async fn test_kms_context_load_rejects_default_context_with_conflicting_ca() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let other_context_id = ContextId::from_bytes([36u8; 32]);
+        {
+            let mut guarded_priv_storage = crypto_storage.private_storage.lock().await;
+            for context_id in [*DEFAULT_MPC_CONTEXT, other_context_id] {
+                store_context_at_id(
+                    &mut *guarded_priv_storage,
+                    &context_id,
+                    &one_node_context_with_ca(&verification_key, context_id, new_ca_cert_pem()),
+                )
+                .await
+                .unwrap();
+            }
+        }
+
+        let context_manager = context_manager_with_verifier(sig_key, &crypto_storage).await;
+        context_manager
+            .load_mpc_context_from_storage()
+            .await
+            .unwrap();
+
+        assert!(
+            context_manager
+                .session_maker
+                .context_exists(&other_context_id)
+                .await
+        );
+        assert!(
+            !context_manager
+                .session_maker
+                .context_exists(&DEFAULT_MPC_CONTEXT)
+                .await
+        );
+    }
+
+    /// Negative: `NewMpcContext` rejects a context that gives a known MPC identity a CA
+    /// certificate for another key with `InvalidArgument`, and does not store the context.
+    #[tokio::test]
+    async fn test_new_mpc_context_rejects_conflicting_ca_before_storing() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let context_manager = context_manager_with_verifier(sig_key, &crypto_storage).await;
+        let first_context_id = ContextId::from_bytes([37u8; 32]);
+        let rejected_context_id = ContextId::from_bytes([38u8; 32]);
+        let request = |context_id| {
+            Request::new(NewMpcContextRequest {
+                new_context: Some(
+                    one_node_context_with_ca(&verification_key, context_id, new_ca_cert_pem())
+                        .try_into()
+                        .unwrap(),
+                ),
+            })
+        };
+        context_manager
+            .new_mpc_context(request(first_context_id))
+            .await
+            .unwrap();
+
+        let error = context_manager
+            .new_mpc_context(request(rejected_context_id))
+            .await
+            .expect_err("a context with a conflicting CA certificate must be rejected");
+
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        let message = error.internal_err().to_string();
+        assert!(message.contains(CONFLICT_TEST_IDENTITY), "{message}");
+        assert!(message.contains(&first_context_id.to_string()), "{message}");
+        let guarded_priv_storage = crypto_storage.private_storage.lock().await;
+        assert!(
+            read_context_at_id(&*guarded_priv_storage, &rejected_context_id)
+                .await
+                .is_err(),
+            "the rejected context must not be stored"
+        );
+        assert!(
+            !context_manager
+                .session_maker
+                .context_exists(&rejected_context_id)
+                .await
+        );
     }
 
     #[tokio::test]
