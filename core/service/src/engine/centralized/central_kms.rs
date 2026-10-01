@@ -34,7 +34,6 @@ use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{
     StorageExt, read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
 };
-use kms_grpc::rpc_types::PlaintextReceiver;
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
@@ -56,6 +55,7 @@ use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
+use kms_grpc::rpc_types::PlaintextReceiver;
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};

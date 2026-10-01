@@ -29,24 +29,14 @@ pub(crate) struct UserDecTrustedValidationContext<'a> {
     client_request: &'a ParsedUserDecryptionRequest,
     eip712_domain: &'a Eip712Domain,
     threshold: usize,
-    /// The link every honest response's `digest` must equal. `None` means "the EVM EIP-712 link,
-    /// recomputed from `client_request` during the sanity check" — the default. A caller whose
-    /// request family links differently (the Solana path) supplies its own recomputed link via
-    /// [`Self::new_for_solana`]; the consensus rule itself is family-agnostic.
-    expected_link: Option<Vec<u8>>,
-    /// How many authenticated responses the validation demands before voting on the invariants.
-    /// [`Self::new`] sets `2t + 1`: it guarantees a pivot group of `t + 1` *forms* even when `t`
-    /// registered parties lie, which the EVM client needs because it discovers the link from the
-    /// responses. Safety never depends on this floor — the vote needs `t + 1` agreeing payloads,
-    /// and any such group contains an honest one whenever at most `t` parties are corrupt — so
-    /// [`Self::new_for_solana`], whose caller pins the link from its own request and
-    /// prefers failing closed over robustness, lowers it to its release quorum of `t + 1`.
-    min_authenticated: usize,
 }
 
 impl<'a> UserDecTrustedValidationContext<'a> {
     pub fn num_parties(&self) -> usize {
         self.server_addresses.len()
+    }
+    pub fn threshold(&self) -> usize {
+        self.threshold
     }
 }
 
@@ -88,31 +78,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
             client_request,
             eip712_domain,
             threshold,
-            expected_link: None,
-            min_authenticated: 2 * threshold + 1,
         })
-    }
-
-    /// Selects Solana signature rules and requires `t + 1` authenticated responses.
-    /// The caller supplies the Solana link computed from its own request.
-    pub fn new_for_solana(
-        server_addresses: &'a HashMap<u32, Address>,
-        scheme_verf_keys: &'a SchemeVerfKeys,
-        client_request: &'a ParsedUserDecryptionRequest,
-        eip712_domain: &'a Eip712Domain,
-        threshold: Option<usize>,
-        expected_link: Vec<u8>,
-    ) -> anyhow::Result<Self> {
-        let mut ctx = Self::new(
-            server_addresses,
-            scheme_verf_keys,
-            client_request,
-            eip712_domain,
-            threshold,
-        )?;
-        ctx.expected_link = Some(expected_link);
-        ctx.min_authenticated = ctx.threshold + 1;
-        Ok(ctx)
     }
 }
 
@@ -206,11 +172,10 @@ const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
 /// ECDSA entry of `signatures`.
 pub(crate) fn user_decrypt_eip712_hash(
     payload: &UserDecryptionResponsePayload,
-    request_enc_key: &[u8],
-    request_extra_data: &[u8],
+    request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<B256> {
-    let message = compute_user_decrypt_message(payload, request_enc_key, request_extra_data)?;
+    let message = compute_user_decrypt_message(payload, request.enc_key(), request.extra_data())?;
     tracing::debug!("Built the UserDecryptResponseVerification EIP-712 message");
     Ok(message.eip712_signing_hash(eip712_domain))
 }
@@ -579,104 +544,14 @@ pub(crate) fn verify_response_signatures(
     })
 }
 
-/// Identifies which Solana response authentication check failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShareAuthenticationError {
-    /// The advertised `verification_key` did not deserialize.
-    MalformedVerificationKey,
-    /// The advertised key's address is not the registered one.
-    WrongAddress,
-    /// The selected signature does not authenticate the response.
-    InvalidSignature,
-    /// The typed list must contain exactly one ECDSA entry.
-    UnsupportedTypedSignatureScheme,
-}
-
-/// Checks the advertised key against the trusted address and verifies the selected Solana signature.
+/// Authenticate a single (untrusted) response: look its `party_id` up in
+/// `trusted_ctx.server_addresses` and verify its signature under the key registered for that party —
+/// so on success the party identity is *verified*, not merely claimed. Agreement with the consensus
+/// (degree, link, per-slot fhe_type / packing) is **not** checked here; that is a single invariants
+/// equality in [`classify_user_decrypt_response`].
 ///
-/// Solana selects the typed list when present, then the internal signature, then the external signature.
-/// This selection preserves the Solana response format. [`verify_response_signatures`] performs the cryptographic checks.
-/// EVM callers pass all signature fields directly to that verifier.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn authenticate_solana_user_decrypt_share(
-    payload: &UserDecryptionResponsePayload,
-    expected_addr: &alloy_primitives::Address,
-    typed_signatures: &[TypedSignature],
-    internal_signature: &[u8],
-    external_signature: &[u8],
-    response_extra_data: &[u8],
-    request_enc_key: &[u8],
-    request_extra_data: &[u8],
-    eip712_domain: &Eip712Domain,
-) -> Result<PublicSigKey, ShareAuthenticationError> {
-    let advertised: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)
-        .map_err(|_| ShareAuthenticationError::MalformedVerificationKey)?;
-    if advertised.address() != *expected_addr {
-        return Err(ShareAuthenticationError::WrongAddress);
-    }
-
-    let (internal, external, domain) = if !typed_signatures.is_empty() {
-        let count = typed_signatures
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    SigningSchemeType::try_from(entry.scheme),
-                    Ok(SigningSchemeType::Ecdsa256k1)
-                )
-            })
-            .count();
-        if count != 1 {
-            return Err(ShareAuthenticationError::UnsupportedTypedSignatureScheme);
-        }
-        (&[][..], &[][..], Some(eip712_domain))
-    } else if !internal_signature.is_empty() {
-        (internal_signature, &[][..], None)
-    } else {
-        (&[][..], external_signature, Some(eip712_domain))
-    };
-    if domain.is_some() && response_extra_data != request_extra_data {
-        return Err(ShareAuthenticationError::InvalidSignature);
-    }
-    let verify = || -> anyhow::Result<()> {
-        let bytes = bc2wrap::serialize(payload)?;
-        verify_response_signatures(
-            &ResponseSignatures {
-                internal,
-                external,
-                list: typed_signatures,
-            },
-            &SignedPayloads {
-                dsep: &DSEP_USER_DECRYPTION,
-                internal_bytes: &bytes,
-                payload_bytes: &user_dec_payload_bytes(&bytes, response_extra_data)?,
-                eip712_hash: domain
-                    .map(|domain| {
-                        user_decrypt_eip712_hash(
-                            payload,
-                            request_enc_key,
-                            request_extra_data,
-                            domain,
-                        )
-                    })
-                    .transpose()?,
-            },
-            &[SigningSchemeType::Ecdsa256k1],
-            &ExpectedSigner::Known {
-                party_id: payload.party_id,
-                address: *expected_addr,
-                verf_key: &advertised,
-            },
-            &HashMap::new(),
-        )?;
-        Ok(())
-    };
-    verify().map_err(|_| ShareAuthenticationError::InvalidSignature)?;
-
-    Ok(advertised)
-}
-
-/// Checks the response identity and signatures before the shared consistency checks.
-/// A caller-supplied Solana link selects Solana's signature format rules.
+/// Returns the (verified) role and verification key it deserialized, so the caller can reuse it without
+/// parsing the raw bytes a second time.
 fn authenticate_user_decrypt_and_check_meta_data(
     trusted_ctx: &UserDecTrustedValidationContext,
     response: &UserDecryptionResponsePayload,
@@ -684,34 +559,26 @@ fn authenticate_user_decrypt_and_check_meta_data(
     signatures: &[TypedSignature],
     eip712_params: &Eip712VerificationParams,
 ) -> anyhow::Result<(PublicSigKey, Role)> {
-    let Some(expected_addr) = trusted_ctx.server_addresses.get(&(response.party_id)) else {
-        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
-    };
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&response.verification_key)?;
 
+    let expected_addr =
+        if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(response.party_id)) {
+            if *expected_addr != resp_verf_key.address() {
+                anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
+            }
+            expected_addr
+        } else {
+            anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
+        };
+
+    // The response must echo the request's extra data whichever signature we go
+    // on to verify below. The EIP-712 signature covers `extraData`, but the raw
+    // ECDSA one does not, so this check has to happen outside the branch.
     if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
         return Err(anyhow_error_and_log(
             ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
         ));
-    }
-
-    if trusted_ctx.expected_link.is_some() {
-        let key = authenticate_solana_user_decrypt_share(
-            response,
-            expected_addr,
-            signatures,
-            signature,
-            eip712_params.response_external_signature,
-            eip712_params.response_extra_data,
-            trusted_ctx.client_request.enc_key(),
-            trusted_ctx.client_request.extra_data(),
-            eip712_params.trusted_eip712_domain,
-        )
-        .map_err(|error| anyhow_tracked(format!("Invalid Solana response signature: {error:?}")))?;
-        return Ok((key, Role::indexed_from_one(response.party_id as usize)));
-    }
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&response.verification_key)?;
-    if resp_verf_key.address() != *expected_addr {
-        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS);
     }
 
     // A response has to carry at least one of the two deprecated fields until 0.16, so
@@ -738,8 +605,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
             )?,
             eip712_hash: Some(user_decrypt_eip712_hash(
                 response,
-                trusted_ctx.client_request.enc_key(),
-                trusted_ctx.client_request.extra_data(),
+                trusted_ctx.client_request,
                 eip712_params.trusted_eip712_domain,
             )?),
         },
@@ -900,10 +766,8 @@ pub(crate) fn validate_user_decrypt_responses(
         authenticated_payloads.push((verification_key, role, payload));
     }
 
-    // The context's quorum: 2t+1 by default, so a pivot group of t+1 is guaranteed to form even
-    // when t registered parties lie; t+1 for a caller that pinned the expected link itself. See
-    // `UserDecTrustedValidationContext::min_authenticated`.
-    if authenticated_payloads.len() < trusted_ctx.min_authenticated {
+    // We need 2t+1 (where threshold == degree) authenticated responses to guarantee that at least t+1 of them are honest.
+    if authenticated_payloads.len() < 2 * trusted_ctx.threshold() + 1 {
         anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
 
@@ -993,10 +857,7 @@ impl UserDecryptionInvariants {
         &self,
         trusted_ctx: &UserDecTrustedValidationContext,
     ) -> anyhow::Result<()> {
-        let expected_link = match &trusted_ctx.expected_link {
-            Some(link) => link.clone(),
-            None => compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?,
-        };
+        let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
         // Compare against the consensus link established from the pivot, not against an individual
         // response's digest.
         if expected_link != self.link {
@@ -1070,8 +931,7 @@ mod tests {
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::kms::v1::{
-        TypedSignature, TypedSigncryptedCiphertext, UserDecryptionResponse,
-        UserDecryptionResponsePayload,
+        TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
@@ -1234,13 +1094,7 @@ mod tests {
                     )
                     .unwrap(),
                     eip712_hash: Some(
-                        user_decrypt_eip712_hash(
-                            response,
-                            request.enc_key(),
-                            request.extra_data(),
-                            eip712_domain,
-                        )
-                        .unwrap(),
+                        user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
                     ),
                 },
                 request.signing_schemes(),
@@ -1541,160 +1395,6 @@ mod tests {
             assert!(
                 err.contains("carries no verified Ecdsa256k1 signature"),
                 "the error does not name the unverified scheme: {err}"
-            );
-        }
-    }
-
-    /// A non-empty typed list must contain exactly one valid ECDSA signature.
-    /// The verifier ignores unrequested schemes and legacy signatures beside that list.
-    #[test]
-    fn solana_typed_signatures_list_is_the_authentication_when_present() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
-        let server_addresses = HashMap::from([(1u32, vk0.address())]);
-
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
-        let mut enc_key_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(
-            &eph_client_pk,
-            &mut enc_key_buf,
-            crate::consts::SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-
-        let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
-        let domain = dummy_domain();
-        let ciphertext_handle = vec![5, 6, 7, 8];
-        let extra_data = vec![1, 2, 3, 4];
-        let client_request = ParsedUserDecryptionRequest::new(
-            None,
-            client_vk.address(),
-            enc_key_buf,
-            vec![CiphertextHandle::new(ciphertext_handle.clone())],
-            domain.verifying_contract.unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1],
-            extra_data.clone(),
-        );
-        let pivot_resp = UserDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&vk0).unwrap(),
-            digest: vec![1, 2, 3, 4],
-            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                fhe_type: tfhe::FheTypes::Uint4 as i32,
-                signcrypted_ciphertext: vec![1, 2, 3, 4],
-                external_handle: ciphertext_handle,
-                packing_factor: 1,
-            }],
-            party_id: 1,
-            degree: 0,
-        };
-        // The typed ECDSA entry signs the same EIP-712 hash as the deprecated external field.
-        let ecdsa_signature = compute_external_user_decrypt_signature(
-            &sk0,
-            &pivot_resp,
-            &domain,
-            client_request.enc_key(),
-            &extra_data,
-        )
-        .unwrap();
-        let valid_internal = internal_sign(
-            &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&pivot_resp).unwrap(),
-            &sk0,
-        )
-        .unwrap()
-        .to_bytes();
-        let scheme_keys = HashMap::new();
-        let trusted_ctx = UserDecTrustedValidationContext::new_for_solana(
-            &server_addresses,
-            &scheme_keys,
-            &client_request,
-            &domain,
-            None,
-            vec![0; 32],
-        )
-        .unwrap();
-        let params = Eip712VerificationParams {
-            response_external_signature: &ecdsa_signature,
-            response_extra_data: &extra_data,
-            trusted_eip712_domain: &domain,
-        };
-        let typed = |scheme: i32, signature: Vec<u8>| TypedSignature { scheme, signature };
-        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
-
-        // Only ECDSA is requested, so malformed entries for other schemes must not affect authentication.
-        let empty_params = Eip712VerificationParams {
-            response_external_signature: &[],
-            response_extra_data: &extra_data,
-            trusted_eip712_domain: &domain,
-        };
-        for list in [
-            vec![typed(ecdsa, ecdsa_signature.clone())],
-            vec![
-                typed(kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32, vec![]),
-                typed(ecdsa, ecdsa_signature.clone()),
-            ],
-            vec![typed(ecdsa, ecdsa_signature.clone()), typed(999, vec![])],
-            vec![
-                typed(999, vec![]),
-                typed(ecdsa, ecdsa_signature.clone()),
-                typed(kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32, vec![]),
-            ],
-        ] {
-            authenticate_user_decrypt_and_check_meta_data(
-                &trusted_ctx,
-                &pivot_resp,
-                &[],
-                &list,
-                &empty_params,
-            )
-            .unwrap();
-        }
-
-        // A wrong typed ECDSA entry is not rescued by the valid legacy signatures beside it.
-        let mut tampered = ecdsa_signature.clone();
-        tampered[0] ^= 1;
-        assert!(
-            authenticate_user_decrypt_and_check_meta_data(
-                &trusted_ctx,
-                &pivot_resp,
-                &valid_internal,
-                &[
-                    typed(kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32, vec![]),
-                    typed(ecdsa, tampered),
-                    typed(999, vec![]),
-                ],
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("InvalidSignature")
-        );
-
-        // A list with no scheme this client can verify rejects: Ed25519-only, an unknown scheme
-        // number, and a duplicated ECDSA entry all fail closed, valid legacy signatures included.
-        for list in [
-            vec![typed(
-                kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
-                vec![1; 64],
-            )],
-            vec![typed(999, ecdsa_signature.clone())],
-            vec![
-                typed(ecdsa, ecdsa_signature.clone()),
-                typed(ecdsa, ecdsa_signature.clone()),
-            ],
-        ] {
-            assert!(
-                authenticate_user_decrypt_and_check_meta_data(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &valid_internal,
-                    &list,
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains("UnsupportedTypedSignatureScheme")
             );
         }
     }

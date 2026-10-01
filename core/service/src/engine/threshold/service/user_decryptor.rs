@@ -792,9 +792,6 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
-            // This is the EVM test path; the Solana fields are exercised by
-            // `validation_solana` and the Solana response tests.
-            signing_metadata: vec![],
         }
     }
 

@@ -150,7 +150,7 @@ futures = "=0.3.34"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.34"  # Futures utilities - LOW RISK: rust-lang team
 getrandom = "=0.4.3" # OS entropy for RNG reseeding - LOW RISK: maintained by the rust-random team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
-bs58 = "=0.5.1"
+bs58 = "=0.5.1"  # Base58 codec for Solana user addresses - MEDIUM RISK: individual maintainer, used across the Solana ecosystem
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 # NOTE for hpke: this needs to be consistent with `p384_hpke` below.
 hpke = { version = "=0.14.1", default-features = false, features = ["aes", "mlkem", "nistp"] } # Implementation of various composite/hybrid KEM/PKE - MEDIUM RISK: security-critical pure-Rust crypto crate. Not independently audited, 8M+ downloads.
