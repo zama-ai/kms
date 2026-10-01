@@ -350,7 +350,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
                 MetricedError::new(
                     OP_NEW_EPOCH,
                     Some(*request_id),
-                    anyhow::anyhow!("missing digest for public key"),
+                    anyhow::anyhow!("missing digest for {}", PubDataType::PublicKey),
                     tonic::Code::InvalidArgument,
                 )
             })?;
@@ -1439,7 +1439,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(format!("{err:?}").contains("missing digest for public key"));
+        assert!(
+            format!("{err:?}").contains("missing digest for PublicKey"),
+            "{err:?}"
+        );
 
         let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
             &crypto_storage,
@@ -1450,7 +1453,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("missing digest for public key"));
+        assert!(
+            err.to_string().contains("missing digest for PublicKey"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
