@@ -84,10 +84,11 @@ impl CompositeSigncryptionPayload {
         receiver_id: &[u8],
         encryption_key: &UnifiedPublicEncKey,
     ) -> Result<Self, CryptographyError> {
+let enc_key_digest = receiver_enc_key_digest(encryption_key)?;
         Ok(Self {
             msg: msg.to_vec(),
             receiver_id: receiver_id.to_vec(),
-            enc_key_digest: receiver_enc_key_digest(encryption_key)?,
+            enc_key_digest,
         })
     }
 }
