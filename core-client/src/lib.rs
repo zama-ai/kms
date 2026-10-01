@@ -1936,6 +1936,8 @@ pub async fn execute_cmd(
 
     let signing_schemes = SigningSchemeType::parse_requested(&cmd_config.signing_schemes)?;
 
+    // Encrypting needs nothing from the cores, and neither does a no-op.
+    let needs_cores = !matches!(command, CCCommand::Encrypt(_) | CCCommand::DoNothing(_));
     // The custodian recovery commands only talk to the cores' backup endpoints, whose responses
     // are not signed, so they need neither the verification keys nor the client that checks
     // responses against them. They must also work when the cores' public storage is lost.
@@ -1944,11 +1946,7 @@ pub async fn execute_cmd(
         CCCommand::CustodianRecoveryInit(_) | CCCommand::CustodianBackupRecovery(_)
     );
 
-    if let CCCommand::Encrypt(_) = command {
-        //Don't need to fetch or connect if we just do an encrypt
-    } else if let CCCommand::DoNothing(_) = command {
-        // Don't need to fetch or connect if we just do nothing
-    } else {
+    if needs_cores {
         if needs_verf_keys {
             addr_vec =
                 fetch_verification_keys(command, &cc_conf, destination_prefix, &signing_schemes)
