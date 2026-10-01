@@ -5,14 +5,11 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use crate::{
-    engine::{
-        context::ContextInfo,
-        rng_source::{RngSource, RngSourceError},
-        threshold::service::epoch_manager::EpochData,
-        utils::MetricedError,
-    },
-    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
+use crate::engine::{
+    context::ContextInfo,
+    rng_source::{RngSource, RngSourceError},
+    threshold::service::epoch_manager::EpochData,
+    utils::MetricedError,
 };
 
 // === External Crates ===
@@ -182,18 +179,17 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 
 impl SessionMaker {
     /// Builds a session maker that serves `all_epochs`, the epoch data read from private
-    /// storage, and every MPC context stored in `crypto_storage`.
-    pub(crate) async fn new_initialized<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-    >(
-        my_id: Option<Role>,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    /// storage.
+    ///
+    /// The session maker has no MPC context.
+    /// [`crate::engine::context_manager::ThresholdContextManager::load_mpc_context_from_storage`]
+    /// registers the stored contexts after it verifies them.
+    pub(crate) async fn new_initialized(
         all_epochs: HashMap<EpochId, EpochData>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng_source: Arc<RngSource>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let session_maker: SessionMaker =
             Self::new_uninitialized(networking_manager, verifier, rng_source);
         if all_epochs.is_empty() {
@@ -208,20 +204,7 @@ impl SessionMaker {
                 epoch_id
             );
         }
-        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
-        if mpc_contexts.is_empty() {
-            tracing::warn!(
-                "No MPC context found in storage! There should at a minimum be a default context!"
-            );
-        }
-        for context_info in mpc_contexts {
-            session_maker.add_context_info(my_id, &context_info).await?;
-            tracing::info!(
-                "Loaded MPC context from storage for context ID {}.",
-                context_info.context_id()
-            );
-        }
-        Ok(session_maker)
+        session_maker
     }
 
     pub(crate) fn new_uninitialized(

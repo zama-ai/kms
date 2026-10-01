@@ -44,7 +44,6 @@ use threshold_networking::{
     tls::AttestedVerifier,
 };
 
-use threshold_types::role::Role;
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -808,21 +807,17 @@ where
         .await;
 
     let session_maker = SessionMaker::new_initialized(
-        threshold_config.my_id.map(Role::indexed_from_one),
-        &crypto_storage,
         all_epochs,
         networking_manager,
         verifier,
         base_kms.rng_source(),
     )
-    .await?;
+    .await;
     let immutable_session_maker = session_maker.make_immutable();
 
     let tracker = Arc::new(TaskTracker::new());
     let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
-    // NOTE: context must be loaded before attempting to automatically start the PRSS
-    // since the PRSS requires a context to be present.
     let context_manager = ThresholdContextManager::new(
         base_kms.new_instance(),
         crypto_storage.inner.clone(),

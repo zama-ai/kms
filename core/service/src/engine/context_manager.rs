@@ -1050,6 +1050,12 @@ where
         }
     }
 
+    /// Verifies the MPC contexts in private storage and registers each one that passes in the
+    /// session maker and the TLS verifier.
+    ///
+    /// This is the only place that registers stored contexts at boot. A context that fails
+    /// verification or registration is skipped with a warning and stays in storage. Returns an
+    /// error only if the contexts cannot be read from storage.
     pub(crate) async fn load_mpc_context_from_storage(&self) -> anyhow::Result<()> {
         let contexts = self
             .inner
@@ -1083,6 +1089,11 @@ where
                 );
                 continue;
             }
+            tracing::info!(
+                context_id = %context.context_id(),
+                my_role = ?my_role,
+                "Loaded MPC context from storage"
+            );
             loaded_count += 1;
         }
         if loaded_count == 0 {
@@ -1990,7 +2001,22 @@ mod tests {
         }
 
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
+        // Boot as the threshold KMS does: `SessionMaker::new_initialized`, then
+        // `load_mpc_context_from_storage`. The first must not register the stored contexts.
+        let networking_manager = Arc::new(tokio::sync::RwLock::new(
+            threshold_networking::grpc::GrpcNetworkingManager::new(
+                None,
+                threshold_networking::grpc::CoreToCoreNetworkConfig::default(),
+            )
+            .unwrap(),
+        ));
+        let session_maker = SessionMaker::new_initialized(
+            std::collections::HashMap::new(),
+            networking_manager,
+            None,
+            base_kms.rng_source(),
+        )
+        .await;
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
