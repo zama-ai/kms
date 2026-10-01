@@ -210,7 +210,7 @@ data:
 
     [rate_limiter_conf]
     bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}
-    pub_decrypt = 1
+    pub_decrypt = {{ int .Values.kmsCore.rateLimiter.pubDecrypt }}
     user_decrypt = 1
     crsgen = 100
     preproc = 50000

@@ -75,9 +75,10 @@ The example shows one sync rung; the configuration file contains both complete s
 The ladders run sequentially to avoid competing workloads. Each ladder starts independently,
 even when a preceding ladder exceeds its limits. A failed rung skips only higher rates in its own ladder.
 
-Sync rates are PDEC 1,200/1,400/1,700 and UDEC 1,500/1,900/2,300 requests/s.
+Sync rates are PDEC 1,200/1,400/1,700/2,000/2,400/2,800 and UDEC 1,500/1,900/2,300/2,700/3,100/3,500 requests/s.
 The first two rungs of each sync ladder use the default limits and fail the run on a breach.
-The third rung has relaxed limits and `allowfail = true`, so a breach produces a warning.
+The remaining four rungs have relaxed limits and `allowfail = true`, so a breach produces a warning
+and skips the higher rungs of that ladder.
 
 To preview the fully-expanded workflow locally:
 

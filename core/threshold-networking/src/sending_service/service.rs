@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::constants::{SEND_DEADLINE_CLOSED_SESSION, SEND_DEADLINE_LIVE_SESSION};
 use crate::ggen::SendValueRequest;
 use crate::ggen::Status;
 use crate::ggen::gnetworking_client::GnetworkingClient;
@@ -26,6 +27,7 @@ use tokio::sync::{
     RwLock,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
+use tokio::time::timeout;
 use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
@@ -224,9 +226,22 @@ impl GrpcSendingService {
                 );
             };
 
-            // Single unified retry strategy
-            let res: Result<_, _> =
-                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            // Single unified retry strategy, bounded more tightly once the session is gone.
+            let deadline = if receiver.is_closed() {
+                SEND_DEADLINE_CLOSED_SESSION
+            } else {
+                SEND_DEADLINE_LIVE_SESSION
+            };
+            let res: Result<_, _> = timeout(
+                deadline,
+                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(tonic::Status::deadline_exceeded(format!(
+                    "no delivery within {deadline:?}"
+                )))
+            });
             match res {
                 Ok(send_response) => {
                     match send_response.status() {

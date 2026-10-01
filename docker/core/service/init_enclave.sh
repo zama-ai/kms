@@ -43,6 +43,10 @@ has_value() {
 export PATH="/app/kms/core/service/bin:$PATH"
 cd /app/kms/core/service |& logger  || fail "cannot set working directory"
 
+# Forward the enclave kernel's log, including OOM-killer reports, to the parent logger. Outside
+# the enclave it is otherwise only readable through the debug-mode console.
+{ cat /dev/kmsg || echo "init_enclave: cannot read /dev/kmsg, kernel messages are not forwarded"; } |& logger &
+
 # receive keygen or server configuration from the parent
 log "requesting KMS config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
@@ -128,6 +132,9 @@ if kms-server --config-file="$KMS_SERVER_CONFIG_FILE" |& logger; then
 else
     SERVER_STATUS=$?
 fi
+# 137 is SIGKILL (e.g. the OOM killer), 134 is SIGABRT (e.g. a failed allocation), 101 is a panic
+# that reached the main thread.
+log "kms-server exited with status $SERVER_STATUS"
 
 if [ "$KEYGEN_STATUS" -ne 0 ] && [ "$SERVER_STATUS" -ne 0 ]; then
     fail "neither kms-gen-keys nor kms-server completed successfully"

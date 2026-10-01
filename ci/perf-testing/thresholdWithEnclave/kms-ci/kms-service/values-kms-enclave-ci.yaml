@@ -3,6 +3,13 @@ kmsPeers:
   count: 1
 
 kmsCore:
+  # EXPERIMENT: bound public decryptions in flight per core to 100000 / 12 = 8333 (about 16-33 GiB
+  # at the 2-4 MiB each measured under backlog), so an overloaded core sheds load instead of running
+  # its 96 GiB enclave out of memory. With a bucket twice the preprocessing cost (50000),
+  # preprocessing no longer needs the whole bucket to itself.
+  rateLimiter:
+    bucketSize: 100000
+    pubDecrypt: 12
   thresholdMode:
     enabled: true
     decCapacity: 30000

@@ -2,7 +2,6 @@ use crate::{
     engine::{
         base::compute_preprocessing_signatures,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
-        traits::{BackupOperator, ContextManager},
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
@@ -44,10 +43,8 @@ use tonic::{Request, Response};
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let _permit = service.rate_limiter.start_preproc().await?;
@@ -134,10 +131,8 @@ pub async fn preprocessing_impl<
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<v1::RequestId>,
 ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
     tracing::warn!(
