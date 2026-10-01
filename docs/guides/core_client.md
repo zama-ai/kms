@@ -705,6 +705,7 @@ This can be used when some parties crashed during the DKG process so that __all_
 
 Before executing a new epoch, the TFHE public key material must be present in the public storage of all the parties.
 The kms core locally checks for existence of the public key material, and if it is missing, will attempt to automatically fetch it from its peers.
+When the reshare succeeds, the core stores the fetched key material and CRSes unchanged in its own public storage.
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}

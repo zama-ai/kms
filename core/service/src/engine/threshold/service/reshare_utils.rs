@@ -36,10 +36,10 @@ impl std::fmt::Debug for VerifiedFheKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VerifiedFheKeys::Uncompressed(_) => {
-                write!(f, "VerifiedPublicKeys::Uncompressed(...)")
+                write!(f, "VerifiedFheKeys::Uncompressed(...)")
             }
             VerifiedFheKeys::Compressed(_) => {
-                write!(f, "VerifiedPublicKeys::Compressed(...)")
+                write!(f, "VerifiedFheKeys::Compressed(...)")
             }
         }
     }
@@ -75,7 +75,7 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
 }
 
 impl VerifiedPublicMaterial {
-    /// Material loaded from our own public storage, which needs not be stored again.
+    /// Material loaded from our own public storage, which does not need to be stored again.
     pub(crate) fn from_own_storage(keys: VerifiedFheKeys) -> Self {
         Self {
             keys,
@@ -133,8 +133,12 @@ impl VerifiedPublicMaterial {
 ///
 /// An entry that already exists is kept only if its bytes exactly match the fetched bytes.
 /// Returns the entries created by this call, so that a failed reshare can delete them again,
-/// together with the outcome of the writes. The writes stop at the first error. An entry whose
-/// write failed is returned too, since a backend may apply a write and still report an error.
+/// together with the outcome of the writes. The writes stop at the first error.
+///
+/// Existence is checked before each write, because a backend can fail its own existence check
+/// inside [`Storage::store_bytes`] before it writes anything. An entry whose existence check
+/// fails is not returned, so the caller never deletes an entry that existed before. An entry
+/// whose write fails is returned, since a backend may apply a write and still report an error.
 pub(crate) async fn store_peer_public_bytes<PubS: Storage>(
     pub_storage: &mut PubS,
     entries: &[(RequestId, PubDataType, Vec<u8>)],
@@ -142,40 +146,54 @@ pub(crate) async fn store_peer_public_bytes<PubS: Storage>(
     let mut created = Vec::new();
     for (data_id, data_type, bytes) in entries {
         let data_type_str = data_type.to_string();
-        created.push((*data_id, *data_type));
-        match pub_storage
-            .store_bytes(bytes, data_id, &data_type_str)
-            .await
-        {
-            Ok(StoreWriteOutcome::Created) => {}
-            Ok(StoreWriteOutcome::SkippedExisting) => {
-                // The existing entry is not ours to delete if this reshare later fails.
-                created.pop();
-                match pub_storage.load_bytes(data_id, &data_type_str).await {
-                    Ok(existing_bytes) if existing_bytes == *bytes => {}
-                    Ok(_) => {
-                        return (
-                            created,
-                            Err(anyhow::anyhow!(
-                                "Existing {data_type} of {data_id} differs from the bytes fetched from a peer"
-                            )),
-                        );
-                    }
-                    Err(e) => {
-                        return (
-                            created,
-                            Err(e.context(format!(
-                                "Failed to verify existing {data_type} of {data_id} against the bytes fetched from a peer"
-                            ))),
-                        );
-                    }
+        let exists = match pub_storage.data_exists(data_id, &data_type_str).await {
+            Ok(exists) => exists,
+            Err(e) => {
+                return (
+                    created,
+                    Err(e.context(format!(
+                        "Failed to check whether {data_type} of {data_id} exists before storing the bytes fetched from a peer"
+                    ))),
+                );
+            }
+        };
+        if !exists {
+            created.push((*data_id, *data_type));
+            match pub_storage
+                .store_bytes(bytes, data_id, &data_type_str)
+                .await
+            {
+                Ok(StoreWriteOutcome::Created) => continue,
+                Ok(StoreWriteOutcome::SkippedExisting) => {
+                    // Another writer created the entry after the existence check, so it is not
+                    // ours to delete if this reshare later fails.
+                    created.pop();
                 }
+                Err(e) => {
+                    return (
+                        created,
+                        Err(e.context(format!(
+                            "Failed to store {data_type} of {data_id} fetched from a peer"
+                        ))),
+                    );
+                }
+            }
+        }
+        match pub_storage.load_bytes(data_id, &data_type_str).await {
+            Ok(existing_bytes) if existing_bytes == *bytes => {}
+            Ok(_) => {
+                return (
+                    created,
+                    Err(anyhow::anyhow!(
+                        "Existing {data_type} of {data_id} differs from the bytes fetched from a peer"
+                    )),
+                );
             }
             Err(e) => {
                 return (
                     created,
                     Err(e.context(format!(
-                        "Failed to store {data_type} of {data_id} fetched from a peer"
+                        "Failed to verify existing {data_type} of {data_id} against the bytes fetched from a peer"
                     ))),
                 );
             }
@@ -658,10 +676,11 @@ mod tests {
         get_verified_crs_material, store_peer_public_bytes,
     };
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
-    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::ram::{FailingRamStorage, RamStorage};
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
+    use crate::vault::storage::test_support::StorageEntry;
 
     use crate::vault::storage::{Storage, StorageReader};
     use aes_prng::AesRng;
@@ -1603,6 +1622,43 @@ mod tests {
                 .unwrap(),
             b"existing",
             "the mismatched existing entry must not be overwritten"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_peer_public_bytes_keeps_existing_entry_when_existence_check_fails() {
+        let mut rng = AesRng::seed_from_u64(2340);
+        let existing_id = RequestId::new_random(&mut rng);
+        let mut storage = FailingRamStorage::new();
+        storage
+            .store_bytes(b"from peer", &existing_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+        storage.set_fail_exists_at(StorageEntry::new(
+            existing_id,
+            None,
+            PubDataType::CRS.to_string(),
+        ));
+
+        let (created, res) = store_peer_public_bytes(
+            &mut storage,
+            &[(existing_id, PubDataType::CRS, b"from peer".to_vec())],
+        )
+        .await;
+
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Failed to check whether CRS")
+        );
+        // The entry existed before, so the caller must not delete it.
+        assert!(created.is_empty());
+        assert_eq!(
+            storage
+                .load_bytes(&existing_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap(),
+            b"from peer"
         );
     }
 }

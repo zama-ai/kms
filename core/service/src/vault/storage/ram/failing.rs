@@ -20,8 +20,9 @@ use tfhe::{Unversionize, Versionize, named::Named};
 /// Store and delete fail points name the exact storage entry to reject, and choose whether the
 /// error arrives before or after the wrapped storage applies the change. A separate delete mode
 /// models S3's idempotent `DeleteObject`: deleting a nonexistent key reports success, so addressing
-/// the wrong key can leave the intended object stored without returning an error. Faults remain
-/// active until replaced or cleared. Every store and delete appends a
+/// the wrong key can leave the intended object stored without returning an error. An existence
+/// fail point rejects the existence check of one entry, as a backend does when the query itself
+/// fails. Faults remain active until replaced or cleared. Every store and delete appends a
 /// [`StorageEvent`], and [`Self::state`] snapshots the stored entries. Reads pass through to the
 /// wrapped storage and are not recorded.
 ///
@@ -32,6 +33,8 @@ pub struct FailingRamStorage {
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
     /// Intended entry left in place when an S3 delete is sent to the wrong, nonexistent key.
     noop_delete_at: Option<StorageEntry>,
+    /// Entry whose existence check returns an error.
+    fail_exists_at: Option<StorageEntry>,
     events: Vec<StorageEvent>,
     inner: RamStorage,
 }
@@ -69,10 +72,16 @@ impl FailingRamStorage {
         self.noop_delete_at = Some(entry);
     }
 
+    /// Return an error from [`StorageReader::data_exists`] for `entry`.
+    pub(crate) fn set_fail_exists_at(&mut self, entry: StorageEntry) {
+        self.fail_exists_at = Some(entry);
+    }
+
     pub(crate) fn clear_fail_points(&mut self) {
         self.fail_store_at = None;
         self.fail_delete_at = None;
         self.noop_delete_at = None;
+        self.fail_exists_at = None;
     }
 
     pub(crate) fn clear_events(&mut self) {
@@ -174,6 +183,9 @@ impl FailingRamStorage {
 
 impl StorageReader for FailingRamStorage {
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        if self.fail_exists_at.as_ref() == Some(&StorageEntry::new(*data_id, None, data_type)) {
+            anyhow::bail!("existence check failed!")
+        }
         self.inner.data_exists(data_id, data_type).await
     }
 
