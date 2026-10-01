@@ -775,14 +775,22 @@ fn backup_verf_keys_for(
 /// public storage no longer holds its verification key.
 ///
 /// Every context in the vault was backed up by the same operator, so the material must agree on
-/// one key set: agreeing on the ECDSA key alone is not enough. Like a key read from public storage,
-/// it is only as good as the operator's comparison of it against the gateway and their own
-/// records; the server logs every key at boot for that purpose.
+/// one key set: agreeing on the ECDSA key alone is not enough. Each material must also carry valid
+/// signatures under the key set it embeds, so material the operator never signed is refused here
+/// rather than at recovery. Like a key read from public storage, the set is only as good as the
+/// operator's comparison of it against the gateway and their own records; the server logs every
+/// key at boot for that purpose.
 pub async fn operator_backup_keys_from_vault(vault: &Vault) -> anyhow::Result<VerfKeySet> {
     let materials = read_all_recovery_material(&vault.storage).await?;
     let mut sets: Vec<&VerfKeySet> = Vec::new();
-    for material in materials.values() {
+    for (id, material) in materials.iter() {
         let keys = &material.payload.operator_verf_keys;
+        material.validate(keys).map_err(|e| {
+            anyhow::anyhow!(
+                "The recovery material for {id} in the backup vault does not validate under the \
+                 keys it names: {e}"
+            )
+        })?;
         if !sets.contains(&keys) {
             sets.push(keys);
         }
@@ -1691,6 +1699,24 @@ mod tests {
             NodeSigningIdentity::new(sk.ecdsa().clone(), RootSigningSeed::random(&mut rng));
         let mixed = RequestId::from_bytes([3; 32]);
         store_dummy_recovery_material(&mut vault.storage, &mixed, &reseeded).await;
+        assert!(operator_backup_keys_from_vault(&vault).await.is_err());
+    }
+
+    /// Material whose signatures do not verify under the key set it names is refused, even when
+    /// it is the only material in the vault.
+    #[tokio::test]
+    async fn operator_backup_keys_from_the_vault_must_validate() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let sk = seeded_identity(&mut rng);
+        let other_sk = seeded_identity(&mut rng);
+        let id = RequestId::from_bytes([1; 32]);
+        let mut material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
+        material.payload.operator_verf_keys =
+            VerfKeySet::from_identity(&other_sk, BACKUP_SIGNING_SCHEMES).unwrap();
+        let mut vault = make_unencrypted_vault();
+        crate::vault::storage::store_recovery_material(&mut vault.storage, &material)
+            .await
+            .unwrap();
         assert!(operator_backup_keys_from_vault(&vault).await.is_err());
     }
 

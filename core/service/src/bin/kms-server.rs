@@ -612,7 +612,8 @@ async fn main_exec() -> anyhow::Result<()> {
                 make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             // Public storage may have been lost along with private storage; the recovery material
-            // in the backup vault also names the operator's keys, so recovery is never blocked.
+            // in the backup vault also names the operator's keys, signed under them, so recovery
+            // only needs a backup vault holding material from a single operator key set.
             let verf_key = match public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await

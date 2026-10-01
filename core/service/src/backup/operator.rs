@@ -387,9 +387,8 @@ pub struct RecoveryValidationMaterialPayload {
     pub custodian_context: InternalCustodianContext,
     /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
     pub mpc_context: ContextId,
-    /// The operator's verification keys.
-    /// Should be [`BACKUP_SIGNING_SCHEMES`], but may be only the ecdsa key;
-    /// see [`RecoveryValidationMaterial::ecdsa_only_verf_key`].
+    /// The operator's verification keys, covering every scheme in [`BACKUP_SIGNING_SCHEMES`].
+    /// A node holding only its ECDSA key takes the other keys from here.
     pub operator_verf_keys: VerfKeySet,
 }
 impl Named for RecoveryValidationMaterialPayload {
@@ -1375,10 +1374,10 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(101);
         let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
-        let operator_verf_key = operator_keys.ecdsa().unwrap().clone();
+        let operator_id = operator_keys.id(BACKUP_SIGNING_SCHEMES).unwrap();
         let other_custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let other_operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
-        let other_operator_verf_key = other_operator_keys.ecdsa().unwrap().clone();
+        let other_operator_id = other_operator_keys.id(BACKUP_SIGNING_SCHEMES).unwrap();
 
         let custodian_role = Role::indexed_from_one(2);
         let backup_id = derive_request_id("check_expected_metadata").unwrap();
@@ -1394,11 +1393,7 @@ mod tests {
 
         // Sunshine: every metadata field matches the expected routing parameters.
         material
-            .check_expected_metadata(
-                &custodian_verf_key,
-                custodian_role,
-                &operator_verf_key.verf_key_id(),
-            )
+            .check_expected_metadata(&custodian_verf_key, custodian_role, &operator_id)
             .expect("metadata that matches the routing parameters should validate");
 
         // Custodian role mismatch.
@@ -1406,7 +1401,7 @@ mod tests {
             material.check_expected_metadata(
                 &custodian_verf_key,
                 Role::indexed_from_one(3),
-                &operator_verf_key.verf_key_id(),
+                &operator_id,
             ),
             Err(RecoverySkipReason::CustodianRoleMismatchInPayload),
         );
@@ -1416,7 +1411,7 @@ mod tests {
             material.check_expected_metadata(
                 &other_custodian_verf_key,
                 custodian_role,
-                &operator_verf_key.verf_key_id(),
+                &operator_id,
             ),
             Err(RecoverySkipReason::CustodianKeyMismatchInPayload),
         );
@@ -1426,7 +1421,7 @@ mod tests {
             material.check_expected_metadata(
                 &custodian_verf_key,
                 custodian_role,
-                &other_operator_verf_key.verf_key_id(),
+                &other_operator_id,
             ),
             Err(RecoverySkipReason::OperatorMismatchInPayload),
         );
