@@ -84,10 +84,11 @@ impl CompositeSigncryptionPayload {
         receiver_id: &[u8],
         encryption_key: &UnifiedPublicEncKey,
     ) -> Result<Self, CryptographyError> {
+        let enc_key_digest = receiver_enc_key_digest(encryption_key)?;
         Ok(Self {
             msg: msg.to_vec(),
             receiver_id: receiver_id.to_vec(),
-            enc_key_digest: receiver_enc_key_digest(encryption_key)?,
+            enc_key_digest,
         })
     }
 }
@@ -105,10 +106,12 @@ pub(super) fn seal(
     msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
     let receiver_enc_key = &signcrypt_key.receiver_enc_key;
-    let mut signed =
-        CompositeSigncryptionPayload::new(msg, &signcrypt_key.receiver_id, receiver_enc_key)?;
-    let signature = sign_composite(&signcrypt_key.identity, schemes, dsep, &signed)?;
-    signed.zeroize();
+    let signed = Zeroizing::new(CompositeSigncryptionPayload::new(
+        msg,
+        &signcrypt_key.receiver_id,
+        receiver_enc_key,
+    )?);
+    let signature = sign_composite(&signcrypt_key.identity, schemes, dsep, &*signed)?;
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
