@@ -36,7 +36,7 @@ Release
 | [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
-| [`pr-images-cleanup.yml`](pr-images-cleanup.yml) | Cleanup PR images | PR push, PR close |
+| [`pr-images-cleanup.yml`](pr-images-cleanup.yml) | Cleanup PR images | PR close |
 | [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make lint-dylint` | PRs |
 | [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
 | [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
@@ -263,6 +263,9 @@ Calls `docker-build.yml` with release tags. Runs on GitHub release publish or `w
 ### CI Lint and Security ([`ci_lint.yml`](ci_lint.yml))
 
 `actionlint` + `zizmor` over all workflow files. Validates SHA-pinned actions and runs SAST.
+
+The lint job also runs the Python tests for performance orchestration, diagnostics,
+workflow generation, and artifact analysis on pull requests.
 
 ### Dependency Analysis ([`dependencies_analysis.yml`](dependencies_analysis.yml))
 

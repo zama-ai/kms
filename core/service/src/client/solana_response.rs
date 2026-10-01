@@ -519,6 +519,8 @@ pub fn verify_solana_user_decryption_response(
                 .gateway_domain
                 .verifying_contract
                 .unwrap_or_default(),
+            // No scheme named resolves to ECDSA, the scheme the Solana response path verifies.
+            Vec::new(),
             request.extra_data.clone(),
         );
         // The expected link is the Solana binding recomputed above, not the EVM EIP-712 link the
@@ -2390,6 +2392,7 @@ mod tests {
                         .map(|handle| CiphertextHandle::new(handle.clone()))
                         .collect(),
                     verifying_contract,
+                    Vec::new(),
                     request.extra_data.clone(),
                 ));
 

@@ -39,7 +39,7 @@ pub(super) fn validate_solana_request(
     let verifying_program_id = solana.verifying_program_id.as_slice();
 
     let transport_key =
-        UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|error| {
+        UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&req.enc_key).map_err(|error| {
             anyhow::anyhow!(
                 "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {error}"
             )
@@ -172,13 +172,13 @@ mod tests {
             request_id: Some(request_id([0x01; 32])),
             typed_ciphertexts: vec![
                 TypedCiphertext {
-                    ciphertext: vec![],
+                    ciphertext: vec![].into(),
                     fhe_type: 0,
                     external_handle: handle(0xa1),
                     ciphertext_format: 0,
                 },
                 TypedCiphertext {
-                    ciphertext: vec![],
+                    ciphertext: vec![].into(),
                     fhe_type: 0,
                     external_handle: handle(0xa2),
                     ciphertext_format: 0,
@@ -560,10 +560,9 @@ mod tests {
         // adapter would pass no matter what the allow-list does. Handing the variant to the gate
         // directly is what pins the branch itself.
         use super::require_mlkem512_transport_key;
-        use ml_kem::KemCore;
-
         let mut rng = AesRng::seed_from_u64(0);
-        let (_dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
+        let (_dk, ek) =
+            crate::cryptography::hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut rng);
         #[allow(deprecated)]
         let key = UnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
 

@@ -40,7 +40,7 @@ mod secure_requests {
     use threshold_types::{party::MpcIdentity, session_id::SessionId};
     use tonic::Code;
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     mod proto {
         tonic::include_proto!("ddec_networking");
     }
@@ -77,7 +77,10 @@ mod secure_requests {
         .unwrap();
 
         let error = client()
-            .send_value(proto::SendValueRequest { tag, value: vec![] })
+            .send_value(proto::SendValueRequest {
+                tag: tag.into(),
+                value: Default::default(),
+            })
             .await
             .unwrap_err();
 

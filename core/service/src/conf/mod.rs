@@ -123,6 +123,14 @@ impl Default for InternalConfig {
     }
 }
 
+/// Configuration of the service interface, the gRPC endpoint that the KMS connector calls.
+///
+/// This interface has no TLS, authentication or authorization. The deployment ensures that only
+/// the operator's own KMS connector can reach it and that it is never publicly reachable, so the
+/// server trusts every message it receives. MPC traffic between KMS cores uses the separate,
+/// mutually authenticated core-to-core interface in [`crate::conf::threshold::ThresholdPartyConf`].
+/// See `docs/explanations/trust_model.md`.
+///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
@@ -405,6 +413,32 @@ mod tests {
             SecretSharingKeychain {},
         ))));
         assert!(config.validate().is_err());
+    }
+
+    /// `validate()` also checks the core-to-core network settings of a threshold config.
+    #[test]
+    fn config_validation_rejects_a_zero_keepalive() {
+        let config: CoreConfig =
+            init_conf("config/default_2").expect("default_2 config must parse");
+        config.validate().expect("default_2 config should validate");
+
+        let mut zero_interval = config.clone();
+        zero_interval
+            .threshold
+            .as_mut()
+            .expect("threshold section required for threshold config")
+            .core_to_core_net
+            .keepalive_interval_secs = Some(0);
+        assert!(zero_interval.validate().is_err());
+
+        let mut zero_timeout = config;
+        zero_timeout
+            .threshold
+            .as_mut()
+            .expect("threshold section required for threshold config")
+            .core_to_core_net
+            .keepalive_timeout_secs = Some(0);
+        assert!(zero_timeout.validate().is_err());
     }
 
     #[test]

@@ -174,8 +174,8 @@ impl ProtocolDescription for DummyVss {
 #[async_trait]
 impl Vss for DummyVss {
     fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
-        // Dummy VSS fabricates shares locally, no network rounds.
-        0
+        // Dummy VSS is a single round protocol, as it simply sends the secret to all parties
+        1
     }
 
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(

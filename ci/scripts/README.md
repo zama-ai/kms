@@ -13,21 +13,23 @@
 ci/scripts/
 ├── analyze_perf_run.py            # Correlate artifacts from one performance run
 ├── backward_snapshot.sh           # Generate and compare backward-compatibility snapshots
-├── collect_network_diagnostics.sh # Capture per-pod network interface counters
+├── collect_network_diagnostics.py # Capture per-pod network interface counters
 ├── deploy.sh                      # Main deployment entry point
 ├── local_docs_link_check.py       # Check Markdown links to local files
 ├── manage_lifecycle.sh            # Lifecycle management
+├── perf_common.py                 # Process helpers for runner-side perf tools
+├── perf_runner.py                 # GitHub Actions performance orchestration
 ├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties
-├── sample_core_cpu.sh             # Sample KMS core CPU and memory during benchmarks
-├── sample_core_metrics.sh         # Scrape KMS Prometheus metrics throughout a benchmark
-├── sample_perf_diagnostics.sh     # Orchestrate metrics, ENA, and placement collection
-├── sample_pod_placement.sh        # Record core/client node and AZ placement
+├── sample_core_cpu.py             # Sample KMS core CPU and memory during benchmarks
+├── sample_core_metrics.py         # Scrape KMS Prometheus metrics throughout a benchmark
+├── sample_perf_diagnostics.py     # Orchestrate metrics, ENA, and placement collection
+├── sample_pod_placement.py        # Record core/client node and AZ placement
 └── lib/                           # Modular libraries
-    ├── common.sh                  # Logging, parsing, utilities (277 lines)
-    ├── context.sh                 # Kubernetes context setup (87 lines)
-    ├── infrastructure.sh          # S3, TKMS, Crossplane (316 lines)
-    ├── kms_deployment.sh          # KMS core deployment (546 lines)
-    └── utils.sh                   # Port forwarding, logs (165 lines)
+    ├── common.sh                  # Logging, parsing, utilities
+    ├── context.sh                 # Kubernetes context setup
+    ├── infrastructure.sh          # S3, TKMS, Crossplane
+    ├── kms_deployment.sh          # KMS core deployment
+    └── utils.sh                   # Port forwarding, logs
 ```
 
 ## Usage
@@ -90,7 +92,7 @@ The build process will:
 |------------------|----------------|
 | **Logging or argument parsing** | `lib/common.sh` |
 | **Backward-compatibility snapshots** | `backward_snapshot.sh` |
-| **Benchmark network diagnostics** | `collect_network_diagnostics.sh` |
+| **Benchmark network diagnostics** | `collect_network_diagnostics.py` |
 | **Kind cluster setup** | `lib/context.sh` |
 | **AWS/Tailscale config** | `lib/context.sh` |
 | **Local documentation link checks** | `local_docs_link_check.py` |
@@ -103,8 +105,8 @@ The build process will:
 | **Port forwarding** | `lib/utils.sh` |
 | **Log collection** | `lib/utils.sh` |
 | **Rolling KMS upgrades** ([docs](#rolling-upgrade-testing)) | `rolling_upgrade.sh` |
-| **Core CPU/memory benchmark samples** | `sample_core_cpu.sh` |
-| **Perf application, ENA, and placement diagnostics** | `sample_perf_diagnostics.sh` |
+| **Core CPU/memory benchmark samples** | `sample_core_cpu.py` |
+| **Perf application, ENA, and placement diagnostics** | `sample_perf_diagnostics.py` |
 
 ### Module Details
 
@@ -161,20 +163,52 @@ The build process will:
 
 ### Performance testing
 
+The runner tools use Python 3.11 or later and the standard library. They invoke
+existing tools such as `kubectl`, `argo`, `helm`, `docker`, and `curl`.
+They require no Python installation in the KMS client or core images.
+
+`perf_runner.py` handles image selection, validation, Argo execution, reports,
+and cleanup. The five diagnostic tools retain their positional arguments and
+artifact formats. The network collector uses a small shell command inside core
+containers to read interface counters.
+
+`sample_perf_diagnostics.py` owns all background samplers, including CPU sampling.
+It writes `core-cpu-samples.log` in the working directory and the other artifacts
+in its output directory. The workflow defines deployment parameters in job-level
+`env:` values.
+
+The runner starts the diagnostics controller in a separate process group.
+Its samplers share that group, so forced cleanup also stops their descendants.
+
+The workflow copies its runner tools into `RUNNER_TEMP` before the optional chart
+checkout. That checkout still supplies deployment files and Argo templates.
+The runner writes the expanded workflow to `perf-workflow.generated.yaml`.
+
+Run the tests from the repository root:
+
+```sh
+python3 -m unittest discover -s ci/scripts/tests -v
+python3 ci/perf-testing/generate-perf-workflow.py --self-test
+python3 ci/scripts/analyze_perf_run.py --self-test
+```
+
+The tests use fake command responses and local processes. They do not require
+a cluster, registry access, or Slack credentials.
+
 The performance-testing workflow collects network counters before and after a run,
 and samples KMS Core CPU and memory while it is running. Both scripts use the
 current Kubernetes context and default to the `kms-ci` namespace.
 
 #### Network diagnostics
 
-`collect_network_diagnostics.sh` captures per-interface counters from each running `kms-core-<party>-core-<core>`
+`collect_network_diagnostics.py` captures per-interface counters from each running `kms-core-<party>-core-<core>`
 pod. Run it once before and once after a performance test to produce per-pod and
 aggregate `eth0` traffic deltas:
 
 ```bash
-bash collect_network_diagnostics.sh before-perf <namespace>
+python3 collect_network_diagnostics.py before-perf <namespace>
 # Run the performance test.
-bash collect_network_diagnostics.sh after-perf <namespace>
+python3 collect_network_diagnostics.py after-perf <namespace>
 ```
 
 Results are written to `network-diagnostics/<phase>/`. The `after-perf` call also
@@ -184,7 +218,7 @@ transfer volume, average throughput, errors, and dropped packets. Set
 
 #### KMS Core CPU samples
 
-`sample_core_cpu.sh` continuously records CPU and memory for KMS Core pods using
+`sample_core_cpu.py` continuously records CPU and memory for KMS Core pods using
 `kubectl top`. Its output is one space-separated line per pod per sample:
 
 ```text
@@ -195,7 +229,7 @@ Start it in the background for the duration of a test and stop it when the test
 finishes:
 
 ```bash
-bash sample_core_cpu.sh <namespace> <interval-seconds> > core-cpu-samples.log &
+python3 sample_core_cpu.py <namespace> <interval-seconds> > core-cpu-samples.log &
 CPU_SAMPLER_PID=$!
 # Run the performance test.
 kill "${CPU_SAMPLER_PID}"

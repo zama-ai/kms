@@ -1,4 +1,4 @@
-This document outlines the gRPC-based peer-to-peer (P2P) communication protocol used between MPC (Multi-Party Computation) nodes in the KMS. It covers both secure communication using mutual TLS (mTLS) and insecure communication over a trusted network.
+This document outlines the gRPC-based peer-to-peer (P2P) communication protocol used between MPC (Multi-Party Computation) nodes in the KMS. It covers both secure communication using mutual TLS (mTLS) and insecure communication over a trusted network. This is the core-to-core interface; the service interface that the KMS connector calls is a separate gRPC server with different trust assumptions, see the [trust model](trust_model.md).
 
 ### P2P Networking Architecture
 

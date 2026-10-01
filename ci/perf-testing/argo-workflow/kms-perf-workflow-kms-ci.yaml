@@ -358,7 +358,7 @@ spec:
     - name: run-decrypt-rate
       inputs:
         parameters:
-        - name: kind
+        - name: scenario
         - name: rate
         - name: key_id
         - name: previous-ok
@@ -372,13 +372,13 @@ spec:
         parameters:
         - name: test-result
           valueFrom:
-            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.json
+            path: /tmp/artifacts/{{inputs.parameters.scenario}}-rate-{{inputs.parameters.rate}}.json
         - name: capacity-ok
           valueFrom:
-            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.ok
+            path: /tmp/artifacts/{{inputs.parameters.scenario}}-rate-{{inputs.parameters.rate}}.ok
       metadata:
         labels:
-          test: "{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}"
+          test: "{{inputs.parameters.scenario}}-rate-{{inputs.parameters.rate}}"
           app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
@@ -462,29 +462,35 @@ spec:
             object_folder="PUB-p13"
           EOF
 
-          kind="{{inputs.parameters.kind}}"
-          case "$kind" in
-            pdec)
+          scenario="{{inputs.parameters.scenario}}"
+          endpoint="${scenario##*-}"
+          case "$scenario" in
+            pdec-async|pdec-sync)
               command_name="public-decrypt"
               metrics_marker="PUBLIC_DECRYPT_METRICS"
               metrics_key="public_decrypt"
               display_name="public decrypt"
               ;;
-            udec)
+            udec-async|udec-sync)
               command_name="user-decrypt"
               metrics_marker="USER_DECRYPT_METRICS"
               metrics_key="user_decrypt"
               display_name="user decrypt"
               ;;
             *)
-              echo "Unsupported decrypt kind: $kind"
+              echo "Unsupported decrypt scenario: $scenario"
               exit 1
               ;;
           esac
 
-          test_name="${kind}-rate-{{inputs.parameters.rate}}"
+          test_name="${scenario}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
           test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{inputs.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          case "$endpoint" in
+            sync) test_command="${test_command} --sync" ;;
+            async) ;;
+            *) echo "Unsupported decrypt endpoint: $endpoint"; exit 1 ;;
+          esac
           mkdir -p /tmp/artifacts
 
           parameter_set="maxfail={{inputs.parameters.maxfail}},maxshed={{inputs.parameters.maxshed}},pct={{inputs.parameters.pct}}"
@@ -715,16 +721,13 @@ spec:
           pdec_warned=0
           pdec_failed=0
           pdec_skipped=0
-          pdec_lines=""
-          pdec_raw_lines=""
 
           udec_total=0
           udec_passed=0
           udec_warned=0
           udec_failed=0
           udec_skipped=0
-          udec_lines=""
-          udec_raw_lines=""
+          decrypt_blocks='[]'
 
           status_label() {
             case "$1" in
@@ -782,18 +785,21 @@ spec:
           }
 
           summarize_decrypt_rates() {
-            kind="$1"
+            local pdec_lines="" pdec_raw_lines="" udec_lines="" udec_raw_lines=""
+            scenario="$1"
+            operation="${scenario%-*}"
+            endpoint="${scenario##*-}"
             shift
 
-            case "$kind" in
-              pdec)
+            case "$scenario" in
+              pdec-async|pdec-sync)
                 display="Public decrypt"
                 metrics_key="public_decrypt"
                 extra_failed_key="verification_failed"
                 timing_key="verification_ms"
                 timing_label="verify"
                 ;;
-              udec)
+              udec-async|udec-sync)
                 display="User decrypt"
                 metrics_key="user_decrypt"
                 extra_failed_key="reconstruction_failed"
@@ -801,21 +807,21 @@ spec:
                 timing_label="recon"
                 ;;
               *)
-                echo "Unsupported decrypt summary kind: $kind"
+                echo "Unsupported decrypt summary scenario: $scenario"
                 return 1
                 ;;
             esac
 
-            echo "${display} perf tests:"
+            echo "${display} (${endpoint}) perf tests:"
             for rate in "$@"; do
-              result="/mnt/results/${kind}-rate-${rate}.json"
-              inc_decrypt_counter "$kind" total
+              result="/mnt/results/${scenario}-rate-${rate}.json"
+              inc_decrypt_counter "$operation" total
               if ! jq empty "$result" 2>/dev/null; then
-                inc_decrypt_counter "$kind" failed
-                line="$(status_label failed) ${rate}/s invalid result JSON"
+                inc_decrypt_counter "$operation" failed
+                line="$(status_label failed) ${endpoint} ${rate}/s invalid result JSON"
                 echo "$line"
-                append_operation_line "$kind" "$line"
-                append_decrypt_raw_line "$kind" "$line"
+                append_operation_line "$operation" "$line"
+                append_decrypt_raw_line "$operation" "$line"
                 continue
               fi
 
@@ -864,33 +870,33 @@ spec:
               # is an exploratory probe and can exceed its parameter set.
               if [ "$status" = "skipped" ]; then
                 outcome=skipped
-                inc_decrypt_counter "$kind" skipped
+                inc_decrypt_counter "$operation" skipped
                 line="$(status_label "$outcome") ${target_rate}/s skipped"
               elif [ "$status" != "passed" ]; then
                 if [ "$allowed_failure" = "true" ]; then
                   outcome=warned
-                  inc_decrypt_counter "$kind" warned
+                  inc_decrypt_counter "$operation" warned
                 else
                   outcome=failed
-                  inc_decrypt_counter "$kind" failed
+                  inc_decrypt_counter "$operation" failed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s measurement failed"
               elif [ "$within_parameter_set" = "true" ]; then
                 if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
                   outcome=warned
-                  inc_decrypt_counter "$kind" warned
+                  inc_decrypt_counter "$operation" warned
                 else
                   outcome=passed
-                  inc_decrypt_counter "$kind" passed
+                  inc_decrypt_counter "$operation" passed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               else
                 if [ "$allowed_failure" = "true" ]; then
                   outcome=warned
-                  inc_decrypt_counter "$kind" warned
+                  inc_decrypt_counter "$operation" warned
                 else
                   outcome=failed
-                  inc_decrypt_counter "$kind" failed
+                  inc_decrypt_counter "$operation" failed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
               fi
@@ -908,10 +914,18 @@ spec:
                 line="${line} ${timing_label}_failed=${extra_failed}"
               fi
 
+              line="${endpoint} ${line}"
               echo "$line"
-              append_operation_line "$kind" "$line"
-              append_decrypt_raw_line "$kind" "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
+              append_operation_line "$operation" "$line"
+              append_decrypt_raw_line "$operation" "$(status_label "$outcome") ${endpoint} rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
             done
+            summary_text="$(printf '*%s (%s) {{workflow.parameters.data-type}}*\n%b' "$display" "$endpoint" "${pdec_lines}${udec_lines}")"
+            raw_text="$(printf '%b' "${pdec_raw_lines}${udec_raw_lines}")"
+            # Slack limits each section to 3,000 characters.
+            decrypt_blocks=$(printf '%s' "$decrypt_blocks" | jq \
+              --arg summary "$summary_text" --arg raw "$raw_text" \
+              '. + [{type: "section", text: {type: "mrkdwn", text: $summary[0:3000]}},
+                    {type: "section", text: {type: "mrkdwn", text: ("```" + $raw[0:2900] + "```")}}]')
           }
 
           echo "Keygen and CRS perf tests:"
@@ -1011,18 +1025,6 @@ spec:
           slack_webhook_url=$(cat /etc/slack/url)
           keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
-          pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
-          if [ -n "$pdec_raw_text" ]; then
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
-          else
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
-          fi
-          udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
-          if [ -n "$udec_raw_text" ]; then
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
-          else
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
-          fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
           # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
@@ -1046,8 +1048,7 @@ spec:
             --arg run "$run_line" \
             --arg keygen "$keygen_block" \
             --arg crs "$crs_block" \
-            --arg pdec "$pdec_block" \
-            --arg udec "$udec_block" \
+            --argjson decrypt "$decrypt_blocks" \
             '{
               text: $title,
               blocks: [
@@ -1061,10 +1062,8 @@ spec:
                 ]},
                 {type: "divider"},
                 {type: "section", text: {type: "mrkdwn", text: $keygen}},
-                {type: "section", text: {type: "mrkdwn", text: $crs}},
-                {type: "section", text: {type: "mrkdwn", text: $pdec}},
-                {type: "section", text: {type: "mrkdwn", text: $udec}}
-              ]
+                {type: "section", text: {type: "mrkdwn", text: $crs}}
+              ] + $decrypt
             }'
           )
 

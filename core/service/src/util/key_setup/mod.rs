@@ -829,6 +829,13 @@ where
         &PrivDataType::FhePrivateKey.to_string(),
     )
     .await;
+    let _ = delete_at_request_and_epoch_id(
+        priv_storage,
+        other_key_id,
+        epoch_id,
+        &PrivDataType::FhePrivateKey.to_string(),
+    )
+    .await;
 
     // Get signing key with proper error handling
     let sk = match get_core_signing_identity(priv_storage).await {

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     backup::{
+        BACKUP_PKE_SCHEME,
         custodian::{
             InternalCustodianContext, InternalCustodianRecoveryOutput,
             InternalCustodianSetupMessage,
@@ -14,9 +15,7 @@ use crate::{
     },
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
-        encryption::{
-            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-        },
+        encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PublicSigKey, gen_sig_keys},
     },
     engine::base::derive_request_id,
@@ -24,10 +23,15 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
-use proptest::prelude::*;
-use rand::{SeedableRng, rngs::OsRng};
+use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
+
+/// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
+///
+/// Stands in for a custodian that supplies the wrong seed phrase: derivation succeeds, so the
+/// failure surfaces where it should, in unsigncryption, rather than at parse time.
+const WRONG_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
 #[test]
 fn operator_setup() {
@@ -42,7 +46,7 @@ fn operator_setup() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -106,7 +110,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -154,7 +158,7 @@ fn custodian_reencrypt() {
 
     let verification_key = operators[0].verification_key();
 
-    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
@@ -357,7 +361,7 @@ fn full_flow_malicious_custodian_init() {
         .unwrap();
         // Verify the missing custodian was detected (only 4 of 5 accepted)
         assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
         let result = operator
             .secret_share_and_signcrypt(
@@ -398,10 +402,7 @@ fn full_flow_malicious_custodian_second() {
     {
         let mut mnemonics_malicious = mnemonics.clone();
         // Update the 3rd custodian to an incorrect mnemonic
-        let _= mnemonics_malicious.insert(
-            Role::indexed_from_one(3),
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-                .to_string());
+        let _ = mnemonics_malicious.insert(Role::indexed_from_one(3), WRONG_MNEMONIC.to_string());
         let backups = custodian_recover(
             &mut rng,
             &mnemonics_malicious,
@@ -438,10 +439,8 @@ fn full_flow_malicious_custodian_second() {
             })
             .collect();
         // Update the first custodian to an incorrect mnemonic
-        let _=  mnemonics_malicious_dropped.insert(
-            Role::indexed_from_one(1),
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-                .to_string());
+        let _ = mnemonics_malicious_dropped
+            .insert(Role::indexed_from_one(1), WRONG_MNEMONIC.to_string());
         let backups = custodian_recover(
             &mut rng,
             &mnemonics_malicious_dropped,
@@ -651,7 +650,7 @@ fn operator_handle_init(
             custodian_count,
         )
         .unwrap();
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let signcrypt_result = operator
             .secret_share_and_signcrypt(

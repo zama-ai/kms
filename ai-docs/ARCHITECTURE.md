@@ -32,6 +32,34 @@ The configuration of the set of servers is handled through MPC contexts, which a
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
+## Communication interfaces and trust model
+
+Read this section before you review code for security issues or judge a security report. The full text is in [docs/explanations/trust_model.md](../docs/explanations/trust_model.md).
+
+A KMS core listens on two separate gRPC interfaces:
+
+1. **Core-to-core interface** (`[threshold]` section, default port 50001, crate [threshold-networking](../core/threshold-networking/)). A peer-to-peer network between the KMS cores of one deployment. It carries the MPC protocol messages.
+2. **Service interface** (`[service]` section, default port 50100, `CoreServiceEndpoint` in [kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto)). The [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector) calls it to start an operation and to fetch the result. It is an orchestrator channel: the connector says which operation to run, and the cores run the MPC protocol over the core-to-core interface.
+
+The **core-to-core interface** is guarded by mutual TLS. A node only accepts connections from the allowlisted set of peers in its peer list and MPC contexts. The receiver checks that the sender named in each message matches the Common Name of the peer certificate. In Nitro Enclave deployments (`tls.auto`), the verifier also checks the PCR values in the attestation document against `trusted_releases`, so a node only talks to peers that run an allowlisted release. PCR0 is the hash of the whole enclave image file, PCR1 the hash of the kernel and bootstrap ramdisk, and PCR2 the hash of the application root filesystem; all three must match one allowlisted entry, and when `eif_signing_cert` is configured PCR8 (hash of the image signing certificate) is checked against the certificate bundled in the peer's TLS certificate. Production deployments always run this interface with TLS enabled; a TLS-off configuration needs the `insecure` cargo feature and is used only for debugging and testing. Authenticated peers are still mutually distrusting MPC parties: up to `t` of them may be malicious, so the content of a peer message is adversarial input and the protocol code validates it.
+
+The **service interface** has no TLS, no authentication and no authorization in the code, and it does not verify the intent of a request. It trusts and accepts every message it receives. The deployment guarantees, at the infrastructure level, that exactly one KMS connector can reach this interface. That connector is operated by the same party that runs the KMS core, so the two trust each other by definition. The interface is never publicly reachable.
+
+Validation of a request is split across the stack. The [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector) performs the ACL checks on ciphertext handles and only forwards events emitted by the gateway contracts. Input proofs, verified on smart contract level and by the coprocessor, ensure that a ciphertext is well formed before it reaches the chain. The KMS core verifies EIP-712 signatures on user decryption requests, authenticates peers, and validates protocol messages.
+
+Request IDs work as follows. The gateway contracts assign each ID and bind it to its ciphertexts, and the connector resends the same payload on a retry, so the core assumes that a known ID carries the same ciphertexts as before. A meta store per operation type in the core tracks every accepted ID; MPC session IDs derive from the request ID, so this also stops a second MPC session under a used session ID. Key generation, preprocessing, CRS generation and context or epoch management reject a known ID with `AlreadyExists`. `PublicDecrypt` and `UserDecrypt` do the same unless the earlier attempt failed, in which case they reset the entry and decrypt again (`add_or_redo_failed_in_meta_store`). `PublicDecryptSync` and `UserDecryptSync` attach to the existing entry and return its result. A repeated decryption of the same ciphertexts is not a finding.
+
+The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
+
+Consequences for agents:
+
+- The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
+- Do not report missing authentication, authorization or rate limiting on the service interface, or any finding in which the connector itself is the attacker, as a vulnerability. Such a finding describes the design.
+- Values inside a request that originate from external clients and pass through the smart contracts and the connector unchanged are untrusted: ciphertexts and handles, user public encryption keys, EIP-712 signatures and domains, and parameter selectors such as the FHE parameter set or keyset configuration. The core must process them without a service outage (crash, stall, unbounded allocation) and without a confidentiality break. Such a finding is in scope even though the request arrives over the service interface.
+- Do not add authentication or authorization to the service interface unless your human asks for it.
+- Code that is not used in production is out of scope for security findings: the experimental BGV/BFV schemes in [core/threshold-bgv/](../core/threshold-bgv/), the benchmark and experiment harnesses in [core/experiments/](../core/experiments/), and any other code marked as experimental.
+- Every security finding you report must cite the commit hash or tag you analyzed and the file path and line numbers of every code location it relies on. Verify each pointer against the checked-out tree before you report it.
+
 ## Workspace layout
 
 The repository is a Cargo workspace. The members are declared in
@@ -39,28 +67,28 @@ The repository is a Cargo workspace. The members are declared in
 
 ### Core cryptography / MPC
 
-| Crate | Path | Responsibility |
-|---|---|---|
-| `threshold-algebra` | [core/threshold-algebra/](../core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
-| `threshold-execution` | [core/threshold-execution/](../core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
-| `threshold-bgv` | [core/threshold-bgv/](../core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
-| `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography |
-| `threshold-hashing` | [core/threshold-hashing/](../core/threshold-hashing/) | Hashing primitives used across the MPC stack |
-| `threshold-types` | [core/threshold-types/](../core/threshold-types/) | Shared types and constants |
-| `experiments` | [core/experiments/](../core/experiments/) | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](../docs/guides/threshold-benchmark.md)) |
+| Crate                  | Path                                                        | Responsibility                                                                                                       |
+| ---------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `threshold-algebra`    | [core/threshold-algebra/](../core/threshold-algebra/)       | Finite-field and group primitives used by the MPC protocols                                                          |
+| `threshold-execution`  | [core/threshold-execution/](../core/threshold-execution/)   | Threshold FHE protocol execution: DKG, preprocessing, online protocols                                               |
+| `threshold-bgv`        | [core/threshold-bgv/](../core/threshold-bgv/)               | Experimental BGV/BFV schemes with distributed keygen and threshold decryption                                        |
+| `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography                                                                          |
+| `threshold-hashing`    | [core/threshold-hashing/](../core/threshold-hashing/)       | Hashing primitives used across the MPC stack                                                                         |
+| `threshold-types`      | [core/threshold-types/](../core/threshold-types/)           | Shared types and constants                                                                                           |
+| `experiments`          | [core/experiments/](../core/experiments/)                   | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](../docs/guides/threshold-benchmark.md)) |
 
 ### Service layer
 
-| Crate | Path | Responsibility |
-|---|---|---|
-| `kms` | [core/service/](../core/service/) | KMS service library and binaries — the packaging around the core crypto |
-| `kms-grpc` | [core/grpc/](../core/grpc/) | Protobuf definitions + generated types and client stubs |
-| `core-client` | [core-client/](../core-client/) | CLI client that drives the gRPC API |
-| `observability` | [observability/](../observability/) | OpenTelemetry / Prometheus wiring |
-| `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
-| `bc2wrap` | [bc2wrap/](../bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
-| `error-utils` | [core/error-utils/](../core/error-utils/) | Shared error types and helpers |
-| `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management |
+| Crate            | Path                                            | Responsibility                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kms`            | [core/service/](../core/service/)               | KMS service library and binaries — the packaging around the core crypto                                                                                                                                                                                                                                                                                                                                  |
+| `kms-grpc`       | [core/grpc/](../core/grpc/)                     | Protobuf definitions + generated types and client stubs                                                                                                                                                                                                                                                                                                                                                  |
+| `core-client`    | [core-client/](../core-client/)                 | CLI client that drives the gRPC API                                                                                                                                                                                                                                                                                                                                                                      |
+| `observability`  | [observability/](../observability/)             | OpenTelemetry / Prometheus wiring                                                                                                                                                                                                                                                                                                                                                                        |
+| `vsocktun`       | [vsocktun/](vsocktun/)                          | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
+| `bc2wrap`        | [bc2wrap/](../bc2wrap/)                         | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding                                                                                                                                                                                                                                                                                                                                   |
+| `error-utils`    | [core/error-utils/](../core/error-utils/)       | Shared error types and helpers                                                                                                                                                                                                                                                                                                                                                                           |
+| `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management                                                                                                                                                                                                                                                                                                                                                                             |
 
 Auxiliary tools live under [tools/](../tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
@@ -83,9 +111,12 @@ The service crate is the main surface area. Key subdirectories under
   [keyset_configuration.rs](../core/service/src/engine/keyset_configuration.rs),
   [material_integrity.rs](../core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
-  startup checks) and
+  startup checks),
+  [public_material_sync.rs](../core/service/src/engine/public_material_sync.rs) (the
+  digest-verified peer fetcher shared with resharing, and the boot-time repair of public
+  storage built on it) and
   [storage_material_verification.rs](../core/service/src/engine/storage_material_verification.rs)
-  (the startup orchestration built on top of them — see
+  (the read-only startup checks on top of both — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](../core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](../core/service/src/engine/validation_wasm.rs) (the
@@ -99,8 +130,16 @@ The service crate is the main surface area. Key subdirectories under
   of long-term signing / root keys, used for disaster recovery. See
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
-  hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
-  chain verification). Signing lives under
+  hybrid ML-KEM (post-quantum), MLKEM1024-P384 (a composite of post-quantum
+  ML-KEM-1024 and classical P-384), and attestation (Nitro NSM + certificate
+  chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
+  keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
+  and the operator's per-context backup vault key — selected in one place,
+  `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
+  custodian encryption key, and the operator's own backup key, uses that scheme
+  (`InternalCustodianContext::new` / `validated_nodes`).
+  User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
@@ -110,11 +149,11 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventually be the root of *every* signing key of the node, ECDSA
-  included: keys are derived on demand from the *seed*. To keep backward
+  The seed will eventually be the root of _every_ signing key of the node, ECDSA
+  included: keys are derived on demand from the _seed_. To keep backward
   compatibility, and to avoid making nodes roll their ECDSA keys, an ECDSA key is
   also stored on its own, and the seed serves every non-ECDSA scheme. That is, if
-  a stored ECDSA key exists, then the seed does *not* derive the ECDSA material.
+  a stored ECDSA key exists, then the seed does _not_ derive the ECDSA material.
   The two halves come together in memory as `signing::identity::NodeSigningIdentity`,
   which `get_core_signing_identity` assembles and `BaseKmsStruct::signing_identity`
   hands out. `NodeSigningIdentity` is never persisted, and it is the only type with
@@ -130,10 +169,10 @@ The service crate is the main surface area. Key subdirectories under
   verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
-  `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
+  `PubDataType::TypedVerfKey` holds the scheme's _own_ verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
-  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
+  ECDSA's material is _additionally_ written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
@@ -145,12 +184,15 @@ The service crate is the main surface area. Key subdirectories under
 
 ### Task randomness
 
-[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
-one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
-share the source through `Arc`. Each task receives an owned RNG with a separate seed.
-Source initialization combines OS entropy with entropy from the configured security module.
-Refresh also mixes output from the existing source. Entropy failures return errors and leave
-the source unchanged. Refresh logs report success or failure without seed values.
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
+wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
+through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each
+parent from an independent draw, which combines OS entropy with entropy from the configured
+security module. Refresh also mixes output from the existing parents. Entropy failures return
+errors and leave both parents unchanged. Refresh logs report success or failure without seed
+values.
 
 Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
 or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
@@ -212,7 +254,7 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys. When the parameter set carries transciphering parameters, keygen
-  additionally persists a *second*, independently sampled LWE secret-key share
+  additionally persists a _second_, independently sampled LWE secret-key share
   and includes the matching transciphering server key; as for the OPRF key,
   `UseExisting` keygen generates a fresh transciphering share when the existing
   keyset has none. Key generation and CRS generation write persistent material
@@ -239,19 +281,22 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   sub-protocol is skipped and the reshared private keyset keeps that field
   absent. Which of these optional shares to reshare is decided from the input
   keyset, and every party must agree. A storage failure during
-  resharing rolls the new epoch back on the party that fails. That party attempts
-  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
-  Public data remains because an epoch change does not affect it. If cleanup
-  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  resharing rolls the new epoch back on the party that fails. That party deletes
+  the key shares and the CRS metadata that its own resharing wrote under the new
+  epoch. The party deletes the epoch data and forgets the epoch only once
+  the epoch holds no key share and no CRS metadata. Public data remains because
+  an epoch change does not affect it. A failed deletion keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
+  epoch instead, and covers the material of every request.
+  `DestroyMpcContext` takes a stable
   snapshot of the context's registered epochs and erases their secret shares
   before it forgets the context and removes its TLS trust-root references. A trust
   root remains if another live context uses it. This order leaves no usable key
   shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
   lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
-  shared leases for its target context and epoch through all PRSS, resharing and
-  persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  shared leases for its target context and epoch. A reshare also holds shared
+  leases for its source context and epoch through all PRSS, resharing, and persistence work.
+  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
@@ -287,6 +332,13 @@ A single `RealCentralizedKms` instance holds all key material. No MPC; keys
 live in the configured vault backend. Preprocessing / reshare RPCs are not
 applicable.
 
+A centralized node keeps no epoch registry and stores no `EpochData`, so every
+epoch-scoped entry it holds belongs to the default epoch. `KeyGen`, `CrsGen`,
+`KeyGenPreproc`, `NewMpcEpoch`, `PublicDecrypt` and `UserDecrypt` reject any
+other epoch ID with `InvalidArgument`. A request that omits the epoch ID still
+falls back to the default epoch, so a caller that never sets the field is
+unaffected.
+
 ### Threshold
 
 `n` parties each run a `ThresholdKms` server. Each party holds a secret share
@@ -316,7 +368,16 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique.
+  encryption key and every custodian verification key is unique, and unless every
+  custodian encryption key uses `BACKUP_PKE_SCHEME`.
+  Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
+  custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
+  so the phrase does not cap the scheme's security level. A vault written under an
+  older ML-KEM-512 context is not readable by a node holding a composite key, but
+  each ciphertext carries its own `pke_type`, so a vault spanning both schemes
+  decrypts as long as the matching key is installed. That remains true for
+  material already written; what is refused is *creating* a new context under a
+  weaker scheme.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
@@ -349,7 +410,7 @@ custodian context and creates a new one. Nothing reads that folder, so its conte
 steer the node nor stall it; the startup sweep lists it only to report leftovers.
 
 `NewCustodianContext` points the keychain at the new context and re-encrypts the whole
-vault under it *before* persisting the recovery material, so it is rolled back if any later
+vault under it _before_ persisting the recovery material, so it is rolled back if any later
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
@@ -421,7 +482,7 @@ backup failure does not purge the primary material.
 ## Boot-time storage verification
 
 Every node checks its storage during service construction, before it serves any request.
-Three independent things happen.
+Four independent things happen.
 Boot-time verification lets us ensure the public and private storage are
 consistent, and detect any malicious behaviour and/or misconfiguration before
 the KMS party boots up.
@@ -439,11 +500,31 @@ account for is logged as an error without stopping boot. On a threshold node the
 (`EpochData`) is read once before the checks, then handed to `SessionMaker::new_initialized`. In
 recovery mode, the private and public checks are skipped so that the node can repair storage.
 
-**Public storage is verified but never touched.** Public storage can drift out of a
-consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
-writes across multiple entries are not atomic, so a crash mid-operation can leave material missing
-or stale. Private storage holds the digests and signatures describing what should be published,
-so it is the reference.
+**Public storage is verified, and the verification itself never touches it.** It is the
+authority on what is wrong: it names the offending entry, and it reads and hashes each
+published object exactly once, which is all a node with intact storage ever pays.
+
+**A failed verification is repaired from peers and verified again (threshold nodes only).**
+Public storage can drift out of a consistent state: a misconfigured bucket or prefix can point
+a node at the wrong material, and writes across multiple entries are not atomic, so a crash
+mid-operation can leave material missing or stale. Private storage holds the digests and
+signatures describing what should be published, so it is the reference; its own signatures are
+checked before anything else consults it. Every party in an MPC context publishes the same
+keysets and CRSes, so when `verify_storage_material` fails, `sync_public_material_from_peers`
+([public_material_sync.rs](../core/service/src/engine/public_material_sync.rs)) compares the
+digests that current private metadata records — one metadata entry per ID, the one from the
+greatest epoch that holds it — against the raw bytes in public storage, and downloads any
+missing or mismatched entry from the public storage of the peers in the material's epoch
+context (S3 URLs from the `ContextInfo` in private storage, tried in random order; a peer
+recorded with a `file://` URL or no URL at all is logged and skipped). Downloaded bytes are
+accepted only when they hash to the recorded digest and are stored verbatim, and verification
+then runs a second time so that whatever was written is re-checked independently. Material that
+cannot be validated is never fetched: legacy metadata (no digest), decompression keys (no
+private counterpart), and node-specific material (a peer publishes its own verification keys,
+CA certificate, and recovery material, not this node's). A needed entry that no peer can supply
+fails boot, carrying the original verification failure as its context so the log still names
+what was wrong locally. Centralized nodes skip the sync — no peer publishes their material —
+and recovery mode skips it along with the other checks.
 
 The code is split by level. [material_integrity.rs](../core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
@@ -460,13 +541,15 @@ and `verify_storage_material`. The checks follow three rules:
    write access. The node cannot tell these apart, so once the integrity checks pass,
    `report_unexpected_public_material` lists public storage and logs an error for every entry
    that private storage does not account for. Boot continues regardless.
-3. **Read-only.** Nothing is written, repaired, or fetched from peers.
+3. **Read-only.** The verification writes nothing; every repair happens in the peer-sync step,
+   which runs only after a verification failure, and whatever that step wrote is re-checked by
+   a second verification pass from scratch.
 
 What it verifies, and how failures are treated:
 
 | Check | On failure |
 |---|---|
-| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
@@ -492,7 +575,7 @@ until the 0.16 migration removes them. A centralized node rejects both PRSS type
 The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
 A successful delete response alone does not count as completed cleanup.
 
-Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
+Custodian backup readiness is deliberately _not_ part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
 `keychain_initialized` ([backup_operator.rs](../core/service/src/engine/backup_operator.rs)) asks
 the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
@@ -550,8 +633,16 @@ on-wire encoding goes through the pinned-`bincode` wrapper
 versioned types: `BackupCiphertextVersions`,
 `InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
-**Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
-is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
+**Startup migrations.** The service moves material when a release changes its storage path. The
+v0.15 migration moves legacy private `CrsInfo` into `DEFAULT_EPOCH_ID` after the other startup migrations succeed.
+It accepts the copy kept by v0.14 or creates one for an older installation. It removes the non-epoched entry only after the two
+copies match, and it stops startup if they differ or if the legacy entry remains after deletion. If
+the copies differ, an operator must inspect them and remove the incorrect copy before restarting.
+Once the migration completes, releases older than v0.14 can no longer load that CRS metadata because
+they only know the removed non-epoched path.
+
+**Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
+is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
 — because each pinned historical version drags in a conflicting dependency
 graph). Per-version `generate-vX.Y.Z/` crates serialize a catalogue of types
 using that release's dependencies; the artifacts land under
@@ -560,6 +651,11 @@ indexed by per-module `.ron` manifests. The loader in
 [backward-compatibility/src/](../backward-compatibility/src/) replays every
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
+
+Custodian-backup fixtures exist for 0.15.0 only. The feature ships first in 0.15
+and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted
+and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather
+than kept as a compatibility target.
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).
@@ -591,6 +687,11 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   `slow_tests` enables the long-running suite. `kms/insecure` enables development RPCs
   and mock enclave support. It forwards `threshold-networking/insecure`, which permits
   plaintext transport and mock attestation.
+
+The [performance suite](../ci/perf-testing/PERF_TEST_README.md) measures public and user
+decryption through both sync and async endpoints. The scenario configuration selects each
+operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
+Python analyzer report the ladders separately.
 
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.

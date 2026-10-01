@@ -306,15 +306,6 @@ const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMe
     seed: 42,
 };
 
-// KMS test
-const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutputTest {
-    test_filename: Cow::Borrowed("operator_backup_output"),
-    custodian_count: 4,
-    custodian_threshold: 1,
-    plaintext: [0u8; 32],
-    backup_id: [1u8; 32],
-    seed: 42,
-};
 */
 
 fn dummy_domain() -> alloy_sol_types_1_3_1::Eip712Domain {
@@ -588,58 +579,6 @@ impl KmsV0_11 {
         );
         TestMetadataKMS::CustodianSetupMessage(CUSTODIAN_SETUP_MESSAGE_TEST)
     }
-
-    fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(OPERATOR_BACKUP_OUTPUT_TEST.seed);
-
-        let custodians: Vec<_> = (0..OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
-            .map(|i| {
-                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-                Custodian::new(
-                    i,
-                    signing_key,
-                    verification_key,
-                    private_key,
-                    public_key,
-                )
-                .unwrap()
-            })
-            .collect();
-        let custodian_messages: Vec<_> = custodians
-            .iter()
-            .map(|c| c.generate_setup_message(&mut rng).unwrap())
-            .collect();
-
-        let operator = {
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-            Operator::new(
-                0,
-                custodian_messages,
-                signing_key,
-                verification_key,
-                private_key,
-                public_key,
-                OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
-            )
-            .unwrap()
-        };
-        let operator_backup_output = &operator
-            .secret_share_and_encrypt(
-                &mut rng,
-                &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
-                RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
-            )
-            .unwrap()[&0];
-
-        store_versioned_test!(
-            operator_backup_output,
-            dir,
-            &OPERATOR_BACKUP_OUTPUT_TEST.test_filename
-        );
-        TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
-    }
     */
 }
 
@@ -768,7 +707,6 @@ impl KMSCoreVersion for V0_11 {
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
             // KmsV0_11::gen_custodian_setup_message(&dir),
-            // KmsV0_11::gen_operator_backup_output(&dir),
         ]
     }
 

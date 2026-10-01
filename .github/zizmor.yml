@@ -35,3 +35,7 @@ rules:
       - rolling-upgrade-testing.yml:541
       - rolling-upgrade-testing.yml:542
       - rolling-upgrade-testing.yml:543
+  dangerous-triggers:
+    ignore:
+      # Checks out and runs no PR code; skips forks.
+      - pr-images-cleanup.yml

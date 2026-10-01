@@ -41,7 +41,7 @@ use tonic_health::server::HealthReporter;
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 // The in-process harness runs all MPC parties together, so concurrent protocols can exceed the default deadline on CI.
-const IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS: u64 = 60;
+const IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS: u64 = 180;
 
 /// Size the global MPC rayon pool the same way the `kms-server` does, i.e. from
 /// [`InternalConfig`]: `tokio = ceil(#CPUs / 8)` and `rayon = #CPUs - tokio`.

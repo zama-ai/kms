@@ -1,6 +1,7 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
+use crate::backup::{BACKUP_PKE_SCHEME, DSEP_ATTESTED_BACKUP_PK};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
@@ -22,9 +23,7 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
-        encryption::{
-            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-        },
+        encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
@@ -41,6 +40,7 @@ use crate::{
     },
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
@@ -206,15 +206,21 @@ where
     /// Generate a recovery request to return to the custodians
     /// based on the already stored [`InternalCustodianContext`]
     /// More specifically using the `cts` containing the signcryptions of the operator's share of the private backup decryption key
+    ///
+    /// The ephemeral keypair this mints is the receiver of the custodian-to-operator signcryption,
+    /// so it uses [`BACKUP_PKE_SCHEME`] like the rest of the backup chain. It never reaches
+    /// storage — the private half lives in `self.ephemeral_keys` for the duration of the recovery.
     async fn gen_outer_recovery_request(
         &self,
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
-        let mut rng = self.base_kms.new_rng();
+        // The ephemeral keypair is MLKEM1024-P384, so it needs a seed wider than the 128 bits
+        // `new_rng` provides.
+        let mut rng = self.base_kms.new_rng_256();
         let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
         let mut grpc_cts = HashMap::new();
         for (cur_cus_role, cur_cus_ct) in cts {
@@ -299,6 +305,11 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Return the operator's backup encryption key, with an attestation document over its digest.
+    ///
+    /// A digest is attested rather than the key because the composite key exceeds the attestation
+    /// document's [`crate::cryptography::attestation::NSM_ATTESTATION_FIELD_MAX_BYTES`] `public_key`
+    /// field.
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
@@ -318,14 +329,16 @@ where
                         })?;
                         let attestation_document = match &self.security_module {
                             Some(sm) => {
-                                sm.attest(public_key.clone(), None).await
+                                let key_digest =
+                                    hash_element(&DSEP_ATTESTED_BACKUP_PK, &public_key);
+                                sm.attest(key_digest, None).await
                                 .map_err(|e|
                                     MetricedError::new(
                                         OP_FETCH_PK,
                                         None,
                                         anyhow::anyhow!("Could not issue attestation document for operator backup public key: {e}"),
                                         tonic::Code::Internal))?
-                            },
+                            }
                             None => vec![],
                         };
                         Ok(Response::new(OperatorPublicKey {
@@ -1451,6 +1464,7 @@ mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use std::{
         collections::{BTreeMap, HashSet},
         time::SystemTime,
@@ -1492,7 +1506,7 @@ mod tests {
             storage: StorageProxy::Ram(RamStorage::new()),
             keychain: Some(KeychainProxy::SecretSharing(
                 crate::vault::keychain::secretsharing::SecretShareKeychain::new(
-                    AesRng::seed_from_u64(1),
+                    ChaCha20Rng::seed_from_u64(1),
                 ),
             )),
         }))
@@ -1767,7 +1781,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let (dec_key, enc_key) = {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             enc.keygen().unwrap()
         };
         let backup_id = derive_request_id("test").unwrap();
@@ -1778,7 +1792,7 @@ mod tests {
         let mut custodian_nodes = Vec::new();
         for role in 1..=3 {
             let (_, custodian_enc_key) = {
-                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
             let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
@@ -1808,7 +1822,7 @@ mod tests {
         let cts_out = InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption {
                 payload: vec![1, 2, 3],
-                pke_type: PkeSchemeType::MlKem512,
+                pke_type: BACKUP_PKE_SCHEME,
                 signing_type: SigningSchemeType::Ecdsa256k1,
             },
         };

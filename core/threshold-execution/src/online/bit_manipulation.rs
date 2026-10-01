@@ -233,7 +233,6 @@ where
         Z: Ring,
         Z: std::ops::Shl<usize, Output = Z>,
     {
-        #![allow(clippy::many_single_char_names)]
         if lhs.len() != rhs.len() {
             anyhow_error_and_log(format!(
                 "Inputs to the binary adder are of different lenght. LHS is {:?} and RHS is {:?}",

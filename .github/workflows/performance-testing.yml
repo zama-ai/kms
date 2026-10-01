@@ -124,6 +124,19 @@ jobs:
       actions: read # Required to resolve the current job URL for Slack reports
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
+    env:
+      DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
+      TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
+      CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'false' }}
+      FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+      KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
+      NAMESPACE: 'kms-ci'
+      KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
+      TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+      # No dispatch input: the workflow is already at GitHub's 10-input
+      # limit. Enable on both schedule and workflow_dispatch so a branch
+      # run can verify scrape/remote-write without waiting for the nightly.
+      ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -134,6 +147,9 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
+      - name: Preserve runner tools across chart checkout
+        run: python3 ci/scripts/perf_runner.py stage-tools
+
       # ======================================================================
       # DETERMINE IMAGE TAGS
       # Use docker-build outputs if built, otherwise use provided inputs
@@ -143,92 +159,7 @@ jobs:
           DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
           INPUT_CORE_TAG: ${{ inputs.kms_core_image_tag }}
           INPUT_CLIENT_TAG: ${{ inputs.kms_core_client_image_tag }}
-        run: |
-          # Determine which image tags to use
-          if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
-            echo "Using freshly built images from docker-build job"
-            CORE_TAG="${DOCKER_BUILD_TAG}"
-            CLIENT_TAG="${DOCKER_BUILD_TAG}"
-            TAG_SOURCE="docker-build output"
-            TAG_SOURCE_ENV="docker-build"
-          else
-            echo "Using provided image tags from inputs"
-            CORE_TAG="${INPUT_CORE_TAG}"
-            CLIENT_TAG="${INPUT_CLIENT_TAG}"
-            TAG_SOURCE="workflow inputs"
-            TAG_SOURCE_ENV="workflow-inputs"
-          fi
-
-          # Validate that we have image tags
-          if [[ -z "${CORE_TAG}" ]]; then
-            echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
-            exit 1
-          fi
-          if [[ -z "${CLIENT_TAG}" ]]; then
-            echo "ERROR: No client image tag available. Either build images or provide kms_core_client_image_tag"
-            exit 1
-          fi
-
-          echo "============================================================"
-          echo "KMS PERF IMAGE TAGS"
-          echo "============================================================"
-          echo "Source:                    ${TAG_SOURCE}"
-          echo "KMS Core image tag:        ${CORE_TAG}"
-          echo "KMS Core client image tag: ${CLIENT_TAG}"
-          echo ""
-          echo "Re-run without Docker build:"
-          echo "  Build new Docker images: unchecked"
-          echo "  KMS Core image tag: ${CORE_TAG}"
-          echo "  KMS Core client image tag: ${CLIENT_TAG}"
-          echo "============================================================"
-
-          {
-            echo "## KMS perf image tags"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Source | \`${TAG_SOURCE}\` |"
-            echo "| KMS Core image tag | \`${CORE_TAG}\` |"
-            echo "| KMS Core client image tag | \`${CLIENT_TAG}\` |"
-            echo ""
-            echo "For a rerun without rebuilding, uncheck \`Build new Docker images\` and use the tags above."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
-            echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
-            echo "KMS_IMAGE_TAG_SOURCE=${TAG_SOURCE_ENV}"
-          } >> "$GITHUB_ENV"
-
-      # ======================================================================
-      # CONFIGURE DEPLOYMENT PARAMETERS
-      # ======================================================================
-      - name: Configure deployment parameters
-        env:
-          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-          TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
-          CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'false' }}
-          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
-          KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
-          NAMESPACE: 'kms-ci'
-          KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
-          TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
-          # No dispatch input: the workflow is already at GitHub's 10-input
-          # limit. Enable on both schedule and workflow_dispatch so a branch
-          # run can verify scrape/remote-write without waiting for the nightly.
-          ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-        run: |
-          {
-            echo "ENABLE_KMS_METRICS=${ENABLE_KMS_METRICS}"
-            echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
-            echo "TLS=${TLS}"
-            echo "CLIENT_LOGS=${CLIENT_LOGS}"
-            echo "FHE_PARAMS=${FHE_PARAMS}"
-            echo "KMS_BRANCH=${KMS_BRANCH}"
-            echo "NAMESPACE=${NAMESPACE}"
-            echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
-            echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
-          } >> "$GITHUB_ENV"
+        run: python3 ci/scripts/perf_runner.py determine-tags
 
       - name: Login to zws GitHub Container Registry
         uses: ./.github/actions/docker-login
@@ -237,34 +168,8 @@ jobs:
           username: ${{ secrets.HARBOR_READ_LOGIN }}
           password: ${{ secrets.HARBOR_READ_TOKEN }}
 
-      - name: Set up path suffix based on deployment type
-        run: |
-          ###################################################################
-          # Set up path suffix based on deployment type
-          ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Using enclave-enabled configuration..."
-            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
-          else
-            echo "Using standard threshold configuration..."
-            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
-          fi
-
       - name: Validate perf deployment selection
-        run: |
-          if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
-            echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
-            echo "Selected deployment_type=${DEPLOYMENT_TYPE}, tls=${TLS}."
-            echo "Set tls=false for non-enclave deployments, or choose thresholdWithEnclave."
-            exit 1
-          fi
-
-          if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
-            echo "ERROR: performance-testing supports only threshold deployment types."
-            echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
-            exit 1
-          fi
-          echo "Using user-decrypt rate KMS perf suite."
+        run: python3 ci/scripts/perf_runner.py validate
 
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
@@ -275,58 +180,7 @@ jobs:
       - name: Verify image tags exist in registry
         env:
           IMAGE_REPO: hub.zama.org/ghcr/zama-ai/kms
-        run: |
-          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            CORE_IMAGE_NAME="core-service-enclave-insecure"
-          else
-            CORE_IMAGE_NAME="core-service-insecure"
-          fi
-
-          images=(
-            "${IMAGE_REPO}/${CORE_IMAGE_NAME}:${KMS_CORE_IMAGE_TAG}"
-            "${IMAGE_REPO}/core-client-insecure:${KMS_CORE_CLIENT_IMAGE_TAG}"
-          )
-
-          missing=0
-          for img in "${images[@]}"; do
-            echo "Checking ${img}..."
-            found=0
-            for attempt in {1..12}; do
-              if docker manifest inspect "${img}" > /dev/null 2>&1; then
-                echo "  ✅ found"
-                found=1
-                break
-              fi
-
-              if [[ "${attempt}" -lt 12 ]]; then
-                echo "  not found yet (${attempt}/12); retrying in 5s..."
-                sleep 5
-              fi
-            done
-
-            if [[ "${found}" -ne 1 ]]; then
-              echo "  ❌ not found in registry"
-              missing=1
-            fi
-          done
-
-          if [[ "${missing}" -eq 1 ]]; then
-            echo "ERROR: One or more required image tags are missing from the registry."
-            echo "If you dispatched manually with build=false, check that the provided"
-            echo "image tags were actually pushed; otherwise re-run with build=true."
-            exit 1
-          fi
-
-          {
-            echo ""
-            echo "## Verified perf images"
-            echo ""
-            echo "| Image |"
-            echo "| --- |"
-            for img in "${images[@]}"; do
-              echo "| \`${img}\` |"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 ci/scripts/perf_runner.py verify-images
 
       # ======================================================================
       # TOOLING SETUP
@@ -376,13 +230,6 @@ jobs:
           ###################################################################
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
-      - name: Checkout Project
-        if: ${{ env.KMS_CHART_VERSION != 'repository' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: false
 
       - name: Checkout Project KMS
         if: ${{ env.KMS_CHART_VERSION == 'repository' }}
@@ -437,7 +284,7 @@ jobs:
       - name: Capture network diagnostics before perf
         if: always()
         run: |
-          bash ci/scripts/collect_network_diagnostics.sh before-perf "${NAMESPACE}"
+          python3 "${PERF_TOOLS_DIR:-ci/scripts}/collect_network_diagnostics.py" before-perf "${NAMESPACE}"
 
       # ======================================================================
       # PERFORMANCE TESTING
@@ -448,149 +295,20 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          ###################################################################
-          # Prepare and execute Argo workflow for performance testing
-          ###################################################################
-          echo "Starting performance testing workflow..."
-
-          # Sample per-core (kms-core pod) CPU throughout the run so we can correlate
-          # core CPU% against the rate rungs by timestamp (pairs with the eth0
-          # diagnostics to distinguish CPU-bound vs network-bound at the top rungs).
-          # Backgrounded here so it lives for this step's shell; killed on exit
-          # (including the exit-1 path).
-          bash ci/scripts/sample_core_cpu.sh "${NAMESPACE}" > core-cpu-samples.log 2>&1 &
-          CPU_SAMPLER_PID=$!
-          bash ci/scripts/sample_perf_diagnostics.sh "${NAMESPACE}" perf-diagnostics \
-            > perf-diagnostics-controller.log 2>&1 &
-          DIAGNOSTICS_PID=$!
-          stop_samplers() {
-            kill "${CPU_SAMPLER_PID}" "${DIAGNOSTICS_PID}" 2>/dev/null || true
-            wait "${CPU_SAMPLER_PID}" "${DIAGNOSTICS_PID}" 2>/dev/null || true
-          }
-          trap stop_samplers EXIT
-
-          # Convert TLS boolean to enabled/disabled string
-          if [[ "${TLS}" == "true" ]]; then
-            TLS_STATUS="enabled"
-          else
-            TLS_STATUS="disabled"
-          fi
-          if [[ "${CLIENT_LOGS}" == "true" ]]; then
-            CLIENT_LOGS_STATUS="enabled"
-          else
-            CLIENT_LOGS_STATUS="disabled"
-          fi
-
-          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml"
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
-          else
-            S3_CONFIG_MAP_NAME="kms-ci-1"
-          fi
-          EXTRA_SUBMIT_ARGS=(
-            -p "fhe-params=${FHE_PARAMS}"
-            -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
-          )
-
-          # Expand the rate scenarios (perf-scenarios.toml) into the workflow in place, before the image-tag sed below.
-          # Fails here if a scenario is malformed.
-          echo "Expanding rate scenarios into ${WORKFLOW_TEMPLATE}..."
-          python3 ci/perf-testing/generate-perf-workflow.py \
-            --scenarios ci/perf-testing/perf-scenarios.toml \
-            --template "${WORKFLOW_TEMPLATE}" \
-            -o "${WORKFLOW_TEMPLATE}"
-
-          # Update the workflow template with the current image tag
-          echo "Using image tags: core=${KMS_CORE_IMAGE_TAG}, client=${KMS_CORE_CLIENT_IMAGE_TAG}"
-          echo "Updating workflow template ${WORKFLOW_TEMPLATE} — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
-          sed -i \
-            -e "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" \
-            -e "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
-            "${WORKFLOW_TEMPLATE}"
-
-          JOB_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
-          JOB_LABEL="run ${RUN_ID}"
-          if command -v gh >/dev/null 2>&1; then
-            JOB_LINE="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs" --jq '.jobs[] | select(.name == "performance-testing") | "\(.id) \(.html_url)"' | head -n 1 || true)"
-            if [[ -n "${JOB_LINE}" ]]; then
-              JOB_ID="${JOB_LINE%% *}"
-              JOB_URL="${JOB_LINE#* }"
-              JOB_LABEL="job ${JOB_ID}"
-            fi
-          fi
-          echo "Slack report link: ${JOB_LABEL} (${JOB_URL})"
-
-          SUBMIT_JSON="$(
-            timeout --signal=TERM 5m argo submit -n "${NAMESPACE}" \
-              "${WORKFLOW_TEMPLATE}" \
-              -p tls="${TLS_STATUS}" \
-              -p client-logs="${CLIENT_LOGS_STATUS}" \
-              "${EXTRA_SUBMIT_ARGS[@]}" \
-              -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-              -p job_url="${JOB_URL}" \
-              -p job_label="${JOB_LABEL}" \
-              -o json
-          )"
-          WORKFLOW_NAME="$(jq -er '.metadata.name' <<< "${SUBMIT_JSON}")"
-          echo "Submitted Argo workflow: ${WORKFLOW_NAME}"
-          echo "PERF_WORKFLOW_NAME=${WORKFLOW_NAME}" >> "${GITHUB_ENV}"
-
-          echo "Waiting up to 1 hour for ${WORKFLOW_NAME}..."
-          wait_exit=0
-          timeout --signal=TERM 1h \
-            argo wait "${WORKFLOW_NAME}" -n "${NAMESPACE}" || wait_exit=$?
-
-          echo "Fetching final workflow logs..."
-          if ! timeout --signal=TERM 10m \
-            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" --timestamps \
-              | tee argo-workflow-logs.txt; then
-            echo "::warning::Could not fetch complete logs for ${WORKFLOW_NAME}"
-          fi
-
-          workflow_phase=$(
-            argo get "${WORKFLOW_NAME}" -n "${NAMESPACE}" \
-              --request-timeout 1m -o json | jq -r '.status.phase'
-          )
-          echo "Argo workflow phase: ${workflow_phase}"
-          if [[ "${wait_exit}" -eq 124 ]]; then
-            echo "::error::Timed out waiting for ${WORKFLOW_NAME}"
-            exit 1
-          elif [[ "${wait_exit}" -ne 0 ]]; then
-            echo "::warning::argo wait exited with status ${wait_exit}"
-          fi
-          if [[ "${workflow_phase}" != "Succeeded" ]]; then
-            exit 1
-          fi
-
-          echo "Workflow completed."
+        run: python3 "${PERF_TOOLS_DIR:-ci/scripts}/perf_runner.py" run
 
       - name: Report core CPU samples
         if: always()
-        run: |
-          if [ ! -s core-cpu-samples.log ]; then
-            echo "[cpu] no samples captured — check metrics-server pod-metrics RBAC for the CI identity in ${NAMESPACE}"
-            exit 0
-          fi
-          echo "[cpu] per-core CPU via metrics-server (~15s resolution); cores request 48 vCPU (=48000m)."
-          echo "[cpu] full timeseries is in the core-cpu-samples artifact; correlate its timestamps with the rung timestamps in the Argo log."
-          echo "[cpu] $(wc -l < core-cpu-samples.log) sample lines captured; last 500 below (the sampler loop is uncapped, so the full dump is unbounded — hence the tail + artifact):"
-          tail -n 500 core-cpu-samples.log
+        run: python3 "${PERF_TOOLS_DIR:-ci/scripts}/perf_runner.py" report-cpu
 
       - name: Capture network diagnostics after perf
         if: always()
         run: |
-          bash ci/scripts/collect_network_diagnostics.sh after-perf "${NAMESPACE}"
+          python3 "${PERF_TOOLS_DIR:-ci/scripts}/collect_network_diagnostics.py" after-perf "${NAMESPACE}"
 
       - name: Report perf diagnostics
         if: always()
-        run: |
-          echo "Placement snapshot:"
-          cat perf-diagnostics/pod-placement.tsv 2>/dev/null || echo "warning: placement snapshot unavailable"
-          echo "Application-metrics sampler status:"
-          grep -E 'sampler_(start|discovery|error)|scrape_(error|partial)' perf-diagnostics/core-metrics.log 2>/dev/null | tail -n 100 || true
-          echo "ENA probe status:"
-          cat perf-diagnostics/ena-start.log 2>/dev/null || echo "warning: ENA probe status unavailable"
+        run: python3 "${PERF_TOOLS_DIR:-ci/scripts}/perf_runner.py" report-diagnostics
 
       # ======================================================================
       # SAVE ARGO WORKFLOW LOGS
@@ -627,29 +345,7 @@ jobs:
       # ======================================================================
       - name: Get logs from kms-core
         if: always()
-        run: |
-          ###################################################################
-          # Collect logs from all KMS Core pods for debugging
-          ###################################################################
-          echo "Collecting logs from KMS Core pods..."
-          for i in {1..13}; do
-            echo "Collecting logs from KMS Core pod ${i}/13..."
-            POD_NAME="${HELM_RELEASE_PREFIX:-kms-core}-${i}-core-${i}"
-            LOG_FILE="kms-core-${i}-logs.txt"
-
-            # Get pod logs and save to file
-            if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
-              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-                kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}"
-              else
-                kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}"
-              fi
-              echo "  ✅ Logs saved to ${LOG_FILE}"
-            else
-              echo "  ⚠️ Pod ${POD_NAME} not found, skipping log collection"
-              touch "${LOG_FILE}"  # Create empty file to prevent workflow failure
-            fi
-          done
+        run: python3 "${PERF_TOOLS_DIR:-ci/scripts}/perf_runner.py" core-logs
 
       - name: Upload kms-core logs
         if: always()
@@ -665,37 +361,4 @@ jobs:
       # ======================================================================
       - name: Cleanup
         if: always()
-        run: |
-          ###################################################################
-          # Clean up all resources to avoid unnecessary costs
-          ###################################################################
-          echo "Starting cleanup of KMS resources..."
-
-          # Uninstall all Helm releases in the namespace
-          echo "Uninstalling all Helm releases in namespace ${NAMESPACE}..."
-          helm list -n "${NAMESPACE}" -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
-
-          # Clean up ConfigMaps
-          echo "Cleaning up ConfigMaps..."
-          kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
-          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
-
-          # Clean up StatefulSets
-          echo "Cleaning up StatefulSets..."
-          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
-
-          # Clean up diagnostic probes
-          kubectl delete -f ci/perf-testing/ena-probe.yml --ignore-not-found || true
-
-          # Clean up Jobs
-          echo "Cleaning up Jobs..."
-          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
-          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
-
-          # Clean up workflow
-          echo "Cleaning up workflow..."
-          if [[ -n "${PERF_WORKFLOW_NAME:-}" ]]; then
-            argo delete "${PERF_WORKFLOW_NAME}" -n "${NAMESPACE}" || true
-          fi
-
-          echo "✅ Cleanup completed successfully"
+        run: python3 "${PERF_TOOLS_DIR:-ci/scripts}/perf_runner.py" cleanup

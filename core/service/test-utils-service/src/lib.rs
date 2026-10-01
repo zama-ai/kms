@@ -1,4 +1,4 @@
-#![allow(clippy::test_attr_in_doctest)]
+#![expect(clippy::test_attr_in_doctest)]
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{ItemFn, parse_macro_input};

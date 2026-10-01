@@ -137,7 +137,6 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     /// We have a private trait bound here to ensure that the
     /// an internal type implements a private trait Finalizable.
     #[instrument(name="TFHE.Threshold-KeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -166,7 +165,6 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     }
 
     #[instrument(name="TFHE.Threshold-KeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
     async fn keygen_from_existing_private_keyset<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -217,7 +215,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     ///
     /// We have a private trait bound here to ensure that the
     /// an internal type implements a private trait Finalizable.
-    #[allow(private_bounds)]
+    #[expect(private_bounds)]
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -233,7 +231,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
 
-    #[allow(private_bounds)]
+    #[expect(private_bounds)]
     async fn compressed_keygen_from_existing_private_keyset<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -262,7 +260,6 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
     #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -292,7 +289,6 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
     }
 
     #[instrument(name="TFHE.Threshold-CompressedKeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
     async fn compressed_keygen_from_existing_private_keyset<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,

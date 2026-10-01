@@ -144,7 +144,7 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
 
         // Run every fallible step before mutating `self`, so a failure leaves the sharing
         // state untouched (all-or-nothing; also keeps the
-        // `non_local_effect_before_error_return` lint happy).
+        // `non_local_effect_before_unhandled_error` lint happy).
         let available_lsl = format_for_next(local_single_shares, l)?;
 
         //Init vdm matrix only once or when dim changes

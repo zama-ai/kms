@@ -1,10 +1,11 @@
 use crate::anyhow_error_and_log;
+use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
-    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
@@ -28,7 +29,6 @@ use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
-use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
@@ -42,6 +42,7 @@ use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
 };
+use rand::{CryptoRng, RngCore};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
@@ -387,9 +388,11 @@ where
         // restore. Setup and destruction take it before metadata locks and hold it across storage
         // I/O.
         let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
-        let mut rng = self.base_kms.new_rng();
+        // The backup key and the signcryptions below are MLKEM1024-P384, so they need a seed
+        // wider than the 128 bits `new_rng` provides.
+        let mut rng = self.base_kms.new_rng_256();
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context: InternalCustodianContext =
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
@@ -1388,7 +1391,7 @@ where
 
 /// Generate a recovery request to the backup vault.
 async fn gen_recovery_validation(
-    rng: &mut AesRng,
+    rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     sig_key: &PrivateSigKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
@@ -1448,7 +1451,7 @@ mod tests {
         },
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
-            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
@@ -1469,6 +1472,7 @@ mod tests {
             },
         },
     };
+    use aes_prng::AesRng;
     use kms_grpc::{
         RequestId,
         identifiers::ContextId,
@@ -1479,6 +1483,7 @@ mod tests {
         rpc_types::{KMSType, PrivDataType},
     };
     use rand::{SeedableRng, rngs::OsRng};
+    use rand_chacha::ChaCha20Rng;
     use std::time::SystemTime;
     use tokio::sync::Mutex;
     use tonic::Request;
@@ -1522,7 +1527,7 @@ mod tests {
         let priv_storage = Arc::new(Mutex::new(priv_storage));
         let pub_storage = Arc::new(Mutex::new(pub_storage));
         let keychain_proxy = KeychainProxy::from(secretsharing::SecretShareKeychain::new(
-            AesRng::seed_from_u64(1244),
+            ChaCha20Rng::seed_from_u64(1244),
         ));
         let backup_vault = Arc::new(Mutex::new(Vault {
             storage: backup_proxy,
@@ -1619,7 +1624,7 @@ mod tests {
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.clone().try_into().unwrap()),
         });
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -1755,7 +1760,7 @@ mod tests {
     async fn test_new_mpc_context_requires_pcr_allowlist_for_enclave_deployment() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -1865,7 +1870,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -1905,7 +1910,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -1959,7 +1964,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -1985,7 +1990,7 @@ mod tests {
         }
 
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -2034,7 +2039,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2092,7 +2097,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2125,7 +2130,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2223,7 +2228,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2276,7 +2281,7 @@ mod tests {
         {
             let base_kms =
                 BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2316,7 +2321,7 @@ mod tests {
                 verification_key,
                 test_rng_source(),
             );
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2349,7 +2354,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             let cur_msg = InternalCustodianSetupMessage {
@@ -2378,7 +2383,7 @@ mod tests {
                 mpc_context_id: Some(mpc_context_id),
             });
             let session_maker =
-                SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+                SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -2403,6 +2408,15 @@ mod tests {
                     .unwrap();
 
             assert!(stored_context.validate(&verification_key));
+            // The vault key the operator generated for this context, and therefore the key every
+            // backup ciphertext is encrypted under, must be the composite scheme.
+            assert_eq!(
+                stored_context
+                    .custodian_context()
+                    .backup_enc_key
+                    .encryption_scheme_type(),
+                BACKUP_PKE_SCHEME
+            );
             assert_eq!(
                 stored_context.custodian_context().context_id,
                 first_context_id
@@ -2548,7 +2562,7 @@ mod tests {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
         let custodian_meta_store = MetaStore::new(100, 10);
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -2561,7 +2575,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(43);
         let mut setup_messages = Vec::new();
         for role in 1..=3 {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, public_enc_key) = enc.keygen().unwrap();
             let (public_verf_key, _) = gen_sig_keys(&mut rng);
             setup_messages.push(InternalCustodianSetupMessage {
@@ -2632,7 +2646,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
         let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let mnemonic2 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
@@ -2732,7 +2746,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             let cur_msg = InternalCustodianSetupMessage {
@@ -2758,7 +2772,7 @@ mod tests {
             mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         // Keep a handle on the backup vault so we can inspect the rollback after the failure.
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let context_manager = ThresholdContextManager::new(
@@ -2824,7 +2838,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(77);
         let custodian_nodes = (1..=2 * threshold as usize + 1)
             .map(|index| {
-                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (_dec_key, public_enc_key) = enc.keygen().unwrap();
                 let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
                 InternalCustodianSetupMessage {
@@ -2869,6 +2883,10 @@ mod tests {
             else {
                 panic!("expected a secret-sharing keychain in the backup vault")
             };
+            // ML-KEM-512 rather than `BACKUP_PKE_SCHEME`, on purpose. A node can hold a previous
+            // context whose key uses the weaker scheme, and rollback must restore it unchanged.
+            // Each ciphertext carries its own `pke_type`, so a vault that holds both schemes
+            // decrypts.
             let (_dec_key, enc_key) =
                 Encryption::new(PkeSchemeType::MlKem512, &mut AesRng::seed_from_u64(5))
                     .keygen()
@@ -2889,7 +2907,7 @@ mod tests {
             .unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -2926,7 +2944,7 @@ mod tests {
         let context_id = RequestId::from_bytes([9u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let private_storage = Arc::clone(&crypto_storage.private_storage);
         let tracker = Arc::new(TaskTracker::new());
         let context_manager = ThresholdContextManager::new(
@@ -2966,7 +2984,7 @@ mod tests {
         let context_id = RequestId::from_bytes([8u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let private_storage = Arc::clone(&crypto_storage.private_storage);
         let tracker = Arc::new(TaskTracker::new());
@@ -3046,7 +3064,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(77);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             setup_msgs.push(
@@ -3072,7 +3090,7 @@ mod tests {
             mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let context_manager = ThresholdContextManager::new(
             base_kms,

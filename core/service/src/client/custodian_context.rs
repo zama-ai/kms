@@ -1,7 +1,9 @@
 use crate::{
     backup::{
         custodian::Custodian,
-        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+        seed_phrase::{
+            custodian_from_seed_phrase, seed_phrase_from_entropy, system_entropy_for_custodian,
+        },
     },
     client::client_wasm::Client,
 };
@@ -44,7 +46,9 @@ fn custodian_setup_msgs(
     let mut mnemonics = Vec::new();
     for cur_idx in 1..=amount_custodians {
         let role = Role::indexed_from_one(cur_idx);
-        let mnemonic = seed_phrase_from_rng(rng).expect("Failed to generate seed phrase");
+        // The phrase carries raw system entropy rather than `rng` output: `rng` is seeded with
+        // 128 bits, which would cap every key the custodian derives from the phrase.
+        let mnemonic = seed_phrase_from_entropy(&*system_entropy_for_custodian(None)?)?;
         let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)?;
         let setup_msg = custodian.generate_setup_message(rng, format!("Custodian-{cur_idx}"))?;
         setup_msgs.push(setup_msg.try_into()?);

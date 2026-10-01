@@ -160,7 +160,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner.fhe_keys_exists(key_id, epoch_id, true).await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn write_fhe_keys(
         &self,
         key_id: &RequestId,

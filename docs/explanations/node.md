@@ -8,4 +8,6 @@ for operations like decryption, key generation and CRS generation.
 
 Using the KMS node the Core service will receive and validate a call and then call directly into the Threshold Service software component and ask it to execute the raw MPC protocols needed. This will make it run a specific MPC protocol with the other nodes' Threshold Services. The result will then be returned to the Core Service which will take care of encrypting/signing and any other kind of packaging before return the result to the external gRPC caller.
 
+The two interfaces have different trust assumptions. The Core Service accepts every message from the Connector, which the same operator runs. The Threshold Service authenticates every peer with mutual TLS and, in enclave deployments, release attestation. See the [trust model](trust_model.md).
+
 For more details consult the KMS Core Service [README](../../core/service/README.md). For information on how to interact with a running KMS Core (whether local or a remote deployment) consult the Core Client [README](../../core-client/README.md).

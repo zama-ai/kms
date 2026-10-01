@@ -3,9 +3,8 @@
 //! for kms-core v0.13.0
 
 use aes_prng::AesRng;
-use kms_0_13_0::backup::BackupCiphertext;
 use kms_0_13_0::cryptography::{
-    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
+    encryption::{Encryption, PkeScheme, PkeSchemeType},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys},
     signcryption::{Signcrypt, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned},
@@ -72,14 +71,14 @@ use backward_compatibility::parameters::{
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
-    KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest, PRSSSetupTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateKeySetTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest,
-    PubDataTypeTest, PublicSigKeyTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
+    AppKeyBlobTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
+    PrivateKeySetTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
+    PublicSigKeyTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_13_0::cryptography::signcryption::SigncryptionPayload;
@@ -388,19 +387,7 @@ const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTe
     state: 202,
 };
 
-// KMS test
-const BACKUP_CIPHERTEXT_TEST: BackupCiphertextTest = BackupCiphertextTest {
-    test_filename: Cow::Borrowed("backup_ciphertext"),
-    unified_cipher_filename: Cow::Borrowed("unified_ciphertext_handle"),
-    state: 200,
-};
 
-// KMS test
-const UNIFIED_CIPHER_TEST: UnifiedCipherTest = UnifiedCipherTest {
-    test_filename: Cow::Borrowed("unified_ciphertext"),
-    hybrid_kem_filename: Cow::Borrowed("hybrid_kem_ct_handle"),
-    state: 123,
-};
 
 // KMS test
 const PRSS_SETUP_COMBINED_TEST: PrssSetupCombinedTest = PrssSetupCombinedTest {
@@ -660,40 +647,6 @@ impl KmsV0_13 {
         TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
     }
 
-    fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(BACKUP_CIPHERTEXT_TEST.state);
-        let backup_id: RequestId = RequestId::new_random(&mut rng);
-        // Generate the unified ciphertext after using the RNG for generating backup ID since backup ID
-        // will also be generated as part of the test
-        let mut kem_ct = [0_u8; 32];
-        rng.fill_bytes(&mut kem_ct);
-        let mut payload_ct = [0_u8; 32];
-        rng.fill_bytes(&mut payload_ct);
-        let ciphertext: UnifiedCipher = UnifiedCipher {
-            cipher: HybridKemCt {
-                nonce: [0_u8; 12],
-                kem_ct: kem_ct.to_vec(),
-                payload_ct: payload_ct.to_vec(),
-            },
-            pke_type: PkeSchemeType::MlKem512,
-        };
-        store_versioned_auxiliary!(
-            &ciphertext,
-            dir,
-            &BACKUP_CIPHERTEXT_TEST.test_filename,
-            &BACKUP_CIPHERTEXT_TEST.unified_cipher_filename,
-        );
-
-        let backup_ct = BackupCiphertext {
-            ciphertext,
-            priv_data_type: PrivDataType::SigningKey,
-            backup_id,
-        };
-
-        store_versioned_test!(&backup_ct, dir, &BACKUP_CIPHERTEXT_TEST.test_filename);
-        TestMetadataKMS::BackupCiphertext(BACKUP_CIPHERTEXT_TEST)
-    }
-
     fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_SIGNCRYPTION_TEST.state);
         let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
@@ -711,33 +664,6 @@ impl KmsV0_13 {
 
         store_versioned_test!(&signcryption, dir, &UNIFIED_SIGNCRYPTION_TEST.test_filename);
         TestMetadataKMS::UnifiedSigncryption(UNIFIED_SIGNCRYPTION_TEST)
-    }
-
-    fn gen_unified_cipher(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(UNIFIED_CIPHER_TEST.state);
-        let mut kem_ct = [0_u8; 32];
-        rng.fill_bytes(&mut kem_ct);
-        let mut payload_ct = [0_u8; 32];
-        rng.fill_bytes(&mut payload_ct);
-        let kem = HybridKemCt {
-            nonce: [0_u8; 12],
-            kem_ct: kem_ct.to_vec(),
-            payload_ct: payload_ct.to_vec(),
-        };
-        store_versioned_auxiliary!(
-            &kem,
-            dir,
-            &UNIFIED_CIPHER_TEST.test_filename,
-            &UNIFIED_CIPHER_TEST.hybrid_kem_filename,
-        );
-        let cipher = UnifiedCipher {
-            cipher: kem,
-            pke_type: PkeSchemeType::MlKem512,
-        };
-
-        store_versioned_test!(&cipher, dir, &UNIFIED_CIPHER_TEST.test_filename);
-
-        TestMetadataKMS::UnifiedCipher(UNIFIED_CIPHER_TEST)
     }
 
     fn gen_hybrid_kem_ct(dir: &PathBuf) -> TestMetadataKMS {
@@ -1275,8 +1201,6 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_signcryption_key(&dir),
             KmsV0_13::gen_designcryption_key(&dir),
             KmsV0_13::gen_unified_signcryption(&dir),
-            KmsV0_13::gen_backup_ciphertext(&dir),
-            KmsV0_13::gen_unified_cipher(&dir),
             KmsV0_13::gen_hybrid_kem_ct(&dir),
             KmsV0_13::gen_prss_setup_combined(&dir),
             KmsV0_13::gen_context_info(&dir),

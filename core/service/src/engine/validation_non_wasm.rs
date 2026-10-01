@@ -326,12 +326,12 @@ fn unpack_user_decrypt_req(
     let (link, domain) = req.compute_link_checked()?;
     // Deserialize to validate the enc_key bytes, but don't return the typed key —
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
-    let _client_enc_key =
-        UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
-            anyhow::anyhow!(
-                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            )
-        })?;
+    let _client_enc_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(
+        &req.enc_key,
+    )
+    .map_err(|e| {
+        anyhow::anyhow!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}")
+    })?;
     Ok((
         req.typed_ciphertexts.clone(),
         link,
@@ -1314,7 +1314,7 @@ mod tests {
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
+            ciphertext: vec![].into(),
             fhe_type: 0,
             external_handle: vec![],
             ciphertext_format: 0,
@@ -1441,7 +1441,7 @@ mod tests {
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
+            ciphertext: vec![].into(),
             fhe_type: 0,
             external_handle: vec![],
             ciphertext_format: 0,
@@ -1620,7 +1620,7 @@ mod tests {
             let evm_req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![],
+                    ciphertext: vec![].into(),
                     fhe_type: 0,
                     external_handle: evm_handle.to_vec(),
                     ciphertext_format: 0,
@@ -1651,7 +1651,7 @@ mod tests {
             let solana_req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![],
+                    ciphertext: vec![].into(),
                     fhe_type: 0,
                     external_handle: handle.to_vec(),
                     ciphertext_format: 0,
@@ -1729,7 +1729,7 @@ mod tests {
             let mut other_handle = handle;
             other_handle[22..30].copy_from_slice(&(SOLANA_CHAIN_ID + 1).to_be_bytes());
             mixed.typed_ciphertexts.push(TypedCiphertext {
-                ciphertext: vec![],
+                ciphertext: vec![].into(),
                 fhe_type: 0,
                 external_handle: other_handle.to_vec(),
                 ciphertext_format: 0,
@@ -1780,7 +1780,7 @@ mod tests {
         let req = UserDecryptionRequest {
             request_id: Some(derive_request_id("request_id").unwrap().into()),
             typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: vec![],
+                ciphertext: vec![].into(),
                 fhe_type: 0,
                 external_handle: handle.to_vec(),
                 ciphertext_format: 0,
@@ -1866,7 +1866,7 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
-            ciphertext,
+            ciphertext: ciphertext.into(),
             fhe_type: tfhe::FheTypes::Uint4 as i32,
             ciphertext_format: 0,
             external_handle: vec![123],
@@ -2239,7 +2239,7 @@ mod tests {
 
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![1, 2, 3, 4],
+            ciphertext: vec![1, 2, 3, 4].into(),
             fhe_type: tfhe::FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3, 4],
             ciphertext_format: 1,
@@ -2331,7 +2331,7 @@ mod tests {
                 signing_schemes: vec![],
                 request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![1, 2, 3, 4],
+                    ciphertext: vec![1, 2, 3, 4].into(),
                     fhe_type: 3, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
@@ -2382,7 +2382,7 @@ mod tests {
                         .into(),
                 ),
                 ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![1, 2, 3, 4],
+                    ciphertext: vec![1, 2, 3, 4].into(),
                     fhe_type: tfhe::FheTypes::Uint8 as i32,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
@@ -2669,12 +2669,12 @@ mod tests {
 
         // A request that also asked for ECDSA is not satisfied by the
         // post-quantum entry alone.
-        let hybrid = request_for(vec![
+        let composite = request_for(vec![
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         ]);
-        let hybrid_ctx = ctx_for(Some(&hybrid));
-        assert!(!verify(&hybrid_ctx, &extra_data));
+        let composite_ctx = ctx_for(Some(&composite));
+        assert!(!verify(&composite_ctx, &extra_data));
 
         // Neither is an absent request, which names nothing and so means ECDSA:
         // the domain that entry needs is missing, and the list has no ECDSA entry

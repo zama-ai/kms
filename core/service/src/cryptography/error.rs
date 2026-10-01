@@ -12,6 +12,10 @@ pub enum CryptographyError {
     MlKemError,
     #[error("ML-KEM 1024 is no longer supported")]
     MlKem1024Unsupported,
+    #[error("MLKEM1024-P384 error: {0}")]
+    MlKem1024P384Error(String),
+    #[error("user decryption requires an ML-KEM-512 public encryption key, got {0}")]
+    UnsupportedPkeScheme(crate::cryptography::encryption::PkeSchemeType),
     #[error("serialization error: {0}")]
     SerializationError(String),
     #[error("deserialization error: {0}")]

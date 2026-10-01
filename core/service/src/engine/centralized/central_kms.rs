@@ -549,8 +549,9 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(client_enc_key_bytes)
-        .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
+    let client_enc_key =
+        UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(client_enc_key_bytes)
+            .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
@@ -876,10 +877,6 @@ impl<
         }
     }
 
-    // We allow the following lints because we are fine with mutating the rng even if
-    // the function fails serializing the singcrypted message.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
@@ -1317,7 +1314,7 @@ pub(crate) mod tests {
                     // that way we won't forget to update the code here appropriately
                     //
                     // VerfKey / VerfAddress are written once above, outside this per-key loop.
-                    #[allow(deprecated)]
+                    #[expect(deprecated)]
                     PubDataType::PublicKeyMetadata
                     | PubDataType::CRS
                     | PubDataType::VerfKey

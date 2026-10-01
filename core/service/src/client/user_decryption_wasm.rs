@@ -1162,9 +1162,7 @@ impl CiphertextHandle {
 #[wasm_bindgen]
 pub struct ParsedUserDecryptionRequest {
     // We allow dead_code because these are required to parse from JSON
-    #[allow(dead_code)]
     signature: Option<alloy_primitives::Signature>,
-    #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,
@@ -1179,16 +1177,20 @@ impl ParsedUserDecryptionRequest {
         &self.signing_schemes
     }
 
-    /// Builds a request that only asks for an ECDSA signature.
+    /// Builds a request directly, outside gRPC: the Solana response path and tests use it.
     ///
-    /// Solana response validation and tests use this internal constructor.
-    /// Other callers preserve the requested schemes through `TryFrom<&UserDecryptionRequest>`.
+    /// In production an EVM request comes from gRPC, through
+    /// `TryFrom<&UserDecryptionRequest>`. Both paths resolve `signing_schemes` the same
+    /// way ([`SigningSchemeType::resolve`]), so a list built here means exactly what the
+    /// same list means on the wire — naming nothing asks for
+    /// [`SigningSchemeType::Ecdsa256k1`], not for nothing at all.
     pub(crate) fn new(
         signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
+        signing_schemes: Vec<SigningSchemeType>,
         extra_data: Vec<u8>,
     ) -> Self {
         Self {
@@ -1198,7 +1200,7 @@ impl ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             extra_data,
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
+            signing_schemes: SigningSchemeType::resolve(&signing_schemes),
         }
     }
 

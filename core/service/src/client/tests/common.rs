@@ -294,7 +294,7 @@ pub(crate) async fn send_dec_reqs(
         )
         .await;
         let ctt = TypedCiphertext {
-            ciphertext: ct,
+            ciphertext: ct.into(),
             fhe_type: fhe_type as i32,
             ciphertext_format: ct_format.into(),
             external_handle: i.to_be_bytes().to_vec(),

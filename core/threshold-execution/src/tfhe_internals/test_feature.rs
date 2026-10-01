@@ -330,8 +330,6 @@ where
 /// The compressed keyset is decompressed once internally to build the `KeySet`.
 // TODO(dp): Not convinced we need two key gen methods (this and gen_uncompressed_key_set). There's something weird with
 // this method: why do we need to return both compressed and uncompressed keys? Re-visit once the tests are sorted.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_error_return)]
 pub fn gen_key_set<R>(
     params: DKGParams,
     tag: tfhe::Tag,
@@ -1286,7 +1284,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         );
 
         let mut set = JoinSet::new();
-        let buf_to_send = Arc::new(network_val.clone().to_network());
+        let buf_to_send = network_val.clone().to_network();
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
                 let networking = Arc::clone(session.network());

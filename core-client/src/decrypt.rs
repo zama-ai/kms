@@ -350,6 +350,8 @@ impl CollectedDecryptRateResult for CollectedPublicDecrypt {
 
 /// Accumulated responses and counters from a single rate-test run.
 struct DecryptRateCollection<T> {
+    /// Scenario that produced these measurements.
+    scenario: &'static str,
     /// Requested rate in logical decryptions per second.
     target_rate: u64,
     /// Configured measurement duration.
@@ -419,6 +421,8 @@ impl PostProcessMetrics {
 
 /// Metrics computed from a rate-test run: throughput, payloads, and latency stats.
 struct DecryptRateMetrics {
+    /// Scenario that produced these measurements.
+    scenario: &'static str,
     /// Requested rate in logical decryptions per second.
     target_rate: u64,
     /// Configured measurement duration.
@@ -481,6 +485,7 @@ struct DecryptRateMetrics {
 /// JSON-serializable view of [`DecryptRateMetrics`] consumed by the CI parser.
 #[derive(serde::Serialize)]
 struct DecryptRateMetricsJson {
+    scenario: &'static str,
     target_rate: u64,
     #[serde(rename = "duration")]
     duration_secs: u64,
@@ -637,6 +642,7 @@ fn duration_stat_with_wall_ms(stat: &crate::DurationStat, wall: Duration) -> Pha
 impl From<&DecryptRateMetrics> for DecryptRateMetricsJson {
     fn from(m: &DecryptRateMetrics) -> Self {
         Self {
+            scenario: m.scenario,
             target_rate: m.target_rate,
             duration_secs: m.duration_secs,
             max_in_flight: m.max_in_flight,
@@ -1219,7 +1225,11 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     }
 
     let mut collection = collect_decrypt_rate(
-        "public decrypt",
+        if use_sync_endpoint {
+            "pdec-sync"
+        } else {
+            "pdec-async"
+        },
         rate,
         duration_secs,
         max_in_flight,
@@ -1442,7 +1452,7 @@ fn drain_finished_decrypts<T: CollectedDecryptRateResult + 'static>(
 
 #[expect(clippy::too_many_arguments)]
 async fn collect_decrypt_rate<Req, Requests, T, Fut, Spawn, PayloadBytes>(
-    label: &'static str,
+    scenario: &'static str,
     rate: u64,
     duration_secs: u64,
     max_in_flight: usize,
@@ -1503,7 +1513,7 @@ where
             late_ticks += 1;
         }
         last_tick = tick_now;
-        drain_finished_decrypts(label, &mut join_set, &mut accumulator, deadline);
+        drain_finished_decrypts(scenario, &mut join_set, &mut accumulator, deadline);
 
         // Add this tick's `rate` tokens, launch one request per whole `ticks_per_sec` accumulated, and carry the
         // fractional remainder to the next tick.
@@ -1542,7 +1552,7 @@ where
 
     // A task can finish before the deadline without being observed until the final
     // pacing tick. Its own completion timestamp determines which window owns it.
-    drain_finished_decrypts(label, &mut join_set, &mut accumulator, deadline);
+    drain_finished_decrypts(scenario, &mut join_set, &mut accumulator, deadline);
 
     if late_ticks > 0 {
         tracing::warn!(
@@ -1550,7 +1560,7 @@ where
             late_ticks,
             offered,
             target = total_requests,
-            "{label} ticker fell behind on {late_ticks} tick(s); offered rate likely below target - underpowered test runner?"
+            "{scenario} ticker fell behind on {late_ticks} tick(s); offered rate likely below target - underpowered test runner?"
         );
     }
 
@@ -1562,11 +1572,11 @@ where
         {
             match result {
                 Ok((completed_at, result)) => {
-                    accumulator.record(label, deadline, completed_at, result);
+                    accumulator.record(scenario, deadline, completed_at, result);
                 }
                 Err(e) => {
                     accumulator.failed += 1;
-                    tracing::warn!("{label} task panicked: {e}");
+                    tracing::warn!("{scenario} task panicked: {e}");
                 }
             }
         } else {
@@ -1577,7 +1587,7 @@ where
         saturated = true;
         let remaining = join_set.len();
         accumulator.failed += remaining as u64;
-        tracing::warn!("{label} drain timed out with {remaining} requests still in flight");
+        tracing::warn!("{scenario} drain timed out with {remaining} requests still in flight");
         join_set.abort_all();
     }
 
@@ -1597,6 +1607,7 @@ where
 
     let completed = accumulator.collected.len() as u64;
     DecryptRateCollection {
+        scenario,
         target_rate: rate,
         duration_secs,
         max_in_flight,
@@ -1650,6 +1661,7 @@ fn decrypt_rate_metrics<T>(
     };
 
     DecryptRateMetrics {
+        scenario: collection.scenario,
         target_rate: collection.target_rate,
         duration_secs: collection.duration_secs,
         max_in_flight: collection.max_in_flight,
@@ -2189,7 +2201,11 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     }
 
     let mut collection = collect_decrypt_rate(
-        "user decrypt",
+        if use_sync_endpoint {
+            "udec-sync"
+        } else {
+            "udec-async"
+        },
         rate,
         duration_secs,
         max_in_flight,
@@ -2512,6 +2528,7 @@ mod tests {
     use super::*;
 
     fn sample_metrics(
+        scenario: &'static str,
         target_rate: u64,
         offered: u64,
         post_process_failed: u64,
@@ -2541,6 +2558,7 @@ mod tests {
             ..network_before
         };
         DecryptRateMetrics {
+            scenario,
             target_rate,
             duration_secs: 60,
             max_in_flight: 10_000,
@@ -2578,11 +2596,12 @@ mod tests {
     // in lockstep with that shell parser.
     #[test]
     fn public_decrypt_metrics_json_matches_ci_parser_contract() {
-        let json = sample_metrics(500, 30_000, 0)
+        let json = sample_metrics("pdec-async", 500, 30_000, 0)
             .to_json("verification_failed", "verification_ms")
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["target_rate"], 500);
+        assert_eq!(v["scenario"], "pdec-async");
         assert_eq!(v["duration"], 60);
         assert_eq!(v["max_in_flight"], 10_000);
         assert_eq!(v["offered"], 30_000);
@@ -2602,12 +2621,13 @@ mod tests {
         assert_eq!(v["verification_failed"], 0);
 
         let v_failed: serde_json::Value = serde_json::from_str(
-            &sample_metrics(500, 30_000, 3)
+            &sample_metrics("pdec-sync", 500, 30_000, 3)
                 .to_json("verification_failed", "verification_ms")
                 .unwrap(),
         )
         .unwrap();
         assert_eq!(v_failed["verification_failed"], 3);
+        assert_eq!(v_failed["scenario"], "pdec-sync");
     }
 
     // The `USER_DECRYPT_METRICS` JSON is parsed by
@@ -2615,11 +2635,12 @@ mod tests {
     // the field names/nesting so the serde refactor can't silently drift from that parser.
     #[test]
     fn user_decrypt_metrics_json_matches_ci_parser_contract() {
-        let json = sample_metrics(2400, 144_000, 0)
+        let json = sample_metrics("udec-async", 2400, 144_000, 0)
             .to_json("reconstruction_failed", "reconstruction_ms")
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["target_rate"], 2400);
+        assert_eq!(v["scenario"], "udec-async");
         assert_eq!(v["duration"], 60); // renamed from `duration_secs`
         assert_eq!(v["max_in_flight"], 10_000);
         assert_eq!(v["offered"], 144_000);
@@ -2639,12 +2660,13 @@ mod tests {
         assert_eq!(v["reconstruction_failed"], 0);
 
         let v_failed: serde_json::Value = serde_json::from_str(
-            &sample_metrics(2400, 144_000, 3)
+            &sample_metrics("udec-sync", 2400, 144_000, 3)
                 .to_json("reconstruction_failed", "reconstruction_ms")
                 .unwrap(),
         )
         .unwrap();
         assert_eq!(v_failed["reconstruction_failed"], 3);
+        assert_eq!(v_failed["scenario"], "udec-sync");
     }
 
     #[test]
@@ -2696,6 +2718,7 @@ mod tests {
         const MIB: u64 = 1024 * 1024;
         let durations = [Duration::from_millis(10), Duration::from_millis(20)];
         let collection = DecryptRateCollection::<()> {
+            scenario: "udec-sync",
             target_rate: 12,
             duration_secs: 10,
             max_in_flight: 1_000,
@@ -2725,6 +2748,7 @@ mod tests {
             RpcDiagnostics::default().snapshot(),
         );
 
+        assert_eq!(metrics.scenario, "udec-sync");
         assert_eq!(metrics.completed, 100);
         assert_eq!(metrics.completed_in_window, 80);
         assert_eq!(metrics.completed_during_drain, 20);

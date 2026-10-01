@@ -59,13 +59,13 @@ fn frozen_request() -> UserDecryptionRequest {
         request_id: None,
         typed_ciphertexts: vec![
             TypedCiphertext {
-                ciphertext: vec![],
+                ciphertext: vec![].into(),
                 fhe_type: 0,
                 external_handle: frozen_handle(0xa1),
                 ciphertext_format: 0,
             },
             TypedCiphertext {
-                ciphertext: vec![],
+                ciphertext: vec![].into(),
                 fhe_type: 0,
                 external_handle: frozen_handle(0xa2),
                 ciphertext_format: 0,

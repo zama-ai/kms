@@ -1526,7 +1526,7 @@ pub(crate) fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) 
 
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[derive(ValueEnum, Clone, Debug)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types)]
 pub enum DkgParamsAvailable {
     NIST_PARAMS_P32_NO_SNS_FGLWE,
     NIST_PARAMS_P32_SNS_FGLWE,

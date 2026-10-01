@@ -784,7 +784,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng(),
+            base_kms.new_rngs(),
         );
         RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }

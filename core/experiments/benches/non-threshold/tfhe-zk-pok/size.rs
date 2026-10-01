@@ -1,4 +1,3 @@
-#![allow(clippy::unit_arg)]
 //! Size benchmarks for ZK proof-of-knowledge proofs.
 //!
 //! Measures sizes of the proofs generated for:

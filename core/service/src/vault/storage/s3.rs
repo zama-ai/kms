@@ -785,7 +785,9 @@ pub(crate) mod mock_s3 {
         CommonPrefix, Object,
         error::{NoSuchKey, NotFound},
     };
-    use aws_smithy_mocks::{MockResponse, RuleMode, mock, mock_client};
+    use aws_smithy_mocks::{
+        MockResponse, MockResponseInterceptor, Rule, create_mock_http_client, mock,
+    };
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::{Arc, Mutex};
 
@@ -880,12 +882,26 @@ pub(crate) mod mock_s3 {
                 .build()
         });
 
-        mock_client!(
-            aws_sdk_s3,
-            RuleMode::MatchAny,
-            [&put, &get, &head, &delete, &list],
-            |c| c.force_path_style(true)
-        )
+        mock_s3_client(&[&put, &get, &head, &delete, &list])
+    }
+
+    /// Builds an [`S3Client`] served by `rules`. Not `mock_client!`: that needs aws-sdk-s3's
+    /// `test-util`, which pulls in h2 0.3 (RUSTSEC-2026-0258).
+    pub(crate) fn mock_s3_client(rules: &[&Rule]) -> S3Client {
+        let interceptor = rules
+            .iter()
+            .fold(MockResponseInterceptor::new(), |i, rule| i.with_rule(rule));
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "test", "test", None, None, "test",
+            ))
+            .force_path_style(true)
+            .http_client(create_mock_http_client())
+            .interceptor(interceptor)
+            .build();
+        S3Client::from_conf(config)
     }
 }
 
@@ -902,7 +918,7 @@ mod tests {
         list_objects_v2::ListObjectsV2Output,
     };
     use aws_sdk_s3::types::{Object, error::NotFound};
-    use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
+    use aws_smithy_mocks::{Rule, mock};
 
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
@@ -1093,8 +1109,7 @@ mod tests {
 
         // An `S3Storage` whose only mocked operation is `head_object`, served by `rule`.
         fn storage_for(rule: &Rule) -> S3Storage {
-            let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [rule], |c| c
-                .force_path_style(true));
+            let client = mock_s3::mock_s3_client(&[rule]);
             S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap()
         }
 
@@ -1158,10 +1173,7 @@ mod tests {
                 .build()
         });
 
-        let client_for = |rule: &Rule| {
-            mock_client!(aws_sdk_s3, RuleMode::MatchAny, [rule], |c| c
-                .force_path_style(true))
-        };
+        let client_for = |rule: &Rule| mock_s3::mock_s3_client(&[rule]);
 
         assert!(
             s3_get_blob(&client_for(&over), MOCK_BUCKET, KEY)
@@ -1205,8 +1217,7 @@ mod tests {
                     .is_truncated(false)
                     .build()
             });
-        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&page1, &page2], |c| c
-            .force_path_style(true));
+        let client = mock_s3::mock_s3_client(&[&page1, &page2]);
         let storage =
             S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap();
 

@@ -6,8 +6,6 @@ macro_rules! my_include_proto {
 }
 pub mod kms {
     pub mod v1 {
-        // Fires on proto-derived doc comments in prost-generated code.
-        #![allow(clippy::doc_lazy_continuation)]
         my_include_proto!("kms.v1");
     }
 }
@@ -15,7 +13,8 @@ pub mod kms {
 #[cfg(feature = "non-wasm")]
 pub mod kms_service {
     pub mod v1 {
-        #![allow(clippy::doc_lazy_continuation)]
+        // Fires on proto-derived doc comments in prost-generated code.
+        #![expect(clippy::doc_lazy_continuation)]
         my_include_proto!("kms_service.v1");
     }
 }
@@ -23,7 +22,6 @@ pub mod kms_service {
 #[cfg(feature = "non-wasm")]
 pub mod metastore_status {
     pub mod v1 {
-        #![allow(clippy::doc_lazy_continuation)]
         my_include_proto!("metastore_status.v1");
     }
 }

@@ -48,13 +48,19 @@ impl SecurityModule for Nitro {
     /// documents are used in AWS KMS requests to receive responses where the
     /// sensitive data that can only be shared with enclaves running an approved
     /// software version is encrypted under the attested enclave public key.
-    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
+    async fn attest(
+        &self,
+        pk_hash: Vec<u8>,
+        user_data: Option<Vec<u8>>,
+    ) -> anyhow::Result<Vec<u8>> {
+        super::check_attestation_field_sizes(&pk_hash, user_data.as_deref())?;
+
         // generate a nonce to include into the attestation document
         let attestation_nonce = self.get_random(ATTESTATION_NONCE_SIZE).await?;
 
         // request Nitro enclave attestation
         let nsm_request = NSMRequest::Attestation {
-            public_key: Some(pk.into()),
+            public_key: Some(pk_hash.into()),
             user_data: user_data.map(|x| x.into()),
             // The nonce can potentially be used in protocols that do not allow using the same
             // attestation twice. The AWS KMS API allows reusing attestations (in fact, there

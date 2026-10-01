@@ -629,6 +629,7 @@ mod kms_custodian_binary_tests {
     use assert_cmd::Command;
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
+        backup::BACKUP_PKE_SCHEME,
         backup::{
             KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC,
             custodian::{
@@ -640,9 +641,7 @@ mod kms_custodian_binary_tests {
         },
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
-            encryption::{
-                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-            },
+            encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
             signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
@@ -850,7 +849,7 @@ mod kms_custodian_binary_tests {
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
 
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new_for_sharing(
             setup_msgs.clone(),

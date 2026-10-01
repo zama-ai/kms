@@ -15,6 +15,9 @@ KMS security involves multiple layers of protection:
 - **Operational Security**: Incident response, security assessments
 
 ### Threat Model
+
+The [trust model of the KMS core](../../explanations/trust_model.md) states which inputs the core authenticates and which it trusts. The gRPC service interface trusts its caller; the deployment controls below are what restrict that caller to the operator's own KMS connector.
+
 - **External Attackers**: Network-based attacks, unauthorized access attempts
 - **Insider Threats**: Privileged access abuse, credential compromise
 - **Supply Chain Attacks**: Compromised dependencies, malicious images

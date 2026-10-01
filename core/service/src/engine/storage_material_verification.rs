@@ -19,7 +19,10 @@
 //!    planted by someone with write access to the storage. The node cannot tell these apart, so
 //!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
 //!    and logs an error for every entry that private storage does not account for.
-//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage.
+//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage. Repair
+//!    happens before these checks run: on threshold nodes,
+//!    [`crate::engine::public_material_sync`] fetches missing or digest-mismatched keysets and
+//!    CRSes from peers, and everything it writes is re-verified here from scratch.
 //!
 //! Private storage gets its own checks in [`verify_private_storage_layout`]. Invalid layouts fail
 //! boot. Other unexpected material is logged by [`report_unexpected_private_material`] and left
@@ -271,16 +274,6 @@ pub async fn verify_storage_material<S>(
 where
     S: StorageReader + Sync,
 {
-    // Every metadata entry must declare the ID it is stored under before anything else uses it.
-    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
-    // that ID happen to match its digests.
-    for (key_id, metadata) in key_entries {
-        ensure_keygen_metadata_id_matches(key_id, metadata)?;
-    }
-    for (crs_id, metadata) in crs_entries {
-        ensure_crs_metadata_id_matches(crs_id, metadata)?;
-    }
-
     verify_private_metadata(key_entries, crs_entries, identity)?;
 
     for data_type in PubDataType::iter() {
@@ -292,7 +285,6 @@ where
             PubDataType::CRS => {
                 verify_crses(public_storage, crs_entries).await?;
             }
-            #[allow(deprecated)]
             PubDataType::VerfKey => {
                 // Verifies both the legacy verification key and address together.
                 verify_signing_key_material(public_storage, identity.ecdsa()).await?;
@@ -314,7 +306,7 @@ where
                 // DecompressionKey is not used in production at the moment and it does not have a private component.
                 // TypedVerfAddress is checked by validate_slots above.
             }
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
                 // VerfAddress is checked by verify_signing_key_material above. PublicKeyMetadata
                 // is deprecated and no longer stored.
@@ -336,6 +328,27 @@ where
     Ok(unexpected)
 }
 
+/// Verify the IDs and signatures that authenticate private metadata.
+///
+/// Call this before using private metadata as the source of truth for public-storage repair.
+pub(crate) fn verify_private_metadata(
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    identity: &NodeSigningIdentity,
+) -> anyhow::Result<()> {
+    // Every metadata entry must declare the ID it is stored under before anything else uses it.
+    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
+    // that ID happen to match its digests.
+    for (key_id, metadata) in key_entries {
+        ensure_keygen_metadata_id_matches(key_id, metadata)?;
+    }
+    for (crs_id, metadata) in crs_entries {
+        ensure_crs_metadata_id_matches(crs_id, metadata)?;
+    }
+
+    verify_all_metadata_signatures(key_entries, crs_entries, identity)
+}
+
 /// Verify the signatures that authenticate current metadata in private storage.
 ///
 /// The ECDSA signatures of older metadata cannot be checked, since the EIP-712
@@ -347,7 +360,7 @@ where
 ///
 /// Assumes every entry has already been checked against the ID it is stored under; see
 /// [`verify_keygen_metadata_signature`] for why that ordering matters.
-fn verify_private_metadata(
+fn verify_all_metadata_signatures(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     identity: &NodeSigningIdentity,
@@ -1917,7 +1930,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     async fn public_key_metadata_is_reported_only_under_unknown_ids() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 184).await;
@@ -2043,7 +2056,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fn expected_public_material_covers_fixed_id_signing_material() {
         let expected = expected_public_material(&[], &HashMap::new());
         for data_type in [
@@ -2076,7 +2089,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     async fn expected_public_material_follows_keyset_layout() {
         let mut storage = RamStorage::new();
         let standard = setup_standard_keys(&mut storage, 189).await;

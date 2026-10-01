@@ -1,22 +1,18 @@
-use aes_prng::AesRng;
 use clap::Parser;
-use hashing::{DomainSep, hash_element};
-use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
+use kms_lib::backup::{
+    RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC,
+    custodian::{Custodian, InternalCustodianSetupMessage},
+    operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
+    seed_phrase::{
+        custodian_from_seed_phrase, seed_phrase_from_entropy, system_entropy_for_custodian,
+    },
+};
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize};
-use kms_lib::{
-    backup::{
-        custodian::{Custodian, InternalCustodianSetupMessage},
-        operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
-        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
-    },
-    consts::RND_SIZE,
-};
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use threshold_types::role::Role;
-
-const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 
 /// The parameters needed to generate custodian keys and setup
 #[derive(Debug, Parser, Clone)]
@@ -93,10 +89,14 @@ async fn main() -> Result<(), anyhow::Error> {
     match args {
         CustodianCommand::Generate(params) => {
             // Logic for generating keys and setup
-            let mut rng = get_rng(params.randomness.as_ref());
+            let mut rng = get_rng(params.randomness.as_deref())?;
             tracing::info!("Generating custodian keys...");
             let role = Role::indexed_from_one(params.custodian_role);
-            let mnemonic = seed_phrase_from_rng(&mut rng)?;
+            // The phrase carries raw entropy rather than `rng` output: every key the custodian
+            // derives from it must reach the full key space the encryption scheme assumes.
+            let mnemonic = seed_phrase_from_entropy(&*system_entropy_for_custodian(
+                params.randomness.as_deref(),
+            )?)?;
             let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)
                 .map_err(|e| anyhow::anyhow!("Failed to recover custodian keys: {e}"))?;
             let setup_msg = custodian
@@ -156,7 +156,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 Role::indexed_from_one(params.custodian_role),
             )?;
             tracing::info!("Custodian initialized successfully");
-            let mut rng = get_rng(params.randomness.as_ref());
+            let mut rng = get_rng(params.randomness.as_deref())?;
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
@@ -186,21 +186,14 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn get_rng(randomness: Option<&String>) -> AesRng {
-    match randomness {
-        Some(user_seed) => {
-            let mut base_rng = AesRng::from_entropy();
-            // If randomness is provided then use this along with system randomness
-            let mut base_rng_bytes = [0u8; RND_SIZE];
-            base_rng.fill_bytes(&mut base_rng_bytes);
-            let mut user_seed_bytes = hash_element(&DSEP_ENTROPY, user_seed);
-            user_seed_bytes.truncate(RND_SIZE);
-            let mut rng_bytes = [0u8; RND_SIZE];
-            for i in 0..RND_SIZE {
-                rng_bytes[i] = user_seed_bytes[i] ^ base_rng_bytes[i];
-            }
-            AesRng::from_seed(rng_bytes)
-        }
-        None => AesRng::from_entropy(),
-    }
+/// Builds the RNG for everything that is not seed-phrase entropy: the setup message's random
+/// value, and the encryption randomness of a recovery re-signcryption.
+///
+/// The ephemeral secret of a recovery signcryption depends on this randomness, so the seed is as
+/// wide as [`system_entropy_for_custodian`] draws, matching the security level of the KEM that
+/// protects it.
+fn get_rng(randomness: Option<&str>) -> anyhow::Result<ChaCha20Rng> {
+    Ok(ChaCha20Rng::from_seed(*system_entropy_for_custodian(
+        randomness,
+    )?))
 }

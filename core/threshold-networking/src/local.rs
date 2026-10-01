@@ -14,8 +14,9 @@ use threshold_types::network::{NetworkMode, Networking, RoundClock};
 use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use dashmap::DashMap;
-use futures_util::future::{join, join3, join4};
+use futures_util::future::{join, join4};
 use tokio::sync::{
     Mutex,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -121,7 +122,7 @@ type SimulatedPairwiseChannels<R> = Arc<
 
 #[async_trait]
 impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
-    async fn send(&self, val: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
+    async fn send(&self, val: Bytes, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner, *receiver))
@@ -138,7 +139,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
         let tagged_value = LocalTaggedValue {
             send_counter: *net_round,
-            value: val.as_ref().clone(),
+            value: val,
         };
 
         let mut already_sent = self.already_sent.lock().await;
@@ -154,7 +155,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         tx.send(tagged_value).map_err(|e| e.into())
     }
 
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(*sender, self.owner))
@@ -236,7 +237,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn round_clock_snapshot(&self) -> RoundClock {
-        let (max_elapsed_time, current_network_timeout, next_round_timeout, round) = join4(
+        let (max_elapsed_time, current_round_timeout, next_round_timeout, net_round) = join4(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
             self.next_network_timeout.lock(),
@@ -245,31 +246,38 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         .await;
         RoundClock {
             init_time: self.init_time.load(),
-            round: *round,
+            round: *net_round,
             max_elapsed_time: *max_elapsed_time,
-            current_network_timeout: *current_network_timeout,
+            current_network_timeout: *current_round_timeout,
             next_network_timeout: *next_round_timeout,
         }
     }
 
     async fn restore_round_clock(&self, clock: RoundClock) {
-        let (mut round, mut max_elapsed_time, mut current_network_timeout) = join3(
-            self.network_round.lock(),
+        let (
+            mut max_elapsed_time,
+            mut current_round_timeout,
+            mut next_round_timeout,
+            mut net_round,
+        ) = join4(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
+            self.next_network_timeout.lock(),
+            self.network_round.lock(),
         )
         .await;
         // A round clock only ever moves forward.
         assert!(
-            clock.round >= *round,
+            clock.round >= *net_round,
             "restore_round_clock: refusing to move round backwards from {} to {}",
-            *round,
+            *net_round,
             clock.round
         );
         self.init_time.store(clock.init_time);
-        *round = clock.round;
+        *net_round = clock.round;
         *max_elapsed_time = clock.max_elapsed_time;
-        *current_network_timeout = clock.current_network_timeout;
+        *current_round_timeout = clock.current_network_timeout;
+        *next_round_timeout = clock.next_network_timeout;
     }
 
     async fn set_timeout_for_next_round(&self, timeout: Duration) {
@@ -310,7 +318,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
 #[derive(Debug, Clone)]
 struct LocalTaggedValue {
-    value: Vec<u8>,
+    value: Bytes,
     send_counter: usize,
 }
 
@@ -353,7 +361,7 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(Arc::new(value.to_network()), &bob).await
+            net_alice.send(value.to_network(), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -389,7 +397,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
             net_party_1_set_2
-                .send(Arc::new(value.to_network()), &role_1_set_1)
+                .send(value.to_network(), &role_1_set_1)
                 .await
         });
 
@@ -405,7 +413,7 @@ mod tests {
 
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
 
-        let value = Arc::new(NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network());
+        let value = NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network();
         // First send should succeed
         let result1 = net_alice.send(value.clone(), &bob).await;
         assert!(result1.is_ok());
@@ -529,6 +537,14 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let target = net_producer.user_net(bob, NetworkMode::Sync, None);
         assert_ne!(target.init_time.load(), source.init_time.load());
+        assert_ne!(
+            target.get_timeout_current_round().await,
+            source.get_timeout_current_round().await
+        );
+        assert_ne!(
+            *target.next_network_timeout.lock().await,
+            *source.next_network_timeout.lock().await
+        );
 
         target.synchronize_from(&source).await;
 
@@ -550,6 +566,10 @@ mod tests {
         assert_eq!(
             target.get_timeout_current_round().await,
             source.get_timeout_current_round().await
+        );
+        assert_eq!(
+            target_clock.next_network_timeout,
+            source_clock.next_network_timeout
         );
 
         // Synchronizing to the same round is allowed (idempotent).
@@ -585,7 +605,7 @@ mod tests {
         let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
         let net_bob = net_producer.user_net(bob, NetworkMode::Sync, None);
-        let payload = Arc::new(vec![7u8; 4]);
+        let payload = Bytes::from_static(&[7u8; 4]);
 
         let advance = 5;
         for _ in 0..advance {

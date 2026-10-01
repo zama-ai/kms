@@ -462,7 +462,7 @@ pub enum FheType {
 
 impl FheType {
     // We don't use it for now, but useful to have
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn as_str_name(self) -> &'static str {
         match self {
             FheType::Ebool => "Ebool",
@@ -1294,7 +1294,7 @@ pub struct CmdConfig {
     /// repeated or comma-separated list of scheme names.
     ///
     /// Names are matched case-insensitively, so `--signing-schemes
-    /// ecdsa256k1,mldsa65` asks for a hybrid classic + post-quantum pair. Every
+    /// ecdsa256k1,mldsa65` asks for a composite classic + post-quantum pair. Every
     /// response is then required to carry a valid signature for each scheme
     /// named. Leaving this out asks for `Ecdsa256k1` alone, which is what the
     /// KMS defaults to.
@@ -2203,6 +2203,7 @@ pub async fn execute_cmd(
             // (a handle identifies a specific ciphertext/plaintext, so they must differ).
             let fhe_type = ptxt.fhe_type;
             let ciphertext_format: i32 = ct_format.into();
+            let ciphertext = bytes::Bytes::from(ciphertext);
             let ct_batch: Vec<TypedCiphertext> =
                 integration_test_handles(cipher_args.get_batch_size())
                     .into_iter()
@@ -2315,7 +2316,7 @@ pub async fn execute_cmd(
 
             let ct_batch = vec![
                 TypedCiphertext {
-                    ciphertext,
+                    ciphertext: ciphertext.into(),
                     fhe_type: ptxt.fhe_type,
                     external_handle: dummy_handle(),
                     ciphertext_format: ct_format.into(),
@@ -2429,7 +2430,7 @@ pub async fn execute_cmd(
                 solana_test_handles(solana_args.host_chain_id, cipher_parameters.batch_size)
                     .into_iter()
                     .map(|external_handle| TypedCiphertext {
-                        ciphertext: ciphertext.clone(),
+                        ciphertext: ciphertext.clone().into(),
                         fhe_type: ptxt.fhe_type,
                         external_handle,
                         ciphertext_format: ct_format.into(),
