@@ -542,36 +542,21 @@ where
         )?;
     }
 
-    // Metadata that names no scheme has no per-scheme entry to check, and no
-    // scheme set to bind a preimage to.
-    if signatures.is_empty() {
-        return Ok(());
-    }
-
-    let mut keys = BTreeMap::new();
     let mut scheme_entries = Vec::new();
     for stored in signatures {
-        let scheme = stored.scheme;
-        if scheme == SigningSchemeType::Ecdsa256k1 {
-            if let Some(hash) = eip712_hash {
-                verify_eip712_metadata_signature(
-                    metadata_kind,
-                    metadata_id,
-                    hash,
-                    &stored.signature,
-                    expected_address,
-                )?;
-            }
-            continue;
+        if stored.scheme != SigningSchemeType::Ecdsa256k1 {
+            scheme_entries.push((stored.scheme, stored.signature.as_slice()));
+        } else if let Some(hash) = eip712_hash {
+            verify_eip712_metadata_signature(
+                metadata_kind,
+                metadata_id,
+                hash,
+                &stored.signature,
+                expected_address,
+            )?;
         }
-        let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
-            anyhow::anyhow!(
-                "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
-            )
-        })?;
-        keys.insert(scheme, verf_key);
-        scheme_entries.push((scheme, stored.signature.as_slice()));
     }
+    // Metadata with no entry besides ECDSA has no scheme set to bind a preimage to.
     if scheme_entries.is_empty() {
         return Ok(());
     }
@@ -580,13 +565,21 @@ where
     // outside: at boot there is no request to measure against.
     let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
     let preimage = scheme_bound_preimage(&stored_schemes, payload)?;
-    verify_scheme_bound_entries(scheme_entries, &VerfKeySet::new(keys)?, dsep, &preimage).map_err(
-        |e| {
+    for (scheme, signature) in scheme_entries {
+        let keys = VerfKeySet::from_identity(identity, &[scheme]).map_err(|e| {
             anyhow::anyhow!(
-                "Invalid signature in private {metadata_kind} metadata for id={metadata_id}: {e}",
+                "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
             )
-        },
-    )
+        })?;
+        verify_scheme_bound_entries([(scheme, signature)], &keys, dsep, &preimage).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
+                )
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn verify_eip712_metadata_signature(

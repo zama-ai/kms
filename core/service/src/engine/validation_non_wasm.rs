@@ -53,21 +53,20 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     /// client built without storage access, such as the browser, supplies an
     /// empty map and can then only check ECDSA.
     scheme_verf_keys: &'a SchemeVerfKeys,
-    /// Every result is signed under an EIP-712 domain, so the verifier always has one.
-    eip712_domain: &'a Eip712Domain,
-    ext_handles_bytes: &'a [Vec<u8>],
-    extra_data: &'a [u8],
-    request: Option<&'a PublicDecryptionRequest>,
+    /// The request this client sent. The responses are bound to it, and verified
+    /// against its domain, ciphertext handles, extra data and signing schemes.
+    request: &'a PublicDecryptionRequest,
+    /// The EIP-712 domain of `request`.
+    eip712_domain: Eip712Domain,
+    /// The external handles of the ciphertexts of `request`.
+    ext_handles_bytes: Vec<Vec<u8>>,
 }
 
 impl<'a> PublicDecTrustedValidationContext<'a> {
     pub fn new(
         server_pks: &'a HashMap<u32, PublicSigKey>,
         scheme_verf_keys: &'a SchemeVerfKeys,
-        eip712_domain: &'a Eip712Domain,
-        ext_handles_bytes: &'a [Vec<u8>],
-        extra_data: &'a [u8],
-        request: Option<&'a PublicDecryptionRequest>,
+        request: &'a PublicDecryptionRequest,
     ) -> anyhow::Result<Self> {
         // Sanity check uniqueness of server public keys. This is a trusted context, so if the server keys are not unique, it is a configuration error.
         let unique_keys: HashSet<&PublicSigKey> = server_pks.values().collect();
@@ -75,13 +74,18 @@ impl<'a> PublicDecTrustedValidationContext<'a> {
             anyhow::bail!("Duplicate server public keys found in trusted validation context");
         }
 
+        let eip712_domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
+        let ext_handles_bytes = request
+            .ciphertexts
+            .iter()
+            .map(|ct| ct.external_handle.clone())
+            .collect();
         Ok(Self {
             server_pks,
             scheme_verf_keys,
+            request,
             eip712_domain,
             ext_handles_bytes,
-            extra_data,
-            request,
         })
     }
 }
@@ -98,8 +102,6 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID: &str =
     "Request ID is not set in public decryption response";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE: &str =
     "Plaintext type mismatch in public decryption response";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST: &str =
-    "Public decryption request is None while validating public decryption responses";
 
 const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
 
@@ -476,10 +478,7 @@ fn check_public_decrypt_signatures(
     signatures: &[TypedSignature],
     response_extra_data: &[u8],
 ) -> anyhow::Result<()> {
-    let requested = match trusted_ctx.request {
-        Some(request) => SigningSchemeType::resolve_requested(&request.signing_schemes)?,
-        None => vec![SigningSchemeType::Ecdsa256k1],
-    };
+    let requested = SigningSchemeType::resolve_requested(&trusted_ctx.request.signing_schemes)?;
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
@@ -487,11 +486,11 @@ fn check_public_decrypt_signatures(
     let payload = public_dec_payload(&response_bytes, response_extra_data);
 
     let eip712_hash = compute_public_decryption_message(
-        trusted_ctx.ext_handles_bytes,
+        &trusted_ctx.ext_handles_bytes,
         &response.plaintexts,
         response_extra_data,
     )?
-    .eip712_signing_hash(trusted_ctx.eip712_domain);
+    .eip712_signing_hash(&trusted_ctx.eip712_domain);
 
     verify_response_signatures(
         &ResponseSignatures {
@@ -538,10 +537,7 @@ pub(crate) struct PublicDecryptionInvariants {
 impl PublicDecryptionInvariants {
     /// Sanity-check the invariants against the trusted context.
     fn sanity_check(&self, trusted_ctx: &PublicDecTrustedValidationContext) -> anyhow::Result<()> {
-        let Some(req) = trusted_ctx.request else {
-            tracing::warn!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST);
-            return Ok(());
-        };
+        let req = trusted_ctx.request;
 
         // The consensus plaintext count must match the number of ciphertexts the client asked to
         // decrypt. This is a property of the (majority-backed) consensus, so a mismatch is a genuine
@@ -669,7 +665,7 @@ fn authenticate_public_decrypt_response(
         tracing::warn!("A request ID must be present!");
         return Err(PublicRejectReason::MissingRequestId);
     }
-    if cur_resp.extra_data != trusted_ctx.extra_data {
+    if cur_resp.extra_data != trusted_ctx.request.extra_data {
         tracing::warn!("Extra data mismatch in public decryption!");
         return Err(PublicRejectReason::ExtraDataMismatch);
     }
@@ -747,13 +743,12 @@ fn authenticate_public_decrypt_response(
 ///    get to vote at all.
 /// 3. Discard every authenticated payload that does not match the consensus invariants.
 ///
-/// In addition, if the original request is provided (via `trusted_ctx.request`)
-/// the response matches the original request
+/// In addition, the agreed result has to match the original request (`trusted_ctx.request`).
 ///
 /// Infallible w.r.t. adversarial per-response content: any malformed/inconsistent response is
 /// placed in `rejected`, never propagated. Returns `Err` ONLY when the honest invariant set cannot
 /// be established at all: no responses, no configured servers, no pivot with ≥ `t + 1` agreement,
-/// or — when a request is provided — the agreed result does not match the client's own request.
+/// or the agreed result does not match the client's own request.
 /// With ≥ `2t + 1` honest responses present, none of those `Err` cases can be triggered by ≤ `t`
 /// adversaries.
 ///
@@ -1286,6 +1281,31 @@ mod tests {
         bc2wrap::deserialize_slice(&payload.verification_key).unwrap()
     }
 
+    /// A request under `domain` for one `Uint8` ciphertext per handle in `handles`,
+    /// asking for `signing_schemes`. An empty `signing_schemes` means ECDSA.
+    fn public_decrypt_request(
+        domain: &Eip712Domain,
+        handles: &[Vec<u8>],
+        extra_data: &[u8],
+        signing_schemes: Vec<i32>,
+    ) -> PublicDecryptionRequest {
+        PublicDecryptionRequest {
+            signing_schemes,
+            ciphertexts: handles
+                .iter()
+                .map(|handle| TypedCiphertext {
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
+                    external_handle: handle.clone(),
+                    ciphertext_format: 1,
+                    ..Default::default()
+                })
+                .collect(),
+            domain: Some(alloy_to_protobuf_domain(domain).unwrap()),
+            extra_data: extra_data.to_vec(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_validate_public_decrypt_req() {
         // setup data we're going to use in this test
@@ -1712,14 +1732,13 @@ mod tests {
             fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
         }];
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: &alloy_domain,
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: &extra_data_0,
-            request: None,
-            scheme_verf_keys: &HashMap::new(),
+        let request = PublicDecryptionRequest {
+            request_id: request_id.clone(),
+            ..public_decrypt_request(&alloy_domain, &ext_handles_bytes, &extra_data_0, vec![])
         };
+        let scheme_verf_keys = HashMap::new();
+        let trusted_ctx =
+            PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &request).unwrap();
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
         let resp0 = signed_public_decrypt_response(
@@ -1935,14 +1954,9 @@ mod tests {
             &alloy_domain,
         );
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: &alloy_domain,
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: &extra_data,
-            request: Some(&request),
-            scheme_verf_keys: &HashMap::new(),
-        };
+        let scheme_verf_keys = HashMap::new();
+        let trusted_ctx =
+            PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &request).unwrap();
 
         // invalid aggregate response, e.g., when there are none
         {
@@ -1988,14 +2002,9 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let bad_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: &alloy_domain,
-                ext_handles_bytes: &ext_handles_bytes,
-                extra_data: &extra_data,
-                request: Some(&bad_request),
-                scheme_verf_keys: &HashMap::new(),
-            };
+            let bad_ctx =
+                PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &bad_request)
+                    .unwrap();
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
@@ -2031,35 +2040,15 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let bad_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: &alloy_domain,
-                ext_handles_bytes: &ext_handles_bytes,
-                extra_data: &extra_data,
-                request: Some(&bad_request),
-                scheme_verf_keys: &HashMap::new(),
-            };
+            let bad_ctx =
+                PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &bad_request)
+                    .unwrap();
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK)
             );
-        }
-
-        // Without the request the responses are not bound to it, but are still
-        // verified against the domain, the handles and the extra data it would carry.
-        {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let external_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: &alloy_domain,
-                ext_handles_bytes: &ext_handles_bytes,
-                extra_data: &extra_data,
-                request: None,
-                scheme_verf_keys: &HashMap::new(),
-            };
-            validate_public_decrypt_responses(&external_ctx, 2, &agg_resp).unwrap();
         }
 
         // happy path
@@ -2115,15 +2104,10 @@ mod tests {
 
         let server_pks = HashMap::from([(1u32, vk_of(&pivot))]);
         let scheme_verf_keys = HashMap::new();
-        let ctx = PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &scheme_verf_keys,
-            &alloy_domain,
-            &ext_handles_bytes,
-            &extra_data,
-            None,
-        )
-        .unwrap();
+        let request =
+            public_decrypt_request(&alloy_domain, &ext_handles_bytes, &extra_data, vec![]);
+        let ctx = PublicDecTrustedValidationContext::new(&server_pks, &scheme_verf_keys, &request)
+            .unwrap();
         let verify = |internal: &[u8], external: &[u8], list: &[TypedSignature]| {
             verify_public_decrypt_signatures(
                 &ctx,
@@ -2242,7 +2226,7 @@ mod tests {
             &identity,
             &[scheme],
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
@@ -2256,21 +2240,11 @@ mod tests {
             1u32,
             VerfKeySet::from_identity(&identity, &[scheme]).unwrap(),
         )]);
-        let request_for = |schemes: Vec<i32>| PublicDecryptionRequest {
-            signing_schemes: schemes,
-            ..Default::default()
-        };
+        let request_for =
+            |schemes: Vec<i32>| public_decrypt_request(&domain, &[], &extra_data, schemes);
         // What differs between the contexts is only what was asked for.
         let ctx_for = |request| {
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &scheme_verf_keys,
-                &domain,
-                &[],
-                &extra_data,
-                request,
-            )
-            .unwrap()
+            PublicDecTrustedValidationContext::new(&server_pks, &scheme_verf_keys, request).unwrap()
         };
         // This response carries no deprecated internal field, so the post-quantum
         // entry of `signatures` is the only thing that can authenticate it.
@@ -2288,7 +2262,7 @@ mod tests {
         };
 
         let pq_only = request_for(vec![kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32]);
-        let pq_ctx = ctx_for(Some(&pq_only));
+        let pq_ctx = ctx_for(&pq_only);
 
         // The post-quantum entry the request asked for verifies on its own.
         assert!(verify(&pq_ctx, &extra_data));
@@ -2302,13 +2276,14 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         ]);
-        let composite_ctx = ctx_for(Some(&composite));
+        let composite_ctx = ctx_for(&composite);
         assert!(!verify(&composite_ctx, &extra_data));
 
-        // Neither is an absent request, which names nothing and so means ECDSA, for
-        // which the list has no entry.
-        let no_request_ctx = ctx_for(None);
-        assert!(!verify(&no_request_ctx, &extra_data));
+        // Neither is a request that names no scheme, which means ECDSA, for which
+        // the list has no entry.
+        let no_scheme = request_for(vec![]);
+        let no_scheme_ctx = ctx_for(&no_scheme);
+        assert!(!verify(&no_scheme_ctx, &extra_data));
 
         // A response signed under a superset of the request is accepted: the
         // post-quantum entry is checked against the set the response presents,
@@ -2318,7 +2293,7 @@ mod tests {
             &identity,
             &superset,
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
@@ -2340,15 +2315,9 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
         ]);
-        let superset_ctx = PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &superset_keys,
-            &domain,
-            &[],
-            &extra_data,
-            Some(&superset_request),
-        )
-        .unwrap();
+        let superset_ctx =
+            PublicDecTrustedValidationContext::new(&server_pks, &superset_keys, &superset_request)
+                .unwrap();
         assert!(verify_list(&superset_ctx, &superset_signatures));
 
         // Dropping the unrequested entry changes the presented set, which the
@@ -2578,30 +2547,14 @@ mod tests {
         let (vk0, _sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let server_pks = HashMap::from([(1, vk0.clone()), (2, vk1.clone())]);
-        let domain = dummy_domain();
+        let request = public_decrypt_request(&dummy_domain(), &[], &[], vec![]);
 
-        PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &HashMap::new(),
-            &domain,
-            &[],
-            &[],
-            None,
-        )
-        .unwrap();
+        PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), &request).unwrap();
 
         // Error if the server_pks has duplicate keys
         let server_pks = HashMap::from([(1, vk1.clone()), (2, vk1)]);
         assert!(
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &HashMap::new(),
-                &domain,
-                &[],
-                &[],
-                None
-            )
-            .is_err()
+            PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), &request).is_err()
         );
     }
 

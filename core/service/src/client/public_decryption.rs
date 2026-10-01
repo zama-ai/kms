@@ -6,7 +6,7 @@ use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
-use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::alloy_to_protobuf_domain;
 use kms_grpc::{EpochId, RequestId};
 
 impl Client {
@@ -70,19 +70,10 @@ impl Client {
         min_agree_count: u32,
         agg_resp: &[PublicDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let eip712_domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
-        let ext_handles_bytes: Vec<Vec<u8>> = request
-            .ciphertexts
-            .iter()
-            .map(|c| c.external_handle.clone())
-            .collect();
         let trusted_ctx = PublicDecTrustedValidationContext::new(
             self.get_server_pks()?,
             &self.scheme_verf_keys,
-            &eip712_domain,
-            &ext_handles_bytes,
-            &request.extra_data,
-            Some(request),
+            request,
         )?;
 
         // Partition the untrusted responses and enforce the majority threshold. Partitioning is

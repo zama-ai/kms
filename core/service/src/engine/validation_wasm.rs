@@ -17,7 +17,7 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolStruct;
 use hashing::DomainSep;
 use kms_grpc::kms::v1::{TypedSignature, UserDecryptionResponse, UserDecryptionResponsePayload};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use tfhe::FheTypes;
 use threshold_types::role::Role;
 
@@ -261,60 +261,15 @@ impl ExpectedSigner<'_> {
     }
 }
 
-/// What the signatures of a response checked so far establish: who signed it, and
-/// under which schemes.
-#[derive(Default)]
-struct Attribution {
-    signer: Option<(u32, Address)>,
-    verified: BTreeSet<SigningSchemeType>,
-}
-
-impl Attribution {
-    /// Record a verified signature of `party`, which meets `scheme` if one is given.
-    /// Every signature of one response has to belong to the same party.
-    fn record(
-        &mut self,
-        party: (u32, Address),
-        scheme: Option<SigningSchemeType>,
-    ) -> anyhow::Result<()> {
-        if let Some((known, _)) = self.signer
-            && known != party.0
-        {
-            return Err(anyhow_tracked(format!(
-                "the response mixes signatures of party {known} and party {}",
-                party.0
-            )));
-        }
-        self.signer = Some(party);
-        if let Some(scheme) = scheme {
-            self.verified.insert(scheme);
-        }
-        Ok(())
+/// Hold two signatures of one response to the same party.
+fn agree(signer: (u32, Address), found: (u32, Address)) -> anyhow::Result<()> {
+    if signer.0 != found.0 {
+        return Err(anyhow_tracked(format!(
+            "the response mixes signatures of party {} and party {}",
+            signer.0, found.0
+        )));
     }
-
-    /// The party that signed, once every requested scheme was verified.
-    fn finish(self, requested: &[SigningSchemeType]) -> anyhow::Result<(u32, Address)> {
-        // A requested scheme that was never verified is the actionable cause, so it is
-        // reported before the absence of any signer.
-        if let Some(missing) = requested
-            .iter()
-            .find(|scheme| !self.verified.contains(scheme))
-        {
-            let response = match self.signer {
-                Some((party_id, _)) => format!("the response of party {party_id}"),
-                None => "the response".to_string(),
-            };
-            return Err(anyhow_tracked(format!(
-                "{response} carries no verified {missing} signature, but {missing} was requested"
-            )));
-        }
-        self.signer.ok_or_else(|| {
-            anyhow_tracked(
-                "no signature of the response could be checked, so it identified no party"
-                    .to_string(),
-            )
-        })
-    }
+    Ok(())
 }
 
 /// Verify the signatures of a server response that meet the request, and return the
@@ -333,8 +288,10 @@ impl Attribution {
 /// 4. Every other requested entry of `list`, against the keys of the party that
 ///    signed. These entries are bound to the scheme set `list` presents, which may be
 ///    a superset of `requested` and may name schemes this release does not know.
-/// 5. Every requested scheme ended up verified, and every signature agreed on one
-///    party.
+/// 5. Every signature agreed on one party.
+///
+/// Steps 2 to 4 leave no requested scheme unverified: each one is either verified or
+/// the response is rejected.
 ///
 /// A signature nobody requested carries no weight either way: it is not checked,
 /// whether it is an entry of `list` or one of the deprecated fields.
@@ -356,22 +313,21 @@ where
     // 1–2. Something was requested, and the list carries all of it.
     ensure_requested_present(requested, sigs.list)?;
     let (ecdsa_entries, scheme_entries) = requested_entries(sigs.list, requested);
-    let mut attribution = Attribution::default();
     // 3. ECDSA in each form it is carried in, when it was requested.
-    if requested.contains(&SigningSchemeType::Ecdsa256k1) {
-        verify_ecdsa(sigs, &ecdsa_entries, payloads, expected, &mut attribution)?;
-    }
-    // 4. Every other requested scheme, against the signing party's keys.
-    verify_scheme_entries(
-        &scheme_entries,
-        sigs.list,
-        payloads,
-        expected,
-        keys,
-        &mut attribution,
-    )?;
-    // 5. Every requested scheme verified, all by one party.
-    attribution.finish(requested)
+    let signer = if requested.contains(&SigningSchemeType::Ecdsa256k1) {
+        Some(verify_ecdsa(sigs, &ecdsa_entries, payloads, expected)?)
+    } else {
+        None
+    };
+    // 4. Every other requested scheme, against the keys of the party that signed.
+    let signer =
+        verify_scheme_entries(&scheme_entries, sigs.list, payloads, expected, keys, signer)?;
+    // `requested` is not empty, so step 3 or step 4 identified the signer.
+    signer.ok_or_else(|| {
+        anyhow_tracked(
+            "no signature of the response could be checked, so it identified no party".to_string(),
+        )
+    })
 }
 
 /// Steps 1 and 2: `requested` names at least one scheme, and `list` carries an entry
@@ -438,50 +394,58 @@ fn requested_entries<'a>(
 }
 
 /// Step 3: ECDSA, as the ECDSA entry of `list` or, for a node from before `list`, the
-/// deprecated fields.
+/// deprecated fields. Returns the party that signed.
 fn verify_ecdsa<T>(
     sigs: &ResponseSignatures,
     ecdsa_entries: &[&[u8]],
     payloads: &SignedPayloads<T>,
     expected: &ExpectedSigner,
-    attribution: &mut Attribution,
-) -> anyhow::Result<()> {
-    let hash = &payloads.eip712_hash;
-    if ecdsa_entries.is_empty() {
-        return verify_legacy_ecdsa(sigs, hash, payloads, expected, attribution);
+) -> anyhow::Result<(u32, Address)> {
+    let Some((&first, rest)) = ecdsa_entries.split_first() else {
+        return verify_legacy_ecdsa(sigs, payloads, expected);
+    };
+    let recover = |signature: &[u8]| -> anyhow::Result<(u32, Address)> {
+        expected.attribute(recover_address_from_eip712_hash(
+            &payloads.eip712_hash,
+            signature,
+        )?)
+    };
+    let signer = recover(first)?;
+    for &signature in rest {
+        agree(signer, recover(signature)?)?;
     }
-    for signature in ecdsa_entries {
-        let party = expected.attribute(recover_address_from_eip712_hash(hash, signature)?)?;
-        attribution.record(party, Some(SigningSchemeType::Ecdsa256k1))?;
-    }
-    Ok(())
+    Ok(signer)
 }
 
 /// The deprecated fields of a node from before `list`. `external_signature` is the
-/// EIP-712 signature that meets ECDSA. The internal `signature`, which a decryption
-/// response carries, covers the payload alone, so it only confirms the signing party.
+/// EIP-712 signature that meets ECDSA, so it is required. The internal `signature`,
+/// which a decryption response carries, covers the payload alone, so it is checked
+/// when present but cannot meet ECDSA on its own.
 ///
 /// TODO(0.16): remove together with the fields.
 fn verify_legacy_ecdsa<T>(
     sigs: &ResponseSignatures,
-    hash: &B256,
     payloads: &SignedPayloads<T>,
     expected: &ExpectedSigner,
-    attribution: &mut Attribution,
-) -> anyhow::Result<()> {
-    if !sigs.external.is_empty() {
-        let party = expected.attribute(recover_address_from_eip712_hash(hash, sigs.external)?)?;
-        attribution.record(party, Some(SigningSchemeType::Ecdsa256k1))?;
+) -> anyhow::Result<(u32, Address)> {
+    if sigs.external.is_empty() {
+        let ecdsa = SigningSchemeType::Ecdsa256k1;
+        return Err(anyhow_tracked(format!(
+            "the response carries no verified {ecdsa} signature, but {ecdsa} was requested"
+        )));
     }
+    let signer = expected.attribute(recover_address_from_eip712_hash(
+        &payloads.eip712_hash,
+        sigs.external,
+    )?)?;
     if sigs.internal.is_empty() {
-        return Ok(());
+        return Ok(signer);
     }
     // The raw signature is not recoverable, so it is checked against the key the
-    // caller established rather than used to find one.
+    // caller established rather than used to find one. `attribute` held
+    // `external_signature` to that same party.
     let ExpectedSigner::Known {
-        party_id,
-        address,
-        verf_key,
+        party_id, verf_key, ..
     } = expected
     else {
         return Err(anyhow_tracked(
@@ -506,10 +470,11 @@ fn verify_legacy_ecdsa<T>(
             "the deprecated internal signature of party {party_id} did not verify: {e}"
         ))
     })?;
-    attribution.record((*party_id, *address), None)
+    Ok(signer)
 }
 
-/// Step 4: every requested non-ECDSA entry, against the keys of the party that signed.
+/// Step 4: every requested non-ECDSA entry, against the keys of the party that signed,
+/// which is returned. `signer` is the party step 3 identified, if any.
 ///
 /// That party is the one the caller expects, else the one an ECDSA signature recovered
 /// to, else the one whose key the first entry verifies under. The entries are bound to
@@ -521,18 +486,21 @@ fn verify_scheme_entries<T>(
     payloads: &SignedPayloads<T>,
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
-    attribution: &mut Attribution,
-) -> anyhow::Result<()>
+    signer: Option<(u32, Address)>,
+) -> anyhow::Result<Option<(u32, Address)>>
 where
     T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let Some(&first) = entries.first() else {
-        return Ok(());
+        return Ok(signer);
     };
     let presented: Vec<i32> = list.iter().map(|typed| typed.scheme).collect();
     let preimage = wire_scheme_bound_preimage(&presented, payloads.payload)
         .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
-    let party = match (expected, attribution.signer) {
+    // Under `Known`, `attribute` already held any ECDSA signer to the expected party,
+    // and under `Discover` an ECDSA signer fixes the keys checked below, so `party`
+    // cannot differ from `signer`.
+    let party = match (expected, signer) {
         (
             ExpectedSigner::Known {
                 party_id, address, ..
@@ -562,10 +530,7 @@ where
                 "a signature of party {party_id} did not verify: {e}"
             ))
         })?;
-    for &(scheme, _) in entries {
-        attribution.record(party, Some(scheme))?;
-    }
-    Ok(())
+    Ok(Some(party))
 }
 
 /// The party whose published key `entry` verifies under, for a response whose signer
