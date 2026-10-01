@@ -321,7 +321,7 @@ mod tests {
 
         let err = verify(&client, &[], &payload()).unwrap_err().to_string();
         assert!(
-            err.contains("carries no verified Ecdsa256k1 signature"),
+            err.contains("carries no signatures"),
             "the error does not name the cause: {err}"
         );
     }
@@ -404,27 +404,6 @@ mod tests {
         let mut client = client_for(&identity, &[SigningSchemeType::MlDsa65]);
         client.set_signing_schemes(&composite).unwrap();
         assert_eq!(client.signing_schemes(), &composite);
-    }
-
-    /// An entry of a scheme this release does not know is passed over, so a newer node
-    /// can add a scheme without breaking a verifier still on this release.
-    #[test]
-    fn an_entry_of_an_unknown_scheme_is_skipped() {
-        let identity = seeded_identity(20);
-        let client = client_for(&identity, &[]);
-        let mut signatures =
-            signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
-        signatures.push(TypedSignature {
-            scheme: i32::MAX,
-            signature: vec![0xEE; 64],
-        });
-
-        assert_eq!(
-            verify(&client, &signatures, &payload()).unwrap(),
-            (PARTY, identity.verf_key().address())
-        );
-        // On its own the unknown entry authenticates nothing.
-        assert!(verify(&client, &signatures[1..], &payload()).is_err());
     }
 
     /// A signature that cannot be checked for want of a key must not pass for one

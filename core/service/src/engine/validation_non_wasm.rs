@@ -2320,39 +2320,8 @@ mod tests {
                 .unwrap();
         assert!(verify_list(&superset_ctx, &superset_signatures));
 
-        // Dropping the unrequested entry changes the presented set, which the
-        // requested entry is bound to, so what is left no longer verifies.
-        let stripped: Vec<_> = superset_signatures
-            .iter()
-            .filter(|typed| typed.scheme == scheme.as_wire())
-            .cloned()
-            .collect();
-        assert!(!verify_list(&pq_ctx, &stripped));
-
-        // Appending an entry the server did not sign changes the presented set in
-        // the same way, so it breaks a response that was otherwise complete.
-        let mut with_junk = signatures.clone();
-        with_junk.push(TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
-            signature: vec![0u8; 64],
-        });
-        assert!(!verify_list(&pq_ctx, &with_junk));
-        let junk_only = vec![with_junk.pop().unwrap()];
-        assert!(!verify_list(&pq_ctx, &junk_only));
-
-        // An entry of a scheme this release does not know is bound into the preimage
-        // like any other, so appending one the server did not sign is rejected too.
-        let mut with_unknown = signatures.clone();
-        with_unknown.push(TypedSignature {
-            scheme: i32::MAX,
-            signature: vec![0u8; 64],
-        });
-        assert!(!verify_list(&pq_ctx, &with_unknown));
-
         // A newer node that signs under a scheme this release does not know binds
-        // that scheme into the preimage of its other entries. Its response verifies
-        // here on the requested entry, wherever the unknown entry sits in the list,
-        // and the unknown entry itself is not checked.
+        // that scheme into the preimage of its other entries.
         let unknown_scheme = i32::MAX;
         let newer_preimage =
             wire_scheme_bound_preimage(&[scheme.as_wire(), unknown_scheme], &signed).unwrap();
@@ -2367,14 +2336,51 @@ mod tests {
             scheme: unknown_scheme,
             signature: vec![0u8; 64],
         };
-        let newer = vec![newer_entry.clone(), unknown_entry.clone()];
-        assert!(verify_list(&pq_ctx, &newer));
-        let newer_reordered = vec![unknown_entry, newer_entry.clone()];
-        assert!(verify_list(&pq_ctx, &newer_reordered));
+        let unsigned_ed25519 = TypedSignature {
+            scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            signature: vec![0u8; 64],
+        };
+        let stripped: Vec<_> = superset_signatures
+            .iter()
+            .filter(|typed| typed.scheme == scheme.as_wire())
+            .cloned()
+            .collect();
 
-        // Dropping the unknown entry changes the presented set, so the requested
-        // entry no longer verifies.
-        assert!(!verify_list(&pq_ctx, &[newer_entry]));
+        // The requested entry is bound to the set of entries the response
+        // presents, so an added or a dropped entry, known or unknown, breaks it.
+        // An entry nobody asked for is not checked, so the response of the newer
+        // node verifies wherever its unknown entry sits.
+        for (case, list, accepted) in [
+            (
+                "newer node, unknown entry last",
+                vec![newer_entry.clone(), unknown_entry.clone()],
+                true,
+            ),
+            (
+                "newer node, unknown entry first",
+                vec![unknown_entry.clone(), newer_entry.clone()],
+                true,
+            ),
+            (
+                "newer node without its unknown entry",
+                vec![newer_entry],
+                false,
+            ),
+            ("superset without its unrequested entry", stripped, false),
+            (
+                "an unsigned known entry appended",
+                [signatures.clone(), vec![unsigned_ed25519]].concat(),
+                false,
+            ),
+            (
+                "an unsigned unknown entry appended",
+                [signatures.clone(), vec![unknown_entry.clone()]].concat(),
+                false,
+            ),
+            ("only an unrequested entry", vec![unknown_entry], false),
+        ] {
+            assert_eq!(verify_list(&pq_ctx, &list), accepted, "{case}");
+        }
     }
 
     #[test]

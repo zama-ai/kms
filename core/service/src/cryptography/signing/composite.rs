@@ -464,18 +464,22 @@ mod tests {
     fn result_entries_split_ecdsa_from_the_rest() {
         let mut rng = AesRng::seed_from_u64(20);
         let identity = seeded_identity(&mut rng);
-        let schemes = [
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::Ed25519,
+        let requested = [
             SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ed25519,
         ];
         let eip712_hash = B256::repeat_byte(0x11);
         let payload = msg();
-        let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
+        let bound = scheme_bound_preimage(&requested, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
-        assert_eq!(entries.len(), 3);
+            sign_result_entries(&identity, &requested, DSEP, &eip712_hash, &payload).unwrap();
+        assert_eq!(
+            entry_schemes(&entries),
+            canonical_schemes(&requested).unwrap()
+        );
 
         for entry in &entries {
             if entry.scheme == SigningSchemeType::Ecdsa256k1 {
@@ -496,35 +500,6 @@ mod tests {
             assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
             assert!(unified_verify(DSEP, eip712_hash.as_slice(), &sig, &vk).is_err());
         }
-    }
-
-    /// Result entries use the same ordering convention as [`sign_composite`]:
-    /// by scheme, duplicate-free, whatever order the request arrived in.
-    #[test]
-    fn result_entries_are_ordered_by_scheme() {
-        let mut rng = AesRng::seed_from_u64(21);
-        let identity = seeded_identity(&mut rng);
-        let requested = [
-            SigningSchemeType::MlDsa65,
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::MlDsa65,
-            SigningSchemeType::Ed25519,
-        ];
-        let canonical = canonical_schemes(&requested).unwrap();
-
-        let entries = sign_result_entries(
-            &identity,
-            &requested,
-            DSEP,
-            &B256::repeat_byte(0x11),
-            &msg(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
-            canonical
-        );
     }
 
     /// An empty set is a caller mistake, not a request for no signatures: a
