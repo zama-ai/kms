@@ -13,7 +13,7 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{StoredTypedSignature, VerfKeySet},
+        signatures::{PublicSigKey, StoredTypedSignature, VerfKeySet},
         signcryption::{
             Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
             Unsigncrypt,
@@ -272,11 +272,18 @@ impl RecoveryValidationMaterial {
                 ));
             }
         }
+        let operator_verf_keys = VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "Could not derive the operator's backup verification keys: {e}"
+                ))
+            })?;
         let payload = RecoveryValidationMaterialPayload {
             cts,
             commitments,
             custodian_context,
             mpc_context,
+            operator_verf_keys,
         };
         let signatures = sign_composite(
             identity,
@@ -292,8 +299,7 @@ impl RecoveryValidationMaterial {
             signatures,
         };
         // Sanity check
-        let verf_keys = VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)?;
-        res.validate(&verf_keys).map_err(|e| {
+        res.validate(&res.payload.operator_verf_keys).map_err(|e| {
             anyhow_error_and_log(format!(
                 "Could not validate newly created recovery validation material: {e}"
             ))
@@ -316,6 +322,26 @@ impl RecoveryValidationMaterial {
 
     pub fn custodian_context(&self) -> &InternalCustodianContext {
         &self.payload.custodian_context
+    }
+
+    /// The keys to validate this material with on a node that holds no signing identity, as in
+    /// recovery mode.
+    pub fn recover_verf_keys_using_ecdsa(
+        &self,
+        ecdsa: &PublicSigKey,
+    ) -> Result<VerfKeySet, BackupError> {
+        let embedded = &self.payload.operator_verf_keys;
+        let embedded_ecdsa = embedded.ecdsa().map_err(|e| {
+            BackupError::SignatureVerificationError(format!(
+                "the recovery validation material names no ECDSA key: {e}"
+            ))
+        })?;
+        if embedded_ecdsa != ecdsa {
+            return Err(BackupError::SignatureVerificationError(
+                "the recovery validation material names another operator's ECDSA key".to_string(),
+            ));
+        }
+        Ok(embedded.clone())
     }
 
     pub fn mpc_context(&self) -> ContextId {
@@ -361,6 +387,10 @@ pub struct RecoveryValidationMaterialPayload {
     pub custodian_context: InternalCustodianContext,
     /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
     pub mpc_context: ContextId,
+    /// The operator's verification keys.
+    /// Should be [`BACKUP_SIGNING_SCHEMES`], but may be only the ecdsa key;
+    /// see [`RecoveryValidationMaterial::ecdsa_only_verf_key`].
+    pub operator_verf_keys: VerfKeySet,
 }
 impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
@@ -1057,6 +1087,19 @@ mod tests {
         // Another operator's keys do not verify it.
         let other = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         assert!(rvm.validate(&other).is_err());
+
+        // It carries the operator's keys, so a node that knows only its ECDSA key can recover the
+        // rest from it, but only when that key is the one the material names.
+        assert_eq!(rvm.payload.operator_verf_keys, verf_keys);
+        assert_eq!(
+            rvm.recover_verf_keys_using_ecdsa(&identity.verf_key())
+                .unwrap(),
+            verf_keys
+        );
+        assert!(
+            rvm.recover_verf_keys_using_ecdsa(other.ecdsa().unwrap())
+                .is_err()
+        );
 
         // Nor does a set below the backup floor, even one holding the right ECDSA key.
         use crate::cryptography::signatures::SigningSchemeType;

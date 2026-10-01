@@ -3,7 +3,7 @@ use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
 use crate::consts::DEFAULT_EPOCH_ID;
-use crate::cryptography::signatures::VerfKeySet;
+use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
@@ -13,8 +13,7 @@ use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    StorageExt, StorageReaderExt,
-    crypto_material::{get_core_signing_identity, read_backup_verf_key_set},
+    StorageExt, StorageReaderExt, crypto_material::get_core_signing_identity,
     delete_at_request_and_epoch_id, delete_at_request_id, read_custodian_context_anchor,
     read_recovery_material_at_id, read_versioned_at_request_id, store_custodian_context_anchor,
     store_versioned_at_request_and_epoch_id,
@@ -25,7 +24,7 @@ use crate::{
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::PrivateSigKey,
+        signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
         base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
@@ -135,24 +134,13 @@ where
         read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await).await
     }
 
-    /// The operator's own backup key set, which its recovery validation material is signed under.
-    ///
-    /// Derived from the signing identity when the node has one. A node in recovery mode has none,
-    /// so it combines the ECDSA key it runs with and the other keys it published to public
-    /// storage.
-    /// TODO we cannot trust public storage
-    async fn own_backup_verf_keys(&self) -> anyhow::Result<VerfKeySet> {
-        match self.base_kms.signing_identity() {
-            Ok(identity) => Ok(VerfKeySet::from_identity(
-                &identity,
-                BACKUP_SIGNING_SCHEMES,
-            )?),
-            Err(_) => {
-                let public_storage = self.crypto_storage.get_public_storage();
-                let public_storage = public_storage.lock().await;
-                read_backup_verf_key_set(&*public_storage, &self.base_kms.verf_key()).await
-            }
-        }
+    /// The operator's own backup key set, to validate `material` with and to recover under.
+    fn own_backup_verf_keys(
+        &self,
+        material: &RecoveryValidationMaterial,
+    ) -> anyhow::Result<VerfKeySet> {
+        let identity = self.base_kms.signing_identity().ok();
+        backup_verf_keys_for(identity.as_deref(), &self.base_kms.verf_key(), material)
     }
 
     /// Anchors the context a recovery just restored under, so the next boot adopts the same one.
@@ -237,13 +225,13 @@ where
         &self,
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+        operator_keys: &VerfKeySet,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         // The ephemeral keypair is MLKEM1024-P384, so it needs a seed wider than the 128 bits
         // `new_rng` provides.
         let mut rng = self.base_kms.new_rng_256();
-        let operator_keys = self.own_backup_verf_keys().await?;
         let mut operator_verf_key = Vec::new();
-        safe_serialize(&operator_keys, &mut operator_verf_key, SAFE_SER_SIZE_LIMIT)?;
+        safe_serialize(operator_keys, &mut operator_verf_key, SAFE_SER_SIZE_LIMIT)?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
@@ -307,7 +295,7 @@ where
                 .values()
                 .cloned()
                 .collect_vec(),
-            self.own_backup_verf_keys().await?,
+            self.own_backup_verf_keys(recovery_material)?,
             recovery_material.custodian_context().threshold as usize,
             amount_custodians,
         )?;
@@ -462,7 +450,7 @@ where
                 })?
         };
         // Validate that the recovery material is correct
-        let verf_keys = self.own_backup_verf_keys().await.map_err(|e| {
+        let verf_keys = self.own_backup_verf_keys(&recovery_material).map_err(|e| {
             MetricedError::new(
                 OP_CUSTODIAN_RECOVERY_INIT,
                 None,
@@ -479,7 +467,7 @@ where
             )
         })?;
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
-            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
+            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts, &verf_keys)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -559,19 +547,13 @@ where
             )
         })?;
         let adopting = installed.is_none();
-        let verf_keys = self.own_backup_verf_keys().await.map_err(|e| {
-            MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Could not load this operator's backup verification keys: {e}"),
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
+        let identity = self.base_kms.signing_identity().ok();
         let recovery_material = load_recovery_validation_material(
             backup_vault,
             installed,
             &custodian_context_id,
-            &verf_keys,
+            identity.as_deref(),
+            &self.base_kms.verf_key(),
         )
         .await
         .map_err(|e| {
@@ -758,19 +740,46 @@ where
     }
 }
 
+/// The operator's backup key set to validate `material` with, and to recover under.
+///
+/// The non-ECDSA keys are currently not published in the smart contracts, and thus
+/// may be lost along with the node's storage, thus if they are not present we rely on only
+/// ECDSA and recovers the non-ECDSA keys from the recovery material. This keeps recovery
+/// possible with the ECDSA key alone: the ECDSA signature covers the other public keys, so they
+/// are exactly as trustworthy as `ecdsa`, but no more. The node checks the material again
+/// with its restored identity once recovery has put its root seed back.
+fn backup_verf_keys_for(
+    identity: Option<&NodeSigningIdentity>,
+    ecdsa: &PublicSigKey,
+    material: &RecoveryValidationMaterial,
+) -> anyhow::Result<VerfKeySet> {
+    match identity {
+        Some(identity) => Ok(VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)?),
+        None => {
+            tracing::warn!(
+                "No signing identity: validating the recovery validation material with the \
+                 ECDSA key alone, taking the other backup verification keys from the material"
+            );
+            Ok(material.recover_verf_keys_using_ecdsa(ecdsa)?)
+        }
+    }
+}
+
 /// Load and validate the recovery validation material associated with the provided context ID.
 ///
-/// The operator signature is what authenticates it.
+/// The operator signature is what authenticates it, checked against the keys
+/// [`backup_verf_keys_for`] picks.
 async fn load_recovery_validation_material(
     backup_vault: &Mutex<Vault>,
-    installed: Option<RequestId>,
+    installed_cus_context_id: Option<RequestId>,
     custodian_context_id: &ContextId,
-    verf_keys: &VerfKeySet,
+    identity: Option<&NodeSigningIdentity>,
+    ecdsa: &PublicSigKey,
 ) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
     let id = &custodian_context_id.into();
     let recovery_material = {
         let guarded_vault = backup_vault.lock().await;
-        if let Some(installed) = installed {
+        if let Some(installed) = installed_cus_context_id {
             // The node has a context, so it recovers under that one; a request naming another must
             // not be able to move it, least of all onto a retired one an attacker replayed.
             if installed != *id {
@@ -784,7 +793,13 @@ async fn load_recovery_validation_material(
             read_vault_material(&guarded_vault.storage, id).await?
         }
     };
-    if let Err(e) = recovery_material.validate(verf_keys) {
+    let validated =
+        backup_verf_keys_for(identity, ecdsa, &recovery_material).and_then(|verf_keys| {
+            recovery_material
+                .validate(&verf_keys)
+                .map_err(anyhow::Error::from)
+        });
+    if let Err(e) = validated {
         tracing::warn!("Recovery validation material for {id} did not validate: {e}");
         return Err(RecoveryContextError::InvalidSignature(*id));
     }
@@ -1604,8 +1619,7 @@ mod tests {
     #[tokio::test]
     async fn loading_recovery_material_reports_operator_errors() {
         let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
-        let verf = VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap();
-        let other_verf = seeded_verf_key_set(&mut AesRng::seed_from_u64(1), BACKUP_SIGNING_SCHEMES);
+        let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
         let installed = ContextId::from_bytes([1; 32]);
         let other = ContextId::from_bytes([2; 32]);
         let vault = uninstalled_vault();
@@ -1620,18 +1634,54 @@ mod tests {
             &vault,
             Some(RequestId::from(&installed)),
             &other,
-            &verf,
+            Some(&sk),
+            &sk.verf_key(),
         )
         .await
         .unwrap_err();
         assert_eq!(conflict.code(), tonic::Code::FailedPrecondition);
-        let unknown = load_recovery_validation_material(&vault, None, &other, &verf)
-            .await
-            .unwrap_err();
+        let unknown =
+            load_recovery_validation_material(&vault, None, &other, Some(&sk), &sk.verf_key())
+                .await
+                .unwrap_err();
         assert_eq!(unknown.code(), tonic::Code::NotFound);
-        let foreign = load_recovery_validation_material(&vault, None, &installed, &other_verf)
+        let foreign = load_recovery_validation_material(
+            &vault,
+            None,
+            &installed,
+            Some(&other_sk),
+            &other_sk.verf_key(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// A node in recovery mode has only its ECDSA key, and may have lost the public storage its
+    /// other keys were published to. It still recovers, taking them from the material, but this
+    /// reduces security to purely ECDSA.
+    #[tokio::test]
+    async fn recovery_mode_validates_with_the_ecdsa_key_alone() {
+        let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
+        let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
+        let id = ContextId::from_bytes([1; 32]);
+        let vault = uninstalled_vault();
+        store_dummy_recovery_material(&mut vault.lock().await.storage, &RequestId::from(&id), &sk)
+            .await;
+
+        let material = load_recovery_validation_material(&vault, None, &id, None, &sk.verf_key())
             .await
-            .unwrap_err();
+            .expect("the ECDSA key alone must be enough to recover");
+        assert_eq!(
+            backup_verf_keys_for(None, &sk.verf_key(), &material).unwrap(),
+            VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap(),
+            "recovery mode must use the keys the node published"
+        );
+
+        let foreign =
+            load_recovery_validation_material(&vault, None, &id, None, &other_sk.verf_key())
+                .await
+                .unwrap_err();
         assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
     }
 

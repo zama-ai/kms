@@ -4,9 +4,8 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::backup::BACKUP_SIGNING_SCHEMES;
-use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, RootSigningSeed, VerfKeySet};
+use crate::consts::SIGNING_KEY_ID;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, RootSigningSeed};
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::{
     Ed25519VerfKey, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
@@ -28,7 +27,7 @@ use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::Display;
 use tfhe::{Unversionize, named::Named};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
@@ -507,29 +506,4 @@ pub async fn read_verf_key_at<S: StorageReader>(
             UnifiedPublicSigKey::MlDsa87(Box::new(vk))
         }
     })
-}
-
-/// The key set a node publishes for the custodian-backup chain, read back from public storage:
-/// `ecdsa` for ECDSA, and the published [`PubDataType::TypedVerfKey`] of every other scheme in
-/// [`BACKUP_SIGNING_SCHEMES`].
-///
-/// For a node in recovery mode, which holds no signing identity to derive the set from. The ECDSA
-/// member comes from the caller rather than from storage, so the set stays tied to the key the node
-/// already runs with.
-pub async fn read_backup_verf_key_set<S: StorageReader>(
-    storage: &S,
-    ecdsa: &PublicSigKey,
-) -> anyhow::Result<VerfKeySet> {
-    let mut keys = BTreeMap::new();
-    for &scheme in BACKUP_SIGNING_SCHEMES {
-        let key = match scheme {
-            SigningSchemeType::Ecdsa256k1 => UnifiedPublicSigKey::Ecdsa256k1(ecdsa.clone()),
-            other => {
-                let req_id = signing_material_id(other);
-                read_verf_key_at(storage, &req_id, PubDataType::TypedVerfKey, other).await?
-            }
-        };
-        keys.insert(scheme, key);
-    }
-    Ok(VerfKeySet::new(keys)?)
 }
