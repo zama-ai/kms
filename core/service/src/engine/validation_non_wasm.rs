@@ -1195,7 +1195,9 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 #[cfg(test)]
 mod tests {
     use crate::cryptography::signing::VerfKeySet;
-    use crate::cryptography::signing::composite::sign_result_entries;
+    use crate::cryptography::signing::composite::{
+        sign_result_entries, wire_scheme_bound_preimage,
+    };
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -2518,6 +2520,33 @@ mod tests {
             signature: vec![0u8; 64],
         });
         assert!(!verify_list(&pq_ctx, &with_unknown));
+
+        // A newer node that signs under a scheme this release does not know binds
+        // that scheme into the preimage of its other entries. Its response verifies
+        // here on the requested entry, wherever the unknown entry sits in the list,
+        // and the unknown entry itself is not checked.
+        let unknown_scheme = i32::MAX;
+        let newer_preimage =
+            wire_scheme_bound_preimage(&[scheme.as_wire(), unknown_scheme], &signed).unwrap();
+        let newer_entry = TypedSignature {
+            scheme: scheme.as_wire(),
+            signature: identity
+                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &newer_preimage)
+                .unwrap()
+                .to_bytes(),
+        };
+        let unknown_entry = TypedSignature {
+            scheme: unknown_scheme,
+            signature: vec![0u8; 64],
+        };
+        let newer = vec![newer_entry.clone(), unknown_entry.clone()];
+        assert!(verify_list(&pq_ctx, &newer));
+        let newer_reordered = vec![unknown_entry, newer_entry.clone()];
+        assert!(verify_list(&pq_ctx, &newer_reordered));
+
+        // Dropping the unknown entry changes the presented set, so the requested
+        // entry no longer verifies.
+        assert!(!verify_list(&pq_ctx, &[newer_entry]));
     }
 
     #[test]
