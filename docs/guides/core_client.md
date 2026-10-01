@@ -253,6 +253,10 @@ The steps needed are as follows:
 
   A node that has lost its private storage no longer knows which custodian context it used. Name the one to recover under with `-i <custodian context id>` (expanded parameter `custodian-context-id`) unless its backup vault holds exactly one; the command fails and lists the candidate IDs otherwise. A node that still knows its context refuses any other.
 
+  The recovery request carries the operator's backup verification keys, one per backup signing scheme. A node that has lost its keys takes them from the recovery material in its backup vault, so the command prints each one for you to check: the address for `Ecdsa256k1` and the key digest for the other schemes, alongside the digests `kms-custodian` prints. Check them against the gateway and your own records before passing the request on: the recovery is exactly as secure as the keys you check, so checking only the ECDSA address leaves it ECDSA-secure. To have the command check them, pass `--expected-operator-key <SCHEME>=<0x value as printed>` once per scheme, e.g. `--expected-operator-key Ecdsa256k1=0x… --expected-operator-key MlDsa87=0x…`. It then fails on any mismatch and outputs no request.
+
+  Neither `custodian-recovery-init` nor `custodian-backup-recovery` reads the cores' public storage, so both work after public storage is lost. A KMS server that boots without its signing key and whose public storage no longer holds its verification key takes its backup verification keys from the recovery material in its backup vault, refusing to boot if the contexts there disagree on them, and logs every one of them for the same check.
+
   As a concrete example:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init

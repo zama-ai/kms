@@ -14,9 +14,9 @@ use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
     StorageExt, StorageReaderExt, crypto_material::get_core_signing_identity,
-    delete_at_request_and_epoch_id, delete_at_request_id, read_custodian_context_anchor,
-    read_recovery_material_at_id, read_versioned_at_request_id, store_custodian_context_anchor,
-    store_versioned_at_request_and_epoch_id,
+    delete_at_request_and_epoch_id, delete_at_request_id, read_all_recovery_material,
+    read_custodian_context_anchor, read_recovery_material_at_id, read_versioned_at_request_id,
+    store_custodian_context_anchor, store_versioned_at_request_and_epoch_id,
 };
 use crate::{
     backup::operator::{InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial},
@@ -773,6 +773,32 @@ fn backup_verf_keys_for(
             );
             Ok(material.recover_verf_keys_using_ecdsa(ecdsa)?)
         }
+    }
+}
+
+/// The backup key set the recovery material in `vault` embeds, for a node in recovery mode whose
+/// public storage no longer holds its verification key.
+///
+/// Every context in the vault was backed up by the same operator, so the material must agree on
+/// one key set: agreeing on the ECDSA key alone is not enough. Like a key read from public storage,
+/// it is only as good as the operator's comparison of it against the gateway and their own
+/// records; the server logs every key at boot for that purpose.
+pub async fn operator_backup_keys_from_vault(vault: &Vault) -> anyhow::Result<VerfKeySet> {
+    let materials = read_all_recovery_material(&vault.storage).await?;
+    let mut sets: Vec<&VerfKeySet> = Vec::new();
+    for material in materials.values() {
+        let keys = &material.payload.operator_verf_keys;
+        if !sets.contains(&keys) {
+            sets.push(keys);
+        }
+    }
+    match sets.as_slice() {
+        [] => anyhow::bail!("The backup vault holds no recovery material to take the keys from"),
+        [keys] => Ok((*keys).clone()),
+        _ => anyhow::bail!(
+            "The recovery material in the backup vault names {} operator key sets",
+            sets.len()
+        ),
     }
 }
 
@@ -1644,6 +1670,33 @@ mod tests {
         let foreign =
             validated_backup_verf_keys(&material, &id, None, &other_sk.verf_key()).unwrap_err();
         assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// A node that lost its public storage takes its backup key set from the recovery material,
+    /// which must name exactly one: agreeing on the ECDSA key alone is not enough.
+    #[tokio::test]
+    async fn operator_backup_keys_are_taken_from_the_vault() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let sk = seeded_identity(&mut rng);
+        let mut vault = make_unencrypted_vault();
+        assert!(operator_backup_keys_from_vault(&vault).await.is_err());
+
+        // Several contexts backed up by the same operator agree on its keys.
+        for id in [[1; 32], [2; 32]] {
+            store_dummy_recovery_material(&mut vault.storage, &RequestId::from_bytes(id), &sk)
+                .await;
+        }
+        assert_eq!(
+            operator_backup_keys_from_vault(&vault).await.unwrap(),
+            VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap()
+        );
+
+        // The same ECDSA key under another root seed names other ML-DSA keys.
+        let reseeded =
+            NodeSigningIdentity::new(sk.ecdsa().clone(), RootSigningSeed::random(&mut rng));
+        let mixed = RequestId::from_bytes([3; 32]);
+        store_dummy_recovery_material(&mut vault.storage, &mixed, &reseeded).await;
+        assert!(operator_backup_keys_from_vault(&vault).await.is_err());
     }
 
     /// A vault without a secret-sharing keychain cannot recover from custodians, so the node

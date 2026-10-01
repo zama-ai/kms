@@ -2062,6 +2062,7 @@ async fn custodian_backup_init(
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key: false,
             custodian_context_id,
+            expected_operator_keys: vec![],
         }),
         200,
     );

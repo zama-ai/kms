@@ -20,7 +20,8 @@ use kms_lib::{
         signatures::NodeSigningIdentity,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        backup_operator::operator_backup_keys_from_vault, base::BaseKmsStruct,
+        centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
         migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
         threshold::service::new_real_threshold_kms,
@@ -610,9 +611,37 @@ async fn main_exec() -> anyhow::Result<()> {
                 Make sure to use a configuration file without TLS configured and\n
                 make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
-            let verf_key = public_storage
+            // Public storage may have been lost along with private storage; the recovery material
+            // in the backup vault also names the operator's keys, so recovery is never blocked.
+            let verf_key = match public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
-                .await?;
+                .await
+            {
+                Ok(verf_key) => verf_key,
+                Err(e) => {
+                    tracing::warn!(
+                        "No verification key in public storage ({e}); taking the backup \
+                         verification keys from the recovery material in the backup vault"
+                    );
+                    let vault = backup_vault.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No verification key in public storage and no backup vault to take \
+                             it from"
+                        )
+                    })?;
+                    let verf_keys = operator_backup_keys_from_vault(vault).await?;
+                    for scheme in verf_keys.schemes() {
+                        let key = verf_keys.require(scheme)?;
+                        tracing::warn!(
+                            "VALIDATE THIS VERIFICATION KEY BEFORE PROCEEDING! {scheme} key {} \
+                             (digest {})",
+                            key.address_text(),
+                            hex::encode(key.digest()),
+                        );
+                    }
+                    verf_keys.ecdsa()?.clone()
+                }
+            };
             (
                 BaseKmsStruct::new_no_signing_key(kms_type, verf_key, rng_source),
                 false,
