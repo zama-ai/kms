@@ -287,7 +287,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the epoch holds no key share and no CRS metadata. Public data that existed
   before the reshare remains, because an epoch change does not affect it. The
   party deletes only public data that it fetched from its peers during this
-  reshare (see [Paired material writes](#paired-material-writes)). A failed
+  reshare (see [Paired material writes](#paired-material-writes)). One lock
+  serializes the storage and rollback steps of all reshares on a party, so a
+  rollback cannot delete public data that a concurrent reshare kept. A failed
   deletion keeps the epoch
   registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
   epoch instead, and covers the material of every request.

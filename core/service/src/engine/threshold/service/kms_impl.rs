@@ -846,6 +846,7 @@ where
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
+        reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
         _init: PhantomData,
         _reshare: PhantomData,
     };

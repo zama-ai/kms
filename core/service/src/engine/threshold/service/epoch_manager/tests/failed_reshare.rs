@@ -205,6 +205,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     >::store_reshared_keys(
         &crypto_storage,
         &epoch_manager.session_maker,
+        &epoch_manager.reshare_storage_lock,
         &sk,
         &[SigningSchemeType::Ecdsa256k1],
         new_epoch_id,
