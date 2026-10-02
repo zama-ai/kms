@@ -228,6 +228,7 @@ openssl enc -aes-256-gcm -d -in config.toml.enc -out /tmp/config.toml -k "$ENCRY
 ## Related Documentation
 
 - [Production Deployment](production-deployment.md) - Deployment procedures and best practices
+- [Upgrade from v0.14 to v0.15](upgrade-0.14-to-0.15.md) - Epoch-data migration config for threshold parties
 - [Monitoring & Metrics](monitoring.md) - Monitoring and health check procedures
 - [Security Checklist](advanced/security.md) - Security hardening and compliance
 - [Troubleshooting Guide](advanced/troubleshooting.md) - Configuration-related issue resolution
