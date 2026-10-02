@@ -173,6 +173,7 @@ mod tests {
     use super::super::common::test_support::{composite_fixture, signcryption_fixture};
     use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
+    use crate::backup::BACKUP_SIGNING_SCHEMES;
     use crate::cryptography::encryption::PkeSchemeType;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
@@ -180,16 +181,12 @@ mod tests {
     use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"COMPV1TT";
-    // TODO add to signing/mod.rs so it can be shared as similar is used in other signing tests
-    fn pair() -> Vec<SigningSchemeType> {
-        vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
-    }
 
     /// Round-trips for both PKE schemes the backup and user-decryption paths use.
     #[test]
     fn round_trip() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let mut f = composite_fixture(scheme, 100, &pair());
+            let mut f = composite_fixture(scheme, 100, BACKUP_SIGNING_SCHEMES);
             let schemes = f.schemes();
             let msg = TestType { i: 4711 };
 
@@ -211,7 +208,7 @@ mod tests {
     /// pair rejects a signcryption made under a weaker one.
     #[test]
     fn a_signature_under_another_scheme_set_is_rejected() {
-        let mut f = composite_fixture(PkeSchemeType::MlKem512, 200, &pair());
+        let mut f = composite_fixture(PkeSchemeType::MlKem512, 200, BACKUP_SIGNING_SCHEMES);
 
         // The sender signs under a weaker pair; using MlDsa44 instead of MlDsa87.
         let weaker = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa44];
@@ -250,10 +247,10 @@ mod tests {
     #[test]
     fn the_frozen_opener_rejects_a_composite_envelope() {
         for (seed, schemes) in [
-            (300_u64, pair()),
-            (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
+            (300_u64, BACKUP_SIGNING_SCHEMES),
+            (400_u64, &vec![SigningSchemeType::Ecdsa256k1]),
         ] {
-            let mut f = composite_fixture(PkeSchemeType::MlKem512, seed, &schemes);
+            let mut f = composite_fixture(PkeSchemeType::MlKem512, seed, schemes);
             let demanded = f.schemes();
             let composite = seal(
                 &f.signcryption_key,
@@ -289,7 +286,7 @@ mod tests {
     /// decryption. Independent of which schemes the call demands.
     #[test]
     fn the_composite_opener_rejects_a_frozen_envelope() {
-        let f = composite_fixture(PkeSchemeType::MlKem512, 300, &pair());
+        let f = composite_fixture(PkeSchemeType::MlKem512, 300, BACKUP_SIGNING_SCHEMES);
         let mut frozen_f = signcryption_fixture(PkeSchemeType::MlKem512, 300);
         let frozen = frozen_f
             .signcryption_key
@@ -309,7 +306,7 @@ mod tests {
     /// Opening fails on every deviation from what was sealed.
     #[test]
     fn open_rejects_any_deviation_from_what_was_sealed() {
-        let mut f = composite_fixture(PkeSchemeType::MlKem512, 500, &pair());
+        let mut f = composite_fixture(PkeSchemeType::MlKem512, 500, BACKUP_SIGNING_SCHEMES);
         let demanded = f.schemes();
         let cipher = seal(
             &f.signcryption_key,
@@ -370,7 +367,7 @@ mod tests {
             &f.signcryption_key,
             &mut f.rng,
             DSEP,
-            &pair(),
+            BACKUP_SIGNING_SCHEMES,
             b"no seed here",
         )
         .unwrap_err();
