@@ -275,6 +275,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
   Each party also rejects a key unless it has a non-empty public-key digest and exactly one
   non-empty server-key or compressed-keyset digest before role dispatch.
+  The resharing session matches the parties of the two contexts by MPC identity.
+  A party with the same MPC identity in both contexts is a `Both` party, and the
+  session connects to it at its set 2 URL. The URL is not compared. The request
+  fails if the contexts give one MPC identity two different signer addresses, or
+  one signer address two different MPC identities. A party without a listed
+  signer address matches by MPC identity alone. A node that changes its signing
+  key is a new party: it needs a new MPC identity, and it runs as a separate
+  core during the reshare.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never

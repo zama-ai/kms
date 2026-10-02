@@ -19,6 +19,7 @@ use crate::{
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
+const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 const ERR_CA_SUBJECT_MISMATCH: &str = "CA certificate subject does not match mpc_identity";
@@ -346,6 +347,27 @@ pub struct NodeInfo {
     pub scheme_digests: SchemeDigests,
 }
 
+impl NodeInfo {
+    /// Returns the Ethereum address of the node's ECDSA-256k1 verification key, or `None` if
+    /// the context does not list one for this node.
+    ///
+    /// Returns an error if the listed digest is not an Ethereum address. [`SchemeDigests::insert`]
+    /// rejects such a digest, but `tfhe-versionable` reads a stored [`SchemeDigests`] back
+    /// without calling it.
+    pub(crate) fn ecdsa_signer_address(&self) -> anyhow::Result<Option<SignerAddress>> {
+        let Some(digest) = self.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) else {
+            return Ok(None);
+        };
+        let address = Address::try_from(digest).map_err(|e| {
+            anyhow::anyhow!(
+                "Invalid ECDSA-256k1 digest for node {}: {e}",
+                self.mpc_identity
+            )
+        })?;
+        Ok(Some(SignerAddress(address)))
+    }
+}
+
 /// Parses a 20-byte Ethereum address carried in a gRPC `MpcNode` address field.
 ///
 /// `field_label` identifies which field the `bytes` came from, for error reporting
@@ -556,6 +578,23 @@ impl ContextInfo {
             ));
         }
 
+        // A signer address identifies one node across contexts, so two nodes must not share it.
+        // A node without a listed signer address is not counted.
+        let mut signers = Vec::new();
+        for node in &self.mpc_nodes {
+            if let Some(signer) = node.ecdsa_signer_address()? {
+                signers.push(signer);
+            }
+        }
+        let unique_signers: std::collections::HashSet<_> = signers.iter().collect();
+        if unique_signers.len() != signers.len() {
+            return Err(anyhow::anyhow!(
+                "{} {}",
+                ERR_DUPLICATE_SIGNERS,
+                self.context_id()
+            ));
+        }
+
         // check that each CA certificate subject matches its mpc_identity
         for node in &self.mpc_nodes {
             if let Some(ca_cert_pem) = &node.ca_cert {
@@ -671,7 +710,7 @@ mod tests {
     use strum::EnumCount;
 
     use crate::{
-        cryptography::signatures::gen_sig_keys,
+        cryptography::signatures::{PrivateSigKey, gen_sig_keys},
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
 
@@ -846,6 +885,140 @@ mod tests {
                 .to_string()
                 .contains(ERR_DUPLICATE_PARTY_IDS)
         );
+    }
+
+    /// A four-node context, threshold 1, in which node `i` has the scheme digests `digests[i]`.
+    fn four_node_context(digests: [SchemeDigests; 4]) -> ContextInfo {
+        ContextInfo {
+            mpc_nodes: digests
+                .into_iter()
+                .enumerate()
+                .map(|(i, scheme_digests)| NodeInfo {
+                    mpc_identity: format!("Node{}", i + 1),
+                    party_id: i as u32 + 1,
+                    external_url: format!("http://localhost:{}", 12345 + i),
+                    ca_cert: None,
+                    public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
+                    extra_signer_addresses: vec![],
+                    scheme_digests,
+                })
+                .collect(),
+            context_id: ContextId::from_bytes([4u8; 32]),
+            software_version: SoftwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 1,
+            pcr_values: vec![],
+        }
+    }
+
+    async fn storage_with_signing_key(sk: &PrivateSigKey) -> RamStorage {
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &ContextId::from_bytes([1u8; 32]).into(),
+            sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        storage
+    }
+
+    #[test]
+    fn ecdsa_signer_address_returns_listed_address() {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut context = four_node_context(Default::default());
+        context.mpc_nodes[0].scheme_digests =
+            SchemeDigests::from_ecdsa_verification_key(&verification_key);
+
+        assert_eq!(
+            context.mpc_nodes[0].ecdsa_signer_address().unwrap(),
+            Some(SignerAddress(verification_key.address()))
+        );
+        assert_eq!(context.mpc_nodes[1].ecdsa_signer_address().unwrap(), None);
+    }
+
+    /// Digests of a node whose ECDSA-256k1 digest is too short to be an Ethereum address.
+    /// [`SchemeDigests::insert`] rejects such a digest, but a stored context can still hold one.
+    fn malformed_ecdsa_digests() -> SchemeDigests {
+        SchemeDigests(BTreeMap::from([(
+            SigningSchemeType::Ecdsa256k1,
+            vec![7u8; 3],
+        )]))
+    }
+
+    #[test]
+    fn ecdsa_signer_address_rejects_malformed_digest() {
+        let context = four_node_context([
+            malformed_ecdsa_digests(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+
+        let err = context.mpc_nodes[0].ecdsa_signer_address().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid ECDSA-256k1 digest for node Node1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_info_malformed_signer_digest() {
+        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let context = four_node_context([
+            SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            malformed_ecdsa_digests(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let err = context.verify(&storage).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid ECDSA-256k1 digest for node Node2"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_info_duplicate_signers() {
+        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let shared = SchemeDigests::from_ecdsa_verification_key(&verification_key);
+        let context = four_node_context([
+            shared.clone(),
+            shared,
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let result = context.verify(&storage).await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_DUPLICATE_SIGNERS)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_info_nodes_without_signers_are_not_duplicates() {
+        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut digests: [SchemeDigests; 4] = Default::default();
+        digests[2] = SchemeDigests::from_ecdsa_verification_key(&verification_key);
+        let context = four_node_context(digests);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let my_role = context.verify(&storage).await.unwrap();
+        assert_eq!(my_role, Some(Role::indexed_from_one(3)));
     }
 
     const ALL_SCHEMES: [SigningSchemeType; 5] = [
