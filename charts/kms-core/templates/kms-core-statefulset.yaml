@@ -571,18 +571,22 @@ spec:
           readinessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
+              service: readiness
             failureThreshold: {{ .Values.kmsCore.readinessProbe.failureThreshold }}
             initialDelaySeconds: {{ .Values.kmsCore.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.kmsCore.readinessProbe.periodSeconds }}
           startupProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
+              service: readiness
             failureThreshold: {{ .Values.kmsCore.startupProbe.failureThreshold }}
             initialDelaySeconds: {{ .Values.kmsCore.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.kmsCore.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.kmsCore.startupProbe.timeoutSeconds }}
           livenessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
+              service: liveness
             failureThreshold: {{ .Values.kmsCore.livenessProbe.failureThreshold }}
             initialDelaySeconds: {{ .Values.kmsCore.livenessProbe.initialDelaySeconds }}
             timeoutSeconds: {{ .Values.kmsCore.livenessProbe.timeoutSeconds }}

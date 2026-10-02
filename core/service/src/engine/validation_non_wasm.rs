@@ -9,7 +9,7 @@ use crate::{
         signatures::PublicSigKey,
         signing::{SchemeVerfKeys, SigningSchemeType},
     },
-    engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
+    engine::base::{compute_public_decryption_message, public_dec_payload},
     engine::validation_wasm::{
         ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
     },
@@ -483,7 +483,7 @@ fn check_public_decrypt_signatures(
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     let response_bytes = bc2wrap::serialize(&response)?;
-    let payload_bytes = public_dec_payload_bytes(&response_bytes, response_extra_data)?;
+    let payload = public_dec_payload(&response_bytes, response_extra_data);
 
     // Built only when a domain is available: without one no ECDSA signature of this
     // response can be checked, and the message would be of no use.
@@ -508,7 +508,7 @@ fn check_public_decrypt_signatures(
         &SignedPayloads {
             dsep: &DSEP_PUBLIC_DECRYPTION,
             internal_bytes: &response_bytes,
-            payload_bytes: &payload_bytes,
+            payload: &payload,
             eip712_hash,
         },
         &requested,
@@ -1194,6 +1194,10 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 
 #[cfg(test)]
 mod tests {
+    use crate::cryptography::signing::VerfKeySet;
+    use crate::cryptography::signing::composite::{
+        sign_result_entries, wire_scheme_bound_preimage,
+    };
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -2370,24 +2374,27 @@ mod tests {
             ),
         };
 
-        // The post-quantum entry signs the versioned payload, which carries the
-        // response bytes and the extra data.
+        // The post-quantum entry signs the versioned payload — the response bytes
+        // together with the extra data — inside a preimage naming the scheme set.
         let response_bytes = bc2wrap::serialize(&payload).unwrap();
-        let payload_bytes =
-            crate::engine::base::public_dec_payload_bytes(&response_bytes, &extra_data).unwrap();
+        let signed = crate::engine::base::public_dec_payload(&response_bytes, &extra_data);
         let scheme = SigningSchemeType::MlDsa65;
-        let signatures = vec![TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-            signature: identity
-                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &payload_bytes)
-                .unwrap()
-                .to_bytes(),
-        }];
+        let signatures: Vec<TypedSignature> = sign_result_entries(
+            &identity,
+            &[scheme],
+            &DSEP_PUBLIC_DECRYPTION,
+            &[0u8; 32],
+            &signed,
+        )
+        .unwrap()
+        .iter()
+        .map(TypedSignature::from)
+        .collect();
 
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
             1u32,
-            HashMap::from([(scheme, identity.unified_verifying_key(scheme).unwrap())]),
+            VerfKeySet::from_identity(&identity, &[scheme]).unwrap(),
         )]);
         let request_for = |schemes: Vec<i32>| PublicDecryptionRequest {
             signing_schemes: schemes,
@@ -2444,53 +2451,102 @@ mod tests {
         let no_request_ctx = ctx_for(None);
         assert!(!verify(&no_request_ctx, &extra_data));
 
-        // An entry of a scheme nobody asked for carries no weight either way: it
-        // neither rescues a response that is missing a requested scheme, nor sinks
-        // one that carries every requested scheme.
+        // A response signed under a superset of the request is accepted: the
+        // post-quantum entry is checked against the set the response presents,
+        // and the entry nobody asked for is not checked at all.
+        let superset = [SigningSchemeType::Ed25519, scheme];
+        let superset_signatures: Vec<TypedSignature> = sign_result_entries(
+            &identity,
+            &superset,
+            &DSEP_PUBLIC_DECRYPTION,
+            &[0u8; 32],
+            &signed,
+        )
+        .unwrap()
+        .iter()
+        .map(TypedSignature::from)
+        .collect();
+        let verify_list = |ctx: &PublicDecTrustedValidationContext, list: &[TypedSignature]| {
+            verify_public_decrypt_signatures(ctx, &payload, 1, &vk, &[], &[], list, &extra_data)
+        };
+        assert!(verify_list(&pq_ctx, &superset_signatures));
+
+        // So is the same response for a verifier that asked for the whole superset
+        // and holds a key for each of its schemes.
+        let superset_keys = HashMap::from([(
+            1u32,
+            VerfKeySet::from_identity(&identity, &superset).unwrap(),
+        )]);
+        let superset_request = request_for(vec![
+            kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+        ]);
+        let superset_ctx = PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &superset_keys,
+            None,
+            &[],
+            None,
+            Some(&superset_request),
+        )
+        .unwrap();
+        assert!(verify_list(&superset_ctx, &superset_signatures));
+
+        // Dropping the unrequested entry changes the presented set, which the
+        // requested entry is bound to, so what is left no longer verifies.
+        let stripped: Vec<_> = superset_signatures
+            .iter()
+            .filter(|typed| typed.scheme == scheme.as_wire())
+            .cloned()
+            .collect();
+        assert!(!verify_list(&pq_ctx, &stripped));
+
+        // Appending an entry the server did not sign changes the presented set in
+        // the same way, so it breaks a response that was otherwise complete.
         let mut with_junk = signatures.clone();
         with_junk.push(TypedSignature {
             scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
             signature: vec![0u8; 64],
         });
-        assert!(verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &with_junk,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &with_junk));
         let junk_only = vec![with_junk.pop().unwrap()];
-        assert!(!verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &junk_only,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &junk_only));
 
-        // An entry of a scheme this release does not know is skipped the same way, so a
-        // newer node can add a scheme during a rolling upgrade.
+        // An entry of a scheme this release does not know is bound into the preimage
+        // like any other, so appending one the server did not sign is rejected too.
         let mut with_unknown = signatures.clone();
         with_unknown.push(TypedSignature {
             scheme: i32::MAX,
             signature: vec![0u8; 64],
         });
-        assert!(verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &with_unknown,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &with_unknown));
+
+        // A newer node that signs under a scheme this release does not know binds
+        // that scheme into the preimage of its other entries. Its response verifies
+        // here on the requested entry, wherever the unknown entry sits in the list,
+        // and the unknown entry itself is not checked.
+        let unknown_scheme = i32::MAX;
+        let newer_preimage =
+            wire_scheme_bound_preimage(&[scheme.as_wire(), unknown_scheme], &signed).unwrap();
+        let newer_entry = TypedSignature {
+            scheme: scheme.as_wire(),
+            signature: identity
+                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &newer_preimage)
+                .unwrap()
+                .to_bytes(),
+        };
+        let unknown_entry = TypedSignature {
+            scheme: unknown_scheme,
+            signature: vec![0u8; 64],
+        };
+        let newer = vec![newer_entry.clone(), unknown_entry.clone()];
+        assert!(verify_list(&pq_ctx, &newer));
+        let newer_reordered = vec![unknown_entry, newer_entry.clone()];
+        assert!(verify_list(&pq_ctx, &newer_reordered));
+
+        // Dropping the unknown entry changes the presented set, so the requested
+        // entry no longer verifies.
+        assert!(!verify_list(&pq_ctx, &[newer_entry]));
     }
 
     #[test]

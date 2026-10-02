@@ -53,6 +53,7 @@ pub(crate) fn ensure_default_epoch(
 mod tests {
     use crate::conf::{CoreConfig, init_conf};
     use crate::consts::DEFAULT_MPC_CONTEXT;
+    use crate::engine::Shutdown;
     use crate::engine::context::{NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::util::key_setup::store_server_signing_keys;
@@ -63,6 +64,7 @@ mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
+    use rand::SeedableRng;
 
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
@@ -113,5 +115,19 @@ mod tests {
             .unwrap();
 
         (kms, verf_key)
+    }
+
+    /// A shutdown is not a fault, so the KMS stops being ready but stays live.
+    #[tokio::test]
+    async fn shutdown_stops_readiness_but_not_liveness() {
+        let (kms, _verf_key) = setup_central_test_kms(&mut AesRng::seed_from_u64(0)).await;
+        let health = kms.health.clone();
+        health.mark_initialized().await;
+        assert!(health.is_ready());
+
+        kms.shutdown().unwrap().await.unwrap();
+        assert!(health.is_shutting_down());
+        assert!(!health.is_ready());
+        assert!(health.is_live());
     }
 }

@@ -56,7 +56,7 @@ use crate::{
         encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
-        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
         signing::SigningSchemeType,
         signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
@@ -183,7 +183,7 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+        signcryption_key: UnifiedSigncryptionKey,
         identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
@@ -383,7 +383,7 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: signcryption_key
-                .signing_key
+                .signing_key()
                 .verf_key()
                 .to_legacy_bytes()
                 .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
@@ -549,11 +549,8 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            identity.ecdsa().clone(),
-            client_enc_key,
-            client_address.to_vec(),
-        ));
+        let signcryption_key =
+            UnifiedSigncryptionKey::new(identity.clone(), client_enc_key, client_address.to_vec());
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 

@@ -9,9 +9,9 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use super::base::CryptoMaterialStorage;
 use crate::{
-    cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
+    cryptography::signatures::{PrivateSigKey, StoredTypedSignature, compute_eip712_signature},
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata, StoredTypedSignature},
+        base::{CrsGenMetadata, KeyGenMetadata},
         material_integrity::verify_public_key_digest_from_bytes,
         threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
     },

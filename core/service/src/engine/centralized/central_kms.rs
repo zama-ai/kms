@@ -7,6 +7,7 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::StoredTypedSignature;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
@@ -15,7 +16,6 @@ use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
-use crate::engine::base::StoredTypedSignature;
 use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
@@ -36,6 +36,7 @@ use crate::vault::storage::{
 };
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::health::HealthState;
 use observability::metrics_names::OP_BOOT;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -83,7 +84,6 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
 use zeroize::Zeroizing;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
@@ -479,8 +479,8 @@ pub struct CentralizedKms<
     pub(crate) backup_operator: BO,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
-    // Health reporter for the the grpc server
-    pub(crate) health_reporter: HealthReporter,
+    // Liveness and readiness that the gRPC health service reports
+    pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
 }
@@ -887,7 +887,11 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
+        let signcryption_key = UnifiedSigncryptionKey::from_signing_key(
+            sig_key.clone(),
+            client_enc_key.clone(),
+            client_id.to_vec(),
+        );
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         // Keep the cleartext behind a zeroizing guard during signcryption.
@@ -923,7 +927,7 @@ impl<
         signing_identity: NodeSigningIdentity,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
-        (HealthReporter, HealthServer<impl Health>),
+        (HealthState, HealthServer<impl Health>),
     )> {
         let key_info_with_epoch: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
@@ -1025,7 +1029,7 @@ impl<
             crypto_storage.clone(),
             telemetry_conf.refresh_interval(),
         );
-        let (health_reporter, health_service) = tonic_health::server::health_reporter();
+        let (health, health_service) = HealthState::new().await;
         // We will serve as soon as the server is started
 
         Ok((
@@ -1044,10 +1048,10 @@ impl<
                 context_manager,
                 backup_operator,
                 rate_limiter,
-                health_reporter: health_reporter.clone(),
+                health: health.clone(),
                 tracker: Arc::clone(&tracker),
             },
-            (health_reporter, health_service),
+            (health, health_service),
         ))
     }
 }
@@ -1093,10 +1097,12 @@ impl<
 > Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let h_repoter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = self.tracker.clone();
         let handle = tokio::task::spawn(async move {
-            h_repoter
+            health.mark_shutting_down().await;
+            health
+                .reporter()
                 .set_not_serving::<CoreServiceEndpointServer<Self>>()
                 .await;
             tracker.close();
@@ -1175,8 +1181,8 @@ pub(crate) mod tests {
         DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
-    use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{PublicSigKey, VerfKeySet};
     use crate::cryptography::signcryption::{
         UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
@@ -1854,7 +1860,7 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.unsigncryption_key.sender_verf_key = server_sig_pk;
+                keys.unsigncryption_key.sender_keys = VerfKeySet::ecdsa_only(server_sig_pk);
             }
             keys
         };

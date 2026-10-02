@@ -62,6 +62,7 @@ use threshold_execution::{
         parameters::{DKGParams, DkgMode},
         private_keysets::PrivateKeySet,
     },
+    zk::ceremony::max_num_bits_from_crs,
 };
 use threshold_types::network::NetworkMode;
 use threshold_types::role::TwoSetsRole;
@@ -74,8 +75,8 @@ use crate::{
     cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
-            CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
-            compute_info_compressed_keygen, compute_info_crs, compute_info_uncompressed_keygen,
+            CrsGenMetadata, KeyGenMetadata, compute_info_compressed_keygen_from_digests,
+            compute_info_crs_from_digest, compute_info_standard_keygen_from_digests,
             retrieve_parameters, stored_scheme_signatures_to_proto,
         },
         threshold::service::{
@@ -155,8 +156,24 @@ struct VerifiedKeyInfo {
     /// Mapping of key type string to digest
     /// e.g., ("ServerKey", vec!\[1,2,3,4\]), ("PublicKey", vec!\[2,3,4,5\]).
     /// The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-    /// If there are no key_digests, the digest verification is skipped.
+    /// Uncompressed keys need the ServerKey and PublicKey digests, compressed keys the
+    /// CompressedXofKeySet and PublicKey digests. They are verified against the stored public
+    /// material and signed for the new epoch.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
+}
+
+impl VerifiedKeyInfo {
+    /// Digest of the `key_type` part of the key, as given in the request.
+    ///
+    /// Resharing does not change the public material, so the new epoch signs these digests
+    /// once they have been verified against the raw bytes in public storage (see
+    /// [`get_verified_fhe_public_materials`]).
+    fn digest(&self, key_type: PubDataType) -> anyhow::Result<Vec<u8>> {
+        self.key_digests
+            .get(&key_type)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing {key_type} digest for key {}", self.key_id))
+    }
 }
 
 #[derive(Debug)]
@@ -326,6 +343,30 @@ fn verify_epoch_info(
                         tonic::Code::InvalidArgument,
                     )
                 })?;
+            // Every party checks this, so a request that a set 2 party would reject in
+            // `get_verified_fhe_public_materials` does not start the protocol on a set 1 party.
+            let has_digest = |key_type: PubDataType| {
+                key_digests
+                    .get(&key_type)
+                    .is_some_and(|digest| !digest.is_empty())
+            };
+            if !has_digest(PubDataType::PublicKey)
+                || !(has_digest(PubDataType::ServerKey)
+                    || has_digest(PubDataType::CompressedXofKeySet))
+            {
+                return Err(MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*epoch_id_as_request_id),
+                    anyhow::anyhow!(
+                        "Key {key_id} needs a {} digest and a {} or {} digest, got {:?}",
+                        PubDataType::PublicKey,
+                        PubDataType::ServerKey,
+                        PubDataType::CompressedXofKeySet,
+                        key_digests.keys().collect::<Vec<_>>()
+                    ),
+                    tonic::Code::InvalidArgument,
+                ));
+            }
             Ok(VerifiedKeyInfo {
                 key_id,
                 preproc_id,
@@ -792,13 +833,13 @@ impl<
             // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
             match verified_material {
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                    let info = match compute_info_uncompressed_keygen(
+                    let info = match compute_info_standard_keygen_from_digests(
                         sk,
                         signing_schemes,
-                        &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
-                        &fhe_pubkeys,
+                        key_info.digest(PubDataType::ServerKey)?,
+                        key_info.digest(PubDataType::PublicKey)?,
                         eip712_domain,
                         new_extra_data.clone(),
                     ) {
@@ -833,21 +874,16 @@ impl<
                     fhe_key_infos.push(info);
                 }
                 VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                    // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
-                    // Resharing currently signs and stores the CompactPublicKey derived
-                    // from the newly generated compressed keyset. Revisit whether it should
-                    // instead preserve the old keyset's CompactPublicKey to keep the
-                    // externally visible public key stable across epochs of the same key_id.
-                    let compact_public_key = compressed_keyset.decompress().into_raw_parts().0;
-
-                    let info = match compute_info_compressed_keygen(
+                    // Sign the digest of the stored PublicKey, which is not necessarily the
+                    // one derived from the compressed keyset: a compressed keygen from an
+                    // existing keyset keeps the old CompactPublicKey.
+                    let info = match compute_info_compressed_keygen_from_digests(
                         sk,
                         signing_schemes,
-                        &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
-                        &compressed_keyset,
-                        &compact_public_key,
+                        key_info.digest(PubDataType::CompressedXofKeySet)?,
+                        key_info.digest(PubDataType::PublicKey)?,
                         eip712_domain,
                         new_extra_data.clone(),
                     ) {
@@ -892,12 +928,14 @@ impl<
             .into_iter()
             .zip_eq(verified_previous_epoch.crs_info.iter())
         {
-            let crs_meta_data = compute_info_crs(
+            // Sign the digest verified against the stored CRS bytes. Hashing a
+            // re-serialization of `crs` would not match them after a version upgrade.
+            let crs_meta_data = compute_info_crs_from_digest(
                 sk,
                 signing_schemes,
-                &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
-                &crs,
+                crs_info.crs_digest.clone(),
+                max_num_bits_from_crs(&crs),
                 eip712_domain,
                 new_extra_data.clone(),
             )?;
@@ -2100,7 +2138,8 @@ pub(crate) mod tests {
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::{
-            base::{BaseKmsStruct, derive_request_id},
+            base::{BaseKmsStruct, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, derive_request_id},
+            storage_material_verification::{verify_crses, verify_keysets},
             threshold::service::session::PRSSSetupCombined,
             utils::make_extra_data,
         },
@@ -2116,8 +2155,8 @@ pub(crate) mod tests {
             file::FileStorage,
             ram::FailingRamStorage,
             ram::{self, RamStorage},
-            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
             test_support::StorageEntry,
             tests::TestType,
         },
@@ -2129,6 +2168,7 @@ pub(crate) mod tests {
         rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use std::collections::BTreeMap;
     use strum::IntoEnumIterator;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
@@ -2707,6 +2747,21 @@ pub(crate) mod tests {
         );
     }
 
+    /// Key digests that pass [`verify_epoch_info`]: a compressed keyset digest and a public key
+    /// digest. Their values are not checked there.
+    fn test_key_digests() -> Vec<KeyDigest> {
+        vec![
+            KeyDigest {
+                key_type: PubDataType::CompressedXofKeySet.to_string(),
+                digest: vec![1; 32],
+            },
+            KeyDigest {
+                key_type: PubDataType::PublicKey.to_string(),
+                digest: vec![2; 32],
+            },
+        ]
+    }
+
     #[test]
     fn test_verify_epoch_info() {
         let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
@@ -2723,10 +2778,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2748,10 +2800,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2768,7 +2817,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2785,7 +2834,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2802,7 +2851,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2819,7 +2868,7 @@ pub(crate) mod tests {
                 key_id: Some(bad_req_id.clone()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2836,7 +2885,7 @@ pub(crate) mod tests {
                 key_id: None,
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2853,7 +2902,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(bad_req_id.clone()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2870,7 +2919,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2887,7 +2936,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
@@ -2904,7 +2953,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: None,
@@ -2912,6 +2961,48 @@ pub(crate) mod tests {
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Every party checks the key digests, so a request without them is rejected before the
+        // protocol starts: each key needs a public key digest and a server key or compressed
+        // keyset digest, and an empty digest counts as missing.
+        let previous_epoch_with_digests = |key_digests| PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests,
+            }],
+            crs_info: vec![],
+        };
+        let key_digest = |key_type: PubDataType, digest: Vec<u8>| KeyDigest {
+            key_type: key_type.to_string(),
+            digest,
+        };
+        verify_epoch_info(
+            &new_epoch_id,
+            previous_epoch_with_digests(vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ]),
+        )
+        .unwrap();
+        for key_digests in [
+            vec![],
+            vec![key_digest(PubDataType::PublicKey, vec![2; 32])],
+            vec![key_digest(PubDataType::CompressedXofKeySet, vec![1; 32])],
+            vec![
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![]),
+            ],
+        ] {
+            let err = verify_epoch_info(&new_epoch_id, previous_epoch_with_digests(key_digests))
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+            let msg = err.internal_err().to_string();
+            assert!(msg.contains("digest"), "unexpected error: {msg}");
+        }
     }
 
     /// Builds key material whose metadata records `preproc_id`. Cheap enough for a unit test
@@ -2973,6 +3064,8 @@ pub(crate) mod tests {
         key_id: &RequestId,
         preproc_id: &RequestId,
         key_parameters: DKGParams,
+        key_digests: HashMap<PubDataType, Vec<u8>>,
+        crs_info: Vec<VerifiedCrsInfo>,
     ) -> VerifiedPreviousEpochInfo {
         VerifiedPreviousEpochInfo {
             context_id: *DEFAULT_MPC_CONTEXT,
@@ -2981,9 +3074,9 @@ pub(crate) mod tests {
                 key_id: *key_id,
                 preproc_id: *preproc_id,
                 key_parameters,
-                key_digests: HashMap::new(),
+                key_digests,
             }],
-            crs_info: vec![],
+            crs_info,
         }
     }
 
@@ -3016,6 +3109,8 @@ pub(crate) mod tests {
                     &key_id,
                     &stored_preproc_id,
                     crate::consts::TEST_PARAM,
+                    HashMap::new(),
+                    vec![],
                 ),
             )
             .await
@@ -3031,6 +3126,8 @@ pub(crate) mod tests {
                     &key_id,
                     &wrong_preproc_id,
                     crate::consts::TEST_PARAM,
+                    HashMap::new(),
+                    vec![],
                 ),
             )
             .await
@@ -3057,6 +3154,8 @@ pub(crate) mod tests {
                     &legacy_key_id,
                     &wrong_preproc_id,
                     crate::consts::TEST_PARAM,
+                    HashMap::new(),
+                    vec![],
                 ),
             )
             .await
@@ -3083,6 +3182,8 @@ pub(crate) mod tests {
                     &key_id,
                     &preproc_id,
                     crate::consts::TEST_PARAM,
+                    HashMap::new(),
+                    vec![],
                 ),
             )
             .await
@@ -3100,6 +3201,8 @@ pub(crate) mod tests {
                     &key_id,
                     &preproc_id,
                     crate::consts::TEST_PARAM,
+                    HashMap::new(),
+                    vec![],
                 ),
             )
             .await
@@ -3138,7 +3241,7 @@ pub(crate) mod tests {
                         // Observe the use of wrong preproc_id here
                         preproc_id: Some(wrong_preproc_id.into()),
                         key_parameters: FheParameter::Test as i32,
-                        key_digests: vec![],
+                        key_digests: test_key_digests(),
                     }],
                     crs_info: vec![],
                 }),
@@ -3833,6 +3936,342 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// Store `bytes` as the `data_type` public material of `data_id` and return their digest,
+    /// the way the digest of stored public material is computed at boot.
+    async fn store_public_bytes(
+        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        data_id: &RequestId,
+        data_type: PubDataType,
+        bytes: &[u8],
+    ) -> Vec<u8> {
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let mut guard = public_storage.lock().await;
+        guard
+            .store_bytes(bytes, data_id, &data_type.to_string())
+            .await
+            .unwrap();
+        let domain_separator = match data_type {
+            PubDataType::CRS => DSEP_PUBDATA_CRS,
+            _ => DSEP_PUBDATA_KEY,
+        };
+        hashing::hash_element(&domain_separator, bytes)
+    }
+
+    /// Serialize `value` and append some trailing bytes, so the result differs from what
+    /// re-serializing `value` gives.
+    ///
+    /// This is a stand-in for material written by an older tfhe-rs version, whose stored bytes
+    /// differ from a re-serialization on the current version. It is not a realistic legacy
+    /// encoding: the tests using it never deserialize these bytes, they only hash them the way
+    /// the boot check does.
+    fn serialize_with_trailing_bytes<
+        T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
+    >(
+        value: &T,
+    ) -> Vec<u8> {
+        let mut bytes = serialize(value);
+        bytes.extend_from_slice(b"trailing bytes");
+        bytes
+    }
+
+    fn serialize<T: serde::Serialize + tfhe::Versionize + tfhe::named::Named>(
+        value: &T,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            value,
+            &mut bytes,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        bytes
+    }
+
+    /// Run the boot-time sanity checks on everything the reshare stored for `epoch_id`.
+    async fn boot_sanity_check_epoch(
+        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<()> {
+        let private_storage = crypto_storage.get_private_storage();
+        let private_guard = private_storage.lock().await;
+        let key_infos: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
+            read_all_data_from_all_epochs_versioned(
+                &*private_guard,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await?;
+        let crs_infos: HashMap<(RequestId, EpochId), CrsGenMetadata> =
+            read_all_data_from_all_epochs_versioned(
+                &*private_guard,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await?;
+        drop(private_guard);
+
+        let key_entries: Vec<_> = key_infos
+            .into_iter()
+            .filter(|((_, e), _)| e == epoch_id)
+            .map(|((id, _), info)| (id, info.meta_data))
+            .collect();
+        assert!(!key_entries.is_empty(), "the reshare stored no key info");
+        let crs_entries: HashMap<_, _> = crs_infos
+            .into_iter()
+            .filter(|((_, e), _)| e == epoch_id)
+            .map(|((id, _), info)| (id, info))
+            .collect();
+
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_guard = public_storage.lock().await;
+        verify_keysets(&*public_guard, &key_entries).await?;
+        verify_crses(&*public_guard, &crs_entries).await
+    }
+
+    /// Resharing does not change public material, so the new epoch must sign the digests of the
+    /// stored bytes. Signing a re-serialization of the loaded keys instead made every core that
+    /// restarted after a reshare fail its boot check with "Server key digest mismatch", once the
+    /// keys had been written by an older tfhe-rs version.
+    #[tokio::test]
+    async fn test_reshare_signs_stored_uncompressed_and_crs_digests() {
+        let mut rng = AesRng::seed_from_u64(46);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("reshared_uncompressed_key").unwrap();
+        let preproc_id = derive_request_id("reshared_uncompressed_key_preproc").unwrap();
+        let crs_id = derive_request_id("reshared_crs").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let (keyset, _compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let crs_config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(crs_config, 256).unwrap();
+
+        let server_key_digest = store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::ServerKey,
+            &serialize_with_trailing_bytes(&keyset.public_keys.server_key),
+        )
+        .await;
+        let public_key_digest = store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            &serialize_with_trailing_bytes(&keyset.public_keys.public_key),
+        )
+        .await;
+        let crs_digest = store_public_bytes(
+            crypto_storage,
+            &crs_id,
+            PubDataType::CRS,
+            &serialize_with_trailing_bytes(&crs),
+        )
+        .await;
+        let key_digests = HashMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]);
+
+        let sk = epoch_manager.base_kms.signing_identity().unwrap();
+        let output = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                key_digests.clone(),
+                vec![VerifiedCrsInfo {
+                    crs_id,
+                    crs_digest: crs_digest.clone(),
+                }],
+            ),
+            vec![VerifiedPublicMaterial::Uncompressed(keyset.public_keys)],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![crs],
+        )
+        .await
+        .unwrap();
+
+        let EpochOutput::Reshare((keys_metadata, crs_metadata)) = output else {
+            panic!("expected a reshare output");
+        };
+        let [KeyGenMetadata::Current(key_metadata)] = keys_metadata.as_slice() else {
+            panic!("expected one current key metadata, got {keys_metadata:?}");
+        };
+        assert_eq!(
+            key_metadata.key_digest_map,
+            key_digests.into_iter().collect::<BTreeMap<_, _>>()
+        );
+        let [CrsGenMetadata::Current(crs_metadata)] = crs_metadata.as_slice() else {
+            panic!("expected one current CRS metadata, got {crs_metadata:?}");
+        };
+        assert_eq!(crs_metadata.crs_digest, crs_digest);
+
+        boot_sanity_check_epoch(crypto_storage, &new_epoch_id)
+            .await
+            .unwrap();
+    }
+
+    /// A compressed keygen from an existing keyset stores the old `CompactPublicKey`, not the one
+    /// derived from the new `CompressedXofKeySet`. The reshare must sign the digest of the stored
+    /// public key, otherwise the boot check fails with "Public key digest mismatch".
+    #[tokio::test]
+    async fn test_reshare_signs_stored_compressed_digests() {
+        let mut rng = AesRng::seed_from_u64(47);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("reshared_compressed_key").unwrap();
+        let preproc_id = derive_request_id("reshared_compressed_key_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let (_new_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let (old_keyset, _) = gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+
+        let compressed_keyset_digest = store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::CompressedXofKeySet,
+            &serialize(&compressed_keyset),
+        )
+        .await;
+        let public_key_digest = store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            &serialize(&old_keyset.public_keys.public_key),
+        )
+        .await;
+        let key_digests = HashMap::from([
+            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]);
+
+        let sk = epoch_manager.base_kms.signing_identity().unwrap();
+        let output = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                key_digests.clone(),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap();
+
+        let EpochOutput::Reshare((keys_metadata, _)) = output else {
+            panic!("expected a reshare output");
+        };
+        let [KeyGenMetadata::Current(key_metadata)] = keys_metadata.as_slice() else {
+            panic!("expected one current key metadata, got {keys_metadata:?}");
+        };
+        assert_eq!(
+            key_metadata.key_digest_map,
+            key_digests.into_iter().collect::<BTreeMap<_, _>>()
+        );
+
+        boot_sanity_check_epoch(crypto_storage, &new_epoch_id)
+            .await
+            .unwrap();
+    }
+
+    /// Without a public key digest in the request there is nothing verified to sign, so the
+    /// reshare must fail rather than sign a digest it computed itself.
+    #[tokio::test]
+    async fn test_reshare_missing_public_key_digest() {
+        let mut rng = AesRng::seed_from_u64(48);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("reshared_key_no_pk_digest").unwrap();
+        let preproc_id = derive_request_id("reshared_key_no_pk_digest_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+
+        let sk = epoch_manager.base_kms.signing_identity().unwrap();
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([(PubDataType::CompressedXofKeySet, vec![1; 32])]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("missing PublicKey digest"),
+            "unexpected error: {err}"
+        );
+
+        // Nothing was stored for the new epoch.
+        let private_storage = crypto_storage.get_private_storage();
+        let guard = private_storage.lock().await;
+        assert!(
+            !guard
+                .data_exists_at_epoch(
+                    &key_id,
+                    &new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap()
         );
     }
 }

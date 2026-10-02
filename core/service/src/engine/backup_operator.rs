@@ -762,6 +762,7 @@ async fn filter_custodian_data(
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
     let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+    let ephemeral_dec_key = Arc::new(ephemeral_dec_key.clone());
 
     for cur_recovery_output in &custodian_recovery_outputs {
         if cur_recovery_output.custodian_role == 0
@@ -807,7 +808,7 @@ async fn filter_custodian_data(
         match operator.validate_one_recovery_output(
             &internal,
             recovery_material,
-            ephemeral_dec_key,
+            &ephemeral_dec_key,
             ephemeral_enc_key,
         ) {
             Ok(backup_material) => match parsed_custodian_rec.entry(role) {
@@ -1454,10 +1455,7 @@ mod tests {
     };
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
-        cryptography::{
-            signatures::{SigningSchemeType, gen_sig_keys},
-            signcryption::UnifiedSigncryption,
-        },
+        cryptography::{signatures::gen_sig_keys, signcryption::UnifiedSigncryption},
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
@@ -1820,11 +1818,7 @@ mod tests {
             InternalCustodianContext::new(custodian_context, enc_key.clone()).unwrap();
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: vec![1, 2, 3],
-                pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
