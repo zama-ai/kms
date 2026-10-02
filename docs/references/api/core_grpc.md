@@ -1001,7 +1001,7 @@ It expects:
 - `request_id`: A unique uint256 RequestId for the decryption request.
 - `typed_ciphertexts`: The ciphertexts to decrypt and their meta information.
 - `key_id`: The `RequestId` of the TFHE key the ciphertext is encrypted under.
-- `client_address`: An EIP-55 encoded address (including the `0x` prefix) of the end-user who is supposed to learn the user decryption response.
+- `client_address`: The address of the end-user who is supposed to learn the user decryption response. Its format picks the linker. An EVM address is EIP-55 encoded with the `0x` prefix, and the link is the EIP-712 hash of `UserDecryptionLinker`. A Solana address is the base58 encoding of the 32-byte public key, and the link is the EIP-712 hash of `SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userAddress)`. The KMS does not check that the handles come from the same kind of host chain as the address; the caller does.
 - `enc_key`: The `bincode::serialize` of `PublicEncKey`, which is a wrapper around a `crypto_box::PublicKey` to be used for encrypting the result.
 - `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
 - `extra_data`: Extra data used in the EIP712 signature - `external_signature`.

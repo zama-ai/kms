@@ -964,9 +964,6 @@ mod test_user_decryption {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
-            // This is the EVM test path; the Solana fields are exercised by
-            // `validation_solana` and the Solana response tests.
-            signing_metadata: vec![],
         }
     }
 

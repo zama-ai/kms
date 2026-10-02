@@ -45,7 +45,6 @@ bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
-bs58.workspace = true
 hex.workspace = true
 kms = { workspace = true, features = ["default"] }
 kms-grpc.workspace = true

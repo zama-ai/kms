@@ -14,7 +14,7 @@ use kms_grpc::kms::v1::{
     CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -399,4 +399,22 @@ fn num_blocks_sunshine() {
         fhe_types_to_num_blocks(FheTypes::Uint160, params, 1).unwrap(),
         80
     );
+}
+
+/// The kind of user a test user decryption is for. The user address decides the receiver and the
+/// linker; the handles do not matter to the KMS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestHost {
+    Evm,
+    Solana,
+}
+
+impl TestHost {
+    /// Makes `client` a user of this kind. An EVM client already is: its address comes from its
+    /// signing key.
+    pub(crate) fn set_user(self, client: &mut Client) {
+        if self == Self::Solana {
+            client.client_address = PlaintextReceiver::Solana([0x11; 32]);
+        }
+    }
 }

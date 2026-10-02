@@ -3,7 +3,7 @@ use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
 use strum::IntoEnumIterator;
@@ -19,8 +19,6 @@ use tfhe_versionable::{
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::anyhow_error_and_log;
-        use crate::solana_binding::{handle_chain_id, is_evm_host_chain_id};
-        use alloy_sol_types::SolStruct;
         use alloy_primitives::{Bytes};
         use alloy_dyn_abi::DynSolValue;
 
@@ -28,11 +26,11 @@ cfg_if::cfg_if! {
             "client address is the same as verifying contract address";
         const ERR_DOMAIN_NOT_FOUND: &str = "domain not found";
         const ERR_VERIFYING_CONTRACT_NOT_FOUND: &str = "verifying contract not found";
-        const ERR_THERE_ARE_NO_HANDLES: &str = "there are no handles";
     }
 }
 
 const ERR_PARSE_CHECKSUMMED: &str = "error parsing checksummed address";
+const ERR_THERE_ARE_NO_HANDLES: &str = "there are no handles";
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
@@ -177,70 +175,133 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
     Ok(domain_msg)
 }
 
-/// The validated identity a user-decryption plaintext is sealed to: the one party able to open
-/// the signcrypted result. The typed form of signcryption's `receiver_id`.
-///
-/// Signcryption itself takes the receiver id as opaque bytes and has no notion of host chains; the
-/// width of those bytes is a property of the adapter that produced them. This type carries that
-/// property to the seam without teaching the engine what a host is: the adapter decides once, and
-/// everything downstream sees bytes.
-///
-/// Orthogonal to [`crate::kms::v1::SigningSchemeType`]: that axis picks which signature schemes a
-/// response carries so that a verifier can check it, this one picks who can decrypt the plaintext
-/// inside. A request chooses the two independently — an EVM-verified response can be sealed to a
-/// Solana key and vice versa, and neither choice constrains the other.
-///
-/// Variants are matched exhaustively — there is deliberately no wildcard arm anywhere, so adding a
-/// host makes every place that must decide fail to compile rather than silently take a default.
-///
-/// Each width is a property of its variant rather than a check somewhere, so a truncated identity
-/// is not a value this type can hold:
-///
-/// ```compile_fail
-/// // A hashed-and-truncated Solana key is 20 bytes. It has no representation here.
-/// let receiver = kms_grpc::rpc_types::PlaintextReceiver::Solana([0u8; 20]);
-/// ```
-///
-/// ```
-/// use kms_grpc::rpc_types::PlaintextReceiver;
-///
-/// assert_eq!(PlaintextReceiver::Solana([0u8; 32]).as_bytes().len(), 32);
-/// assert_eq!(
-///     PlaintextReceiver::Evm(alloy_primitives::Address::ZERO).as_bytes().len(),
-///     20,
-/// );
-/// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The longest base58 encoding of 32 bytes.
+const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
+
+/// The user a user-decryption result is signcrypted to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PlaintextReceiver {
-    /// A 20-byte EVM address, exactly as the EVM path has always passed it.
-    Evm(alloy_primitives::Address),
-    /// A 32-byte Solana ed25519 wallet key, never hashed and never truncated.
+    /// An EVM address, written EIP-55.
+    Evm(Address),
+    /// A Solana public key, written base58.
     Solana([u8; 32]),
 }
 
 impl PlaintextReceiver {
-    /// The receiver id as signcryption consumes it.
+    /// Reads a user address in either format: `0x` followed by EIP-55 hex is an EVM address, and
+    /// anything else must be the base58 encoding of a 32-byte Solana public key. The two cannot
+    /// be confused because base58 has no `0`.
+    pub fn parse(user_address: &str) -> anyhow::Result<Self> {
+        if user_address.starts_with("0x") {
+            Self::parse_evm(user_address)
+        } else {
+            Self::parse_solana(user_address).map_err(|e| {
+                anyhow::anyhow!(
+                    "a user address is `0x` and EIP-55 hex for an EVM user, or base58 of a 32-byte key for a Solana user: {e}"
+                )
+            })
+        }
+    }
+
+    fn parse_evm(user_address: &str) -> anyhow::Result<Self> {
+        Address::parse_checksummed(user_address, None)
+            .map(Self::Evm)
+            .map_err(|e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {user_address} - {e}"))
+    }
+
+    fn parse_solana(user_address: &str) -> anyhow::Result<Self> {
+        // Checked before decoding: base58 decoding is quadratic in the input length.
+        if user_address.len() > MAX_BASE58_PUBLIC_KEY_LEN {
+            anyhow::bail!(
+                "a base58 Solana address has at most {MAX_BASE58_PUBLIC_KEY_LEN} characters, got {}",
+                user_address.len()
+            );
+        }
+        let bytes = bs58::decode(user_address).into_vec().map_err(|e| {
+            anyhow::anyhow!("error parsing base58 Solana address: {user_address} - {e}")
+        })?;
+        let public_key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+            anyhow::anyhow!(
+                "a Solana address is 32 bytes, got {} for {user_address}",
+                bytes.len()
+            )
+        })?;
+        Ok(Self::Solana(public_key))
+    }
+
+    /// The receiver id signcryption binds the result to.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Evm(address) => address.as_slice(),
-            Self::Solana(pubkey) => pubkey.as_slice(),
+            Self::Solana(public_key) => public_key.as_slice(),
+        }
+    }
+
+    /// The link that binds a user-decryption response to its request: the EIP-712 hash, under the
+    /// gateway `domain`, of the linker struct for this receiver's kind of address.
+    pub fn user_decryption_link(
+        &self,
+        enc_key: &[u8],
+        handles: Vec<B256>,
+        domain: &Eip712Domain,
+    ) -> Vec<u8> {
+        use crate::solidity_types::{SolanaUserDecryptionLinker, UserDecryptionLinker};
+
+        let signing_hash = match self {
+            Self::Evm(address) => UserDecryptionLinker {
+                publicKey: enc_key.to_vec().into(),
+                handles,
+                userAddress: *address,
+            }
+            .eip712_signing_hash(domain),
+            Self::Solana(public_key) => SolanaUserDecryptionLinker {
+                publicKey: enc_key.to_vec().into(),
+                handles,
+                userAddress: B256::from(*public_key),
+            }
+            .eip712_signing_hash(domain),
+        };
+        signing_hash.to_vec()
+    }
+}
+
+impl From<Address> for PlaintextReceiver {
+    fn from(address: Address) -> Self {
+        Self::Evm(address)
+    }
+}
+
+impl fmt::Display for PlaintextReceiver {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Evm(address) => write!(f, "{}", address.to_checksum(None)),
+            Self::Solana(public_key) => write!(f, "{}", bs58::encode(public_key).into_string()),
         }
     }
 }
 
-impl crate::kms::v1::SigningMetadata {
-    /// The Solana envelope of one request: who the result is sealed to, and the host deployment
-    /// the response binding commits to.
-    pub fn solana(pubkey: impl Into<Vec<u8>>, verifying_program_id: impl Into<Vec<u8>>) -> Self {
-        Self {
-            metadata: Some(crate::kms::v1::signing_metadata::Metadata::Solana(
-                crate::kms::v1::SolanaMetadata {
-                    pubkey: pubkey.into(),
-                    verifying_program_id: verifying_program_id.into(),
-                },
-            )),
-        }
+/// The handles of a user-decryption request as the linker hashes them: each left-padded to 32
+/// bytes. A request needs at least one handle.
+pub fn left_padded_handles<'a>(
+    handles: impl IntoIterator<Item = &'a [u8]>,
+) -> anyhow::Result<Vec<B256>> {
+    let handles = handles
+        .into_iter()
+        .enumerate()
+        .map(|(index, handle)| {
+            if handle.len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {index} too long: {} bytes (max 32)",
+                    handle.len()
+                );
+            }
+            Ok(B256::left_padding_from(handle))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if handles.is_empty() {
+        anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
     }
+    Ok(handles)
 }
 
 #[derive(
@@ -656,66 +717,34 @@ impl crate::kms::v1::UserDecryptionRequest {
     /// because these are the only information available
     /// to the user *and* to the KMS.
     /// So we can only use these information to link the request and the response.
-    pub fn compute_link_checked(&self) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain)> {
-        use crate::solidity_types::UserDecryptionLinker;
-
+    pub fn compute_link_checked(
+        &self,
+    ) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain, PlaintextReceiver)> {
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!(ERR_DOMAIN_NOT_FOUND))?,
         )?;
 
-        let handles = self
-            .typed_ciphertexts
-            .iter()
-            .enumerate()
-            .map(|(idx, c)| {
-                if c.external_handle.len() > 32 {
-                    anyhow::bail!(
-                        "external_handle at index {idx} too long: {} bytes (max 32)",
-                        c.external_handle.len()
-                    );
-                }
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
-                    &c.external_handle,
-                ))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        if handles.is_empty() {
-            anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
-        }
-
-        for (index, handle) in handles.iter().enumerate() {
-            let chain_id = handle_chain_id(handle);
-            if !is_evm_host_chain_id(chain_id) {
-                anyhow::bail!(
-                    "EVM ciphertext handle at index {index} embeds chain ID {chain_id}, which is not a uint64-padded EVM chain id (high byte must be 0x00)"
-                );
-            }
-        }
-
-        let client_address =
-            alloy_primitives::Address::parse_checksummed(&self.client_address, None).map_err(
-                |e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {} - {e}", self.client_address),
-            )?;
+        let handles = left_padded_handles(
+            self.typed_ciphertexts
+                .iter()
+                .map(|c| c.external_handle.as_slice()),
+        )?;
+        let receiver = PlaintextReceiver::parse(&self.client_address)?;
         let verifying_contract = domain
             .verifying_contract
             .ok_or_else(|| anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
 
-        if client_address == verifying_contract {
+        if let PlaintextReceiver::Evm(client_address) = receiver
+            && client_address == verifying_contract
+        {
             anyhow::bail!("{ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR}: {client_address}");
         }
 
-        let linker = UserDecryptionLinker {
-            publicKey: self.enc_key.clone().into(),
-            handles,
-            userAddress: client_address,
-        };
+        let link = receiver.user_decryption_link(&self.enc_key, handles, &domain);
 
-        let link = linker.eip712_signing_hash(&domain).to_vec();
-
-        Ok((link, domain))
+        Ok((link, domain, receiver))
     }
 }
 
@@ -1676,7 +1705,6 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                signing_metadata: vec![],
             };
             assert!(
                 req.compute_link_checked()
@@ -1699,7 +1727,6 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                signing_metadata: vec![],
             };
             assert!(
                 req.compute_link_checked()
@@ -1725,7 +1752,6 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                signing_metadata: vec![],
             };
 
             assert!(
@@ -1749,9 +1775,109 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                signing_metadata: vec![],
             };
             assert!(req.compute_link_checked().is_ok());
+        }
+    }
+
+    #[test]
+    fn the_user_address_format_picks_the_receiver() {
+        let evm_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        let solana_key = [0x11u8; 32];
+        let solana_address = bs58::encode(solana_key).into_string();
+
+        let evm = PlaintextReceiver::parse(evm_address).unwrap();
+        assert_eq!(
+            evm,
+            PlaintextReceiver::Evm(Address::parse_checksummed(evm_address, None).unwrap())
+        );
+        let solana = PlaintextReceiver::parse(&solana_address).unwrap();
+        assert_eq!(solana, PlaintextReceiver::Solana(solana_key));
+        for receiver in [evm, solana] {
+            assert_eq!(
+                PlaintextReceiver::parse(&receiver.to_string()).unwrap(),
+                receiver
+            );
+        }
+        assert_eq!(evm.as_bytes().len(), 20);
+        assert_eq!(solana.as_bytes().len(), 32);
+
+        let error = |address: &str| PlaintextReceiver::parse(address).unwrap_err().to_string();
+        assert!(
+            error("0xd8da6BF26964aF9D7eEd9e03E53415D37aA96045")
+                .starts_with("error parsing checksummed address")
+        );
+        // Without the `0x` prefix an address is read as base58, which has no `0`, and the error
+        // names both formats.
+        for address in [&evm_address[2..], ""] {
+            let error = error(address);
+            assert!(error.starts_with("a user address is `0x` and EIP-55 hex for an EVM user"));
+            assert!(error.contains("base58"));
+        }
+        // A Solana address is exactly 32 bytes; 33 bytes already exceed the base58 length cap.
+        for (wrong_length, expected) in [
+            (31, "a Solana address is 32 bytes, got 31"),
+            (33, "at most 44 characters, got 45"),
+        ] {
+            let address = bs58::encode(vec![0x11u8; wrong_length]).into_string();
+            assert!(error(&address).contains(expected));
+        }
+        // An over-long address is refused before it is decoded.
+        assert!(error(&"2".repeat(1_000_000)).contains("at most 44 characters, got 1000000"));
+    }
+
+    /// The KMS reads neither the handle layout nor the host chain type that fhevm handles embed in
+    /// byte 22: the user address alone picks the receiver and the linker.
+    #[test]
+    fn the_handles_do_not_pick_the_receiver() {
+        let domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let evm_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        let solana_key = [0x11u8; 32];
+        let evm_handle = vec![5, 6, 7, 8];
+        let mut solana_handle = vec![0xab; 32];
+        solana_handle[22] = 0x01;
+
+        for (client_address, handle, expected) in [
+            (
+                evm_address.to_string(),
+                &solana_handle,
+                PlaintextReceiver::parse(evm_address).unwrap(),
+            ),
+            (
+                bs58::encode(solana_key).into_string(),
+                &evm_handle,
+                PlaintextReceiver::Solana(solana_key),
+            ),
+        ] {
+            let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
+                request_id: None,
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: vec![].into(),
+                    fhe_type: 0,
+                    external_handle: handle.clone(),
+                    ciphertext_format: 0,
+                }],
+                key_id: None,
+                client_address,
+                enc_key: vec![1, 2, 3],
+                domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let (link, _, receiver) = req.compute_link_checked().unwrap();
+            assert_eq!(receiver, expected);
+            let handles = left_padded_handles([handle.as_slice()]).unwrap();
+            assert_eq!(
+                link,
+                expected.user_decryption_link(&req.enc_key, handles, &domain)
+            );
         }
     }
 

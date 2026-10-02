@@ -309,12 +309,6 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 EIP-712 signature validation on user-decryption requests is shared between
 the server and in-browser verifiers via the `validation_wasm` build.
 
-Solana user decryption uses the same response signature verifier and threshold reconstruction as EVM.
-Its request uses a 32-byte recipient and a Solana linker that binds the host program.
-Solana selects the typed signature list when present, then the legacy internal signature, then the external signature.
-EVM retains its checks of all available legacy signatures and every requested scheme.
-The shared verifier performs the cryptographic checks for both paths.
-
 ## Deployment modes
 
 Mode is selected in the server TOML config — a party runs in threshold mode

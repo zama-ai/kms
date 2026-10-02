@@ -1,5 +1,5 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::tests::common::{PollConfig, retrying_poll};
+use crate::client::tests::common::{PollConfig, TestHost, retrying_poll};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -64,6 +64,30 @@ async fn test_user_decryption_threshold(
         None,
         None,
         Some(decryption_mode),
+        TestHost::Evm,
+    )
+    .await;
+}
+
+/// A Solana user decryption runs through the same servers and client as an EVM one.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_solana() {
+    user_decryption_threshold(
+        TEST_PARAM,
+        &TEST_THRESHOLD_KEY_ID_4P,
+        false,
+        TestingPlaintext::U8(88),
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+        1,
+        true,
+        4,
+        None,
+        None,
+        None,
+        TestHost::Solana,
     )
     .await;
 }
@@ -92,6 +116,7 @@ async fn test_user_decryption_threshold_malicious(
         None,
         Some(HashSet::from_iter(malicious_set.into_iter())),
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -120,6 +145,7 @@ async fn test_user_decryption_threshold_malicious_failure() {
                 .collect(),
         ),
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -148,6 +174,7 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
                 .collect(),
         ), // all parties are malicious
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -177,19 +204,22 @@ async fn test_user_decryption_threshold_precompute_sns(
         None,
         None,
         Some(decryption_mode),
+        TestHost::Evm,
     )
     .await;
 }
 
 #[cfg(feature = "wasm_tests")]
 #[rstest::rstest]
-#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
-#[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P)]
+#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, TestHost::Evm)]
+#[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, TestHost::Evm)]
+#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, TestHost::Solana)]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_user_decryption_threshold_and_write_transcript(
     #[case] secure: bool,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
+    #[case] host: TestHost,
 ) {
     user_decryption_threshold(
         TEST_PARAM,
@@ -206,6 +236,7 @@ async fn test_user_decryption_threshold_and_write_transcript(
         None,
         None,
         None,
+        host,
     )
     .await;
 }
@@ -236,6 +267,7 @@ async fn default_user_decryption_threshold_and_write_transcript(
         None,
         None,
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -266,6 +298,7 @@ async fn default_user_decryption_threshold(
         None,
         None,
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -295,6 +328,7 @@ async fn default_user_decryption_threshold_precompute_sns(
         None,
         None,
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -330,6 +364,7 @@ async fn default_user_decryption_threshold_with_crash(
         }),
         None,
         None,
+        TestHost::Evm,
     )
     .await;
 }
@@ -347,6 +382,7 @@ pub(crate) async fn user_decryption_threshold(
     party_ids_to_crash: Option<HashSet<Role>>,
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
+    host: TestHost,
 ) {
     assert!(parallelism > 0);
 
@@ -376,6 +412,7 @@ pub(crate) async fn user_decryption_threshold(
         .create_internal_client(&dkg_params, decryption_mode)
         .await
         .expect("create_internal_client failed");
+    host.set_user(&mut internal_client);
     let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
@@ -518,10 +555,15 @@ pub(crate) async fn user_decryption_threshold(
                 eph_pk: reqs[0].clone().1,
                 agg_resp,
             };
-            let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
-            } else {
-                crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
+            let path_prefix = match (dkg_params == PARAMS_TEST_BK_SNS, host) {
+                (true, TestHost::Evm) => crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH,
+                (true, TestHost::Solana) => {
+                    crate::consts::TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH
+                }
+                (false, TestHost::Evm) => crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH,
+                (false, TestHost::Solana) => {
+                    unimplemented!("no Solana default-parameter transcript")
+                }
             };
             let path = format!("{}.{}.json", path_prefix, msg.bits());
             transcript.write_stable_test_vector_json(&path).unwrap();

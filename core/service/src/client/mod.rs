@@ -15,9 +15,6 @@ pub mod local_crypto;
 pub mod mpc_context;
 #[cfg(feature = "non-wasm")]
 pub mod public_decryption;
-// The Solana response rules are client-side and must be available to the wasm build, which is
-// where the browser/wallet caller lives; nothing here is gated on `non-wasm`.
-pub mod solana_response;
 #[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]
 pub mod test_tools;

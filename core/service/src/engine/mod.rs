@@ -34,8 +34,6 @@ pub mod utils;
 
 #[cfg(feature = "non-wasm")]
 mod validation_non_wasm;
-#[cfg(feature = "non-wasm")]
-mod validation_solana;
 mod validation_wasm;
 
 pub(crate) mod signed_payload;
