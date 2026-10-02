@@ -28,6 +28,7 @@ use tfhe::{Unversionize, Versionize, named::Named};
 /// Cloning copies the stored data, fault points, and events. Clones do not share later changes.
 #[derive(Clone, Debug, Default)]
 pub struct FailingRamStorage {
+    fail_data_exists_at: Option<StorageEntry>,
     fail_store_at: Option<(StorageEntry, FaultPhase)>,
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
     /// Intended entry left in place when an S3 delete is sent to the wrong, nonexistent key.
@@ -44,6 +45,11 @@ impl FailingRamStorage {
     /// Reject the store of `entry` without touching the wrapped storage.
     pub(crate) fn set_fail_store_at(&mut self, entry: StorageEntry) {
         self.fail_store_at = Some((entry, FaultPhase::BeforeMutation));
+    }
+
+    /// Rejects the existence check for `entry` without changing the wrapped storage.
+    pub(crate) fn set_fail_data_exists_at(&mut self, entry: StorageEntry) {
+        self.fail_data_exists_at = Some(entry);
     }
 
     /// Write `entry` to the wrapped storage and then return an error.
@@ -70,6 +76,7 @@ impl FailingRamStorage {
     }
 
     pub(crate) fn clear_fail_points(&mut self) {
+        self.fail_data_exists_at = None;
         self.fail_store_at = None;
         self.fail_delete_at = None;
         self.noop_delete_at = None;
@@ -174,6 +181,10 @@ impl FailingRamStorage {
 
 impl StorageReader for FailingRamStorage {
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.fail_data_exists_at.as_ref() == Some(&entry) {
+            anyhow::bail!("storage existence check failed!")
+        }
         self.inner.data_exists(data_id, data_type).await
     }
 
