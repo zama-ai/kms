@@ -8,7 +8,7 @@ use crate::cryptography::{
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
     signing::SigningSchemeType,
 };
-use crate::engine::signed_payload::user_dec_payload_bytes;
+use crate::engine::signed_payload::user_dec_payload;
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, ExpectedSigner,
     RejectedUserDecResponse, ResponseSignatures, SignedPayloads, UserDecRejectReason,
@@ -31,6 +31,7 @@ use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionRes
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
+use std::sync::Arc;
 use tfhe::FheTypes;
 use tfhe::shortint::ClassicPBSParameters;
 use threshold_execution::endpoints::decryption::DecryptionMode;
@@ -278,7 +279,7 @@ impl Client {
             &SignedPayloads {
                 dsep: &DSEP_USER_DECRYPTION,
                 internal_bytes: &response_bytes,
-                payload_bytes: &user_dec_payload_bytes(&response_bytes, &resp.extra_data)?,
+                payload: &user_dec_payload(&response_bytes, &resp.extra_data),
                 eip712_hash: Some(user_decrypt_eip712_hash(&payload, request, eip712_domain)?),
             },
             request.signing_schemes(),
@@ -294,8 +295,12 @@ impl Client {
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
 
         let receiver_id = self.client_address.to_vec();
-        let unsign_key =
-            UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
+        let unsign_key = UnifiedUnsigncryptionKey::new(
+            Arc::new(dec_key.clone()),
+            enc_key.clone(),
+            cur_verf_key.clone(),
+            receiver_id,
+        );
 
         payload
             .signcrypted_ciphertexts
@@ -687,6 +692,9 @@ impl Client {
         let num_parties = trusted_ctx.num_parties();
 
         let client_id = self.client_address.to_vec();
+        // Shared across the loop below so the private key is not copied per
+        // response.
+        let dec_key = Arc::new(dec_key.clone());
 
         let mut accepted = Vec::with_capacity(authenticated.len());
 
@@ -696,10 +704,10 @@ impl Client {
             let signcrypted_ciphertexts = &authenticated_resp.signcrypted_ciphertexts;
             let role = authenticated_resp.role;
             let unsign_key = UnifiedUnsigncryptionKey::new(
-                dec_key,
-                enc_key,
-                &authenticated_resp.verification_key,
-                &client_id,
+                dec_key.clone(),
+                enc_key.clone(),
+                authenticated_resp.verification_key.clone(),
+                client_id.clone(),
             );
             let mut shares_per_slot = Vec::with_capacity(signcrypted_ciphertexts.len());
             let mut recovered_ok = true;

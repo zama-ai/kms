@@ -189,10 +189,10 @@ impl GrpcNetworkingManager {
 
     pub async fn make_healthcheck_session<R: RoleTrait>(
         &self,
-        role_assignment: &RoleAssignment<R>,
+        role_assignment: RoleAssignment<R>,
         my_role: R,
     ) -> anyhow::Result<HealthCheckSession<R>> {
-        let mut others = role_assignment.clone();
+        let mut others = role_assignment;
 
         // Removing self from the role_assignment map
         // as we only want to connect to others.
@@ -203,7 +203,7 @@ impl GrpcNetworkingManager {
                 return Err(anyhow::anyhow!(
                     "My role {:?} not found in role assignment {:?}",
                     my_role,
-                    role_assignment
+                    others
                 ));
             }
         };
