@@ -46,6 +46,8 @@ use crate::cryptography::signing::UnifiedPublicSigKey;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
+#[cfg(any(test, feature = "testing", feature = "insecure"))]
+use crate::vault::storage::crypto_material::get_large_seed_rng;
 use crate::vault::storage::crypto_material::{
     get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success, read_verf_key_at,
     store_verf_key_at,
@@ -189,9 +191,9 @@ where
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_rng(deterministic, Some(0));
+    let mut rng = get_large_seed_rng(deterministic, Some(0));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_rng(false, Some(0));
+    let mut rng = get_large_seed_rng(false, Some(0));
 
     if let Some(sk) = signing_keys_map.get(&*SIGNING_KEY_ID) {
         // If a signing key already exists under this request ID, then only the
@@ -1078,9 +1080,9 @@ where
     PrivS: Storage,
 {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
+    let mut rng = get_large_seed_rng(deterministic, Some(party_id.get() as u64));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_rng(false, Some(party_id.get() as u64));
+    let mut rng = get_large_seed_rng(false, Some(party_id.get() as u64));
 
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =

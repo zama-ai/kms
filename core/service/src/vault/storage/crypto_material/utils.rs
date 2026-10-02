@@ -26,6 +26,7 @@ use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
 use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -56,6 +57,32 @@ pub fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
         AesRng::seed_from_u64(seed.unwrap_or(42))
     } else {
         AesRng::from_entropy()
+    }
+}
+
+/// Creates a new random number generator instance using ChaCha20.
+///
+/// # Arguments
+/// * `deterministic` - If true, the RNG will be seeded with the provided seed (or a default of 42 if None).
+///   If false, a cryptographically secure 256 random seed will be used.
+/// * `seed` - Optional seed value for deterministic RNG generation.
+///
+/// # Returns
+/// A new instance of `ChaCha20Rng` configured according to the specified parameters.
+///
+/// # Examples
+/// ```rust,ignore
+/// // Create a deterministic RNG with default seed
+/// let rng = get_large_seed_rng(true, None);
+///
+/// // Create a non-deterministic RNG
+/// let rng = get_large_seed_rng(false, None);
+/// ```
+pub fn get_large_seed_rng(deterministic: bool, seed: Option<u64>) -> ChaCha20Rng {
+    if deterministic {
+        ChaCha20Rng::seed_from_u64(seed.unwrap_or(42))
+    } else {
+        ChaCha20Rng::from_entropy()
     }
 }
 
