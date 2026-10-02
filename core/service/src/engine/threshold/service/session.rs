@@ -1,6 +1,6 @@
 // === Standard Library ===
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     hash::Hash,
     sync::{Arc, Weak},
 };
@@ -972,15 +972,16 @@ fn merge_two_sets_role_assignments(
     // Set 1 is indexed only to reject duplicates in it.
     roles_by_mpc_identity(context_id_set1, context_set1)?;
     roles_by_signer(context_id_set1, context_set1)?;
-    let set2_by_mpc_identity = roles_by_mpc_identity(context_id_set2, context_set2)?;
+    let mut set2_by_mpc_identity = roles_by_mpc_identity(context_id_set2, context_set2)?;
     let set2_by_signer = roles_by_signer(context_id_set2, context_set2)?;
 
     let mut merged = RoleAssignment::empty();
-    let mut merged_set2_roles = HashSet::new();
     for (role_set_1, identity_set_1) in context_set1.role_assignment.iter() {
         let mpc_identity = identity_set_1.mpc_identity();
         let signer_set_1 = context_set1.signers.get(role_set_1);
-        let role_by_mpc_identity = set2_by_mpc_identity.get(&mpc_identity).copied();
+        let role_by_mpc_identity = set2_by_mpc_identity
+            .get(&mpc_identity)
+            .map(|(role, _)| *role);
 
         if let Some(signer) = signer_set_1
             && let Some(role_by_signer) = set2_by_signer.get(signer)
@@ -997,7 +998,7 @@ fn merge_two_sets_role_assignments(
             ));
         }
 
-        let Some(role_set_2) = role_by_mpc_identity else {
+        let Some((role_set_2, identity_set_2)) = set2_by_mpc_identity.remove(&mpc_identity) else {
             merged.insert(TwoSetsRole::OnlySet1(*role_set_1), identity_set_1.clone());
             continue;
         };
@@ -1011,40 +1012,32 @@ fn merge_two_sets_role_assignments(
                 signer_2.0
             ));
         }
-        let identity_set_2 = context_set2
-            .role_assignment
-            .get(&role_set_2)
-            // `set2_by_mpc_identity` only holds roles of `context_set2.role_assignment`.
-            .expect("role indexed from the set 2 role assignment")
-            .clone();
         merged.insert(
             TwoSetsRole::Both(DualRole {
                 role_set_1: *role_set_1,
                 role_set_2,
             }),
-            identity_set_2,
+            identity_set_2.clone(),
         );
-        merged_set2_roles.insert(role_set_2);
     }
 
-    for (role_set_2, identity_set_2) in context_set2.role_assignment.iter() {
-        if !merged_set2_roles.contains(role_set_2) {
-            merged.insert(TwoSetsRole::OnlySet2(*role_set_2), identity_set_2.clone());
-        }
+    // The set 2 parties left in the index have no MPC identity in set 1.
+    for (role_set_2, identity_set_2) in set2_by_mpc_identity.into_values() {
+        merged.insert(TwoSetsRole::OnlySet2(role_set_2), identity_set_2.clone());
     }
     Ok(merged)
 }
 
-/// Maps each MPC identity of `context` to the role of its party.
+/// Maps each MPC identity of `context` to the role and the network identity of its party.
 ///
 /// Returns an error if two parties of the context have the same MPC identity.
-fn roles_by_mpc_identity(
+fn roles_by_mpc_identity<'a>(
     context_id: &ContextId,
-    context: &Context,
-) -> anyhow::Result<HashMap<MpcIdentity, Role>> {
+    context: &'a Context,
+) -> anyhow::Result<HashMap<MpcIdentity, (Role, &'a Identity)>> {
     let mut roles = HashMap::new();
     for (role, identity) in context.role_assignment.iter() {
-        if let Some(other_role) = roles.insert(identity.mpc_identity(), *role) {
+        if let Some((other_role, _)) = roles.insert(identity.mpc_identity(), (*role, identity)) {
             return Err(anyhow::anyhow!(
                 "Parties {other_role} and {role} have the same MPC identity {} in context {context_id}",
                 identity.mpc_identity()
@@ -1253,6 +1246,8 @@ pub(crate) async fn validate_context_and_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::engine::{
         context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
