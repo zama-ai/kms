@@ -1829,6 +1829,30 @@ mod tests {
         assert_eq!(role_assignment.get(&both(4, 4)).unwrap().port(), 50002);
     }
 
+    /// Sunshine: a party can have another role in set 2 than in set 1. The merge pairs the two
+    /// roles by MPC identity, and the merged party uses the set 2 URL.
+    #[tokio::test]
+    async fn two_sets_merge_reordered_roles() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes(".kms.svc.cluster.local");
+        set2.reverse();
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(4), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 4));
+        assert_eq!(role_assignment.len(), 4);
+        for i in 1..=4 {
+            let identity = role_assignment.get(&both(i, 5 - i)).unwrap();
+            assert_eq!(identity.mpc_identity(), MpcIdentity(format!("node-{i}")));
+            assert_eq!(
+                identity.hostname(),
+                format!("node-{i}.kms.svc.cluster.local")
+            );
+        }
+    }
+
     /// Sunshine: a context that lists only this node's signer, as the default context built
     /// from the peer list does, merges with a context that lists every signer.
     #[tokio::test]
