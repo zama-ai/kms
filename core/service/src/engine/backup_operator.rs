@@ -1882,10 +1882,13 @@ mod tests {
         );
     }
 
-    /// A node that lost its public storage takes its backup key set from the recovery material,
-    /// which must name exactly one: agreeing on the ECDSA key alone is not enough.
+    /// A node that lost its public storage takes its backup key set from the recovery material.
+    /// An empty vault names no key set, and contexts that agree name theirs. The material must name
+    /// exactly one key set, because agreement on the ECDSA key alone is not enough. Material whose
+    /// signatures do not verify under the key set it names is refused, even when it is the only
+    /// material in the vault.
     #[tokio::test]
-    async fn operator_backup_keys_are_taken_from_the_vault() {
+    async fn operator_backup_keys_are_taken_from_valid_vault_material() {
         let mut rng = AesRng::seed_from_u64(0);
         let sk = seeded_identity(&mut rng);
         let mut vault = make_unencrypted_vault();
@@ -1907,24 +1910,18 @@ mod tests {
         let mixed = RequestId::from_bytes([3; 32]);
         store_dummy_recovery_material(&mut vault.storage, &mixed, &reseeded).await;
         assert!(operator_backup_keys_from_vault(&vault).await.is_err());
-    }
 
-    /// Material whose signatures do not verify under the key set it names is refused, even when
-    /// it is the only material in the vault.
-    #[tokio::test]
-    async fn operator_backup_keys_from_the_vault_must_validate() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let sk = seeded_identity(&mut rng);
+        // A vault of its own holds only the material that names a key set it was not signed under.
         let other_sk = seeded_identity(&mut rng);
         let id = RequestId::from_bytes([1; 32]);
         let mut material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
         material.payload.operator_verf_keys =
             VerfKeySet::from_identity(&other_sk, BACKUP_SIGNING_SCHEMES).unwrap();
-        let mut vault = make_unencrypted_vault();
-        crate::vault::storage::store_recovery_material(&mut vault.storage, &material)
+        let mut tampered_vault = make_unencrypted_vault();
+        crate::vault::storage::store_recovery_material(&mut tampered_vault.storage, &material)
             .await
             .unwrap();
-        assert!(operator_backup_keys_from_vault(&vault).await.is_err());
+        assert!(operator_backup_keys_from_vault(&tampered_vault).await.is_err());
     }
 
     /// A vault without a secret-sharing keychain cannot recover from custodians, so the node
@@ -1978,24 +1975,19 @@ mod tests {
         );
     }
 
-    /// The ECDSA key and root seed a restore puts back into private storage.
-    fn restored_signing_material() -> (PrivateSigKey, RootSigningSeed) {
-        let mut rng = AesRng::seed_from_u64(9);
-        let (_vk, sk) = gen_sig_keys(&mut rng);
-        (sk, RootSigningSeed::random(&mut rng))
-    }
-
-    /// An operator as a node has it once a restore has put its signing key and root seed back.
+    /// An operator as a node has it once a restore has put its signing key and root seed back,
+    /// together with the identity they form.
     async fn operator_after_restore(
-        sig_key: &PrivateSigKey,
-        seed: &RootSigningSeed,
         anchored: Option<RequestId>,
-    ) -> RealBackupOperator<RamStorage, RamStorage> {
+    ) -> (RealBackupOperator<RamStorage, RamStorage>, NodeSigningIdentity) {
+        let mut rng = AesRng::seed_from_u64(9);
+        let (_vk, sig_key) = gen_sig_keys(&mut rng);
+        let seed = RootSigningSeed::random(&mut rng);
         let mut priv_storage = RamStorage::new();
         store_versioned_at_request_id(
             &mut priv_storage,
             &SIGNING_KEY_ID,
-            sig_key,
+            &sig_key,
             &PrivDataType::SigningKey.to_string(),
         )
         .await
@@ -2003,7 +1995,7 @@ mod tests {
         store_versioned_at_request_id(
             &mut priv_storage,
             &SIGNING_KEY_ID,
-            seed,
+            &seed,
             &PrivDataType::SigningSeed.to_string(),
         )
         .await
@@ -2013,10 +2005,11 @@ mod tests {
                 .await
                 .unwrap();
         }
-        RealBackupOperator::new(
+        let identity = NodeSigningIdentity::new(sig_key, seed);
+        let operator = RealBackupOperator::new(
             BaseKmsStruct::new(
                 kms_grpc::rpc_types::KMSType::Centralized,
-                NodeSigningIdentity::new(sig_key.clone(), seed.clone()),
+                identity.clone(),
                 test_rng_source(),
             ),
             CryptoMaterialStorage::from(
@@ -2025,7 +2018,8 @@ mod tests {
                 Some(make_unencrypted_vault()),
             ),
             None,
-        )
+        );
+        (operator, identity)
     }
 
     /// A context the keychain took on for a recovery that failed must not outlive it, whether the
@@ -2077,12 +2071,8 @@ mod tests {
     #[tokio::test]
     async fn install_recovered_context_anchors_the_context() {
         let id = RequestId::from_bytes([3; 32]);
-        let (sk, seed) = restored_signing_material();
-        let operator = operator_after_restore(&sk, &seed, None).await;
-        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(
-            &id,
-            &NodeSigningIdentity::new(sk, seed),
-        );
+        let (operator, identity) = operator_after_restore(None).await;
+        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &identity);
 
         operator.install_recovered_context(&material).await.unwrap();
 
@@ -2100,12 +2090,9 @@ mod tests {
     async fn install_recovered_context_aborts_when_another_context_arrived_meanwhile() {
         let recovering = RequestId::from_bytes([3; 32]);
         let installed = RequestId::from_bytes([4; 32]);
-        let (sk, seed) = restored_signing_material();
-        let operator = operator_after_restore(&sk, &seed, Some(installed)).await;
-        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(
-            &recovering,
-            &NodeSigningIdentity::new(sk, seed),
-        );
+        let (operator, identity) = operator_after_restore(Some(installed)).await;
+        let material =
+            crate::vault::storage::tests::dummy_recovery_material_at_id(&recovering, &identity);
 
         let err = operator
             .install_recovered_context(&material)
@@ -2124,12 +2111,8 @@ mod tests {
     #[tokio::test]
     async fn install_recovered_context_accepts_the_context_already_anchored() {
         let id = RequestId::from_bytes([3; 32]);
-        let (sk, seed) = restored_signing_material();
-        let operator = operator_after_restore(&sk, &seed, Some(id)).await;
-        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(
-            &id,
-            &NodeSigningIdentity::new(sk, seed),
-        );
+        let (operator, identity) = operator_after_restore(Some(id)).await;
+        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &identity);
 
         operator.install_recovered_context(&material).await.unwrap();
 
