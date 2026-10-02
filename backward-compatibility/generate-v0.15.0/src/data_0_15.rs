@@ -120,8 +120,9 @@ use backward_compatibility::{
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest, VerfKeySetTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
+    UserDecSignedPayloadTest, VerfKeySetTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -492,6 +493,21 @@ const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P3
     test_filename: Cow::Borrowed("mlkem1024_p384_private_key"),
     state: 384,
 };
+
+// One fixture per variant that is persisted: ML-KEM-512 for user decryption, MLKEM1024-P384 for
+// the custodian-backup chain.
+const UNIFIED_PRIVATE_ENC_KEY_MLKEM512_TEST: UnifiedPrivateEncKeyTest = UnifiedPrivateEncKeyTest {
+    test_filename: Cow::Borrowed("unified_private_enc_key_mlkem512"),
+    state: 512,
+    pke_type: Cow::Borrowed("MlKem512"),
+};
+
+const UNIFIED_PRIVATE_ENC_KEY_MLKEM1024_P384_TEST: UnifiedPrivateEncKeyTest =
+    UnifiedPrivateEncKeyTest {
+        test_filename: Cow::Borrowed("unified_private_enc_key_mlkem1024_p384"),
+        state: 1384,
+        pke_type: Cow::Borrowed("MlKem1024P384"),
+    };
 
 // KMS test
 const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
@@ -1121,6 +1137,23 @@ impl KmsV0_15_0 {
         );
 
         TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
+    }
+
+    fn gen_unified_private_enc_key(
+        dir: &PathBuf,
+        test: UnifiedPrivateEncKeyTest,
+    ) -> TestMetadataKMS {
+        let pke_type = match test.pke_type.as_ref() {
+            "MlKem512" => PkeSchemeType::MlKem512,
+            "MlKem1024P384" => PkeSchemeType::MlKem1024P384,
+            other => panic!("no UnifiedPrivateEncKey fixture for the scheme {other}"),
+        };
+        let mut rng = AesRng::seed_from_u64(test.state);
+        let mut encryption = Encryption::new(pke_type, &mut rng);
+        let (private_key, _) = encryption.keygen().unwrap();
+        store_versioned_test!(&private_key, dir, &test.test_filename);
+
+        TestMetadataKMS::UnifiedPrivateEncKey(test)
     }
 
     fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
@@ -2218,6 +2251,11 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
+            KmsV0_15_0::gen_unified_private_enc_key(&dir, UNIFIED_PRIVATE_ENC_KEY_MLKEM512_TEST),
+            KmsV0_15_0::gen_unified_private_enc_key(
+                &dir,
+                UNIFIED_PRIVATE_ENC_KEY_MLKEM1024_P384_TEST,
+            ),
             KmsV0_15_0::gen_unified_signcryption(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),

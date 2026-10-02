@@ -20,8 +20,8 @@ use backward_compatibility::{
     RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
     SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
     TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest,
-    VerfKeySetTest, data_dir,
+    UnifiedCipherTest, UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
+    UserDecSignedPayloadTest, VerfKeySetTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -739,6 +739,44 @@ fn test_mlkem1024_p384_private_key(
 
     if stored != generated {
         return Err(test.failure("the MLKEM1024-P384 private key changed", format));
+    }
+    Ok(test.success(format))
+}
+
+fn test_unified_private_enc_key(
+    dir: &Path,
+    test: &UnifiedPrivateEncKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let stored: UnifiedPrivateEncKey = load_and_unversionize(dir, test, format)?;
+    let pke_type = match test.pke_type.as_ref() {
+        "MlKem512" => PkeSchemeType::MlKem512,
+        "MlKem1024P384" => PkeSchemeType::MlKem1024P384,
+        other => {
+            return Err(test.failure(
+                format!("no UnifiedPrivateEncKey fixture for the scheme {other}"),
+                format,
+            ));
+        }
+    };
+    if PkeSchemeType::from(&stored) != pke_type {
+        return Err(test.failure(
+            format!(
+                "the stored key is a {} key, not a {pke_type} key",
+                PkeSchemeType::from(&stored)
+            ),
+            format,
+        ));
+    }
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut encryption = Encryption::new(pke_type, &mut rng);
+    let (generated, _) = encryption.keygen().map_err(|e| test.failure(e, format))?;
+
+    if stored != generated {
+        return Err(test.failure(
+            format!("the {pke_type} UnifiedPrivateEncKey changed"),
+            format,
+        ));
     }
     Ok(test.success(format))
 }
@@ -1862,6 +1900,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::MlKem1024P384PrivateKey(test) => {
                 test_mlkem1024_p384_private_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedPrivateEncKey(test) => {
+                test_unified_private_enc_key(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::UnifiedSigncryption(test) => {
                 test_unified_signcryption(test_dir.as_ref(), test, format).into()

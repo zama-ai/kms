@@ -1718,6 +1718,24 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
+        metadata: UnifiedPrivateEncKey((
+            test_filename: "unified_private_enc_key_mlkem512",
+            state: 512,
+            pke_type: "MlKem512",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
+        metadata: UnifiedPrivateEncKey((
+            test_filename: "unified_private_enc_key_mlkem1024_p384",
+            state: 1384,
+            pke_type: "MlKem1024P384",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
         metadata: UnifiedSigncryption((
             test_filename: "unified_signcryption",
             state: 202,
