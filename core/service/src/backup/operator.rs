@@ -148,7 +148,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 pub struct Operator {
     custodian_keys: HashMap<Role, (UnifiedPublicEncKey, VerfKeySet)>,
     /// The whole signing identity matching [`BACKUP_SIGNING_SCHEMES`]. `None` for an operator built only to validate.
-    signing_key: Option<Arc<NodeSigningIdentity>>,
+    signing_identity: Option<Arc<NodeSigningIdentity>>,
     /// The published counterpart of `signing_key`
     verification_key: VerfKeySet,
     threshold: usize,
@@ -158,7 +158,7 @@ impl std::fmt::Debug for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
             .field("custodian_keys", &self.custodian_keys)
-            .field("signing_key", &"omitted")
+            .field("signing_identity", &"omitted")
             .field("verification_key", &self.verification_key)
             .field("threshold", &self.threshold)
             .finish()
@@ -283,6 +283,8 @@ impl RecoveryValidationMaterial {
             commitments,
             custodian_context,
             mpc_context,
+            // Include the needed verification keys in the payload for the backup vault as an escape hatch where
+            // public storage is lost which can manually be validated against data on the blockchain.
             operator_verf_keys,
         };
         let signatures = sign_composite(
@@ -408,10 +410,10 @@ pub struct BackupMaterial {
     /// The MPC context this backup was produced under.
     pub mpc_context_id: ContextId,
     // receiver
-    pub custodian_pk: VerfKeySet,
+    pub custodian_verf_key_set: VerfKeySet,
     pub custodian_role: Role,
     // sender
-    pub operator_pk: VerfKeySet, // todo rename
+    pub operator_verf_key_set: VerfKeySet,
     pub shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 
@@ -432,11 +434,11 @@ impl BackupMaterial {
             );
             return Err(RecoverySkipReason::CustodianRoleMismatchInPayload);
         }
-        if &self.custodian_pk != custodian_verf_key {
+        if &self.custodian_verf_key_set != custodian_verf_key {
             tracing::error!("custodian_pk mismatch");
             return Err(RecoverySkipReason::CustodianKeyMismatchInPayload);
         }
-        let operator_pk_digest = match self.operator_pk.id(BACKUP_SIGNING_SCHEMES) {
+        let operator_pk_digest = match self.operator_verf_key_set.id(BACKUP_SIGNING_SCHEMES) {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("could not compute the operator key set id: {e}");
@@ -487,7 +489,7 @@ impl Operator {
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, true)?;
         Ok(Self {
             custodian_keys: validated.keys,
-            signing_key: Some(signing_key),
+            signing_identity: Some(signing_key),
             verification_key,
             threshold,
         })
@@ -507,7 +509,7 @@ impl Operator {
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, false)?;
         Ok(Self {
             custodian_keys: validated.keys,
-            signing_key: None,
+            signing_identity: None,
             verification_key: verf_key,
             threshold,
         })
@@ -533,7 +535,7 @@ impl Operator {
         backup_id: RequestId,
         mpc_context_id: ContextId,
     ) -> Result<SigncryptResult, BackupError> {
-        let identity = match &self.signing_key {
+        let identity = match &self.signing_identity {
             None => {
                 return Err(BackupError::OperatorError(
                     "Operator has no signing key".to_string(),
@@ -609,9 +611,9 @@ impl Operator {
             let backup_material = BackupMaterial {
                 backup_id,
                 mpc_context_id,
-                custodian_pk: custodian_verf_key.clone(),
+                custodian_verf_key_set: custodian_verf_key.clone(),
                 custodian_role: role_j,
-                operator_pk: self.verification_key.clone(),
+                operator_verf_key_set: self.verification_key.clone(),
                 shares,
             };
             // The custodian's identity is the digest of its keys for the backup signing schemes;
@@ -1454,9 +1456,9 @@ mod tests {
         let material = BackupMaterial {
             backup_id,
             mpc_context_id: *DEFAULT_MPC_CONTEXT,
-            custodian_pk: custodian_verf_key.clone(),
+            custodian_verf_key_set: custodian_verf_key.clone(),
             custodian_role,
-            operator_pk: operator_keys.clone(),
+            operator_verf_key_set: operator_keys.clone(),
             shares: Vec::new(),
         };
 

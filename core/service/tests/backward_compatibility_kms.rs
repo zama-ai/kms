@@ -1104,9 +1104,9 @@ fn test_recovery_material(
         let backup_material = BackupMaterial {
             backup_id,
             mpc_context_id: kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
-            custodian_pk,
+            custodian_verf_key_set: custodian_pk,
             custodian_role: cus_role,
-            operator_pk: operator_pk.clone(),
+            operator_verf_key_set: operator_pk.clone(),
             shares: Vec::new(),
         };
         let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
