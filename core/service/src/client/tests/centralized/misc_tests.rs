@@ -10,6 +10,7 @@ use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use observability::health::{LIVENESS_SERVICE, READINESS_SERVICE};
 use std::collections::HashMap;
 use tonic::server::NamedService;
 use tonic_health::pb::HealthCheckRequest;
@@ -61,6 +62,14 @@ async fn test_central_health_endpoint_availability() -> Result<()> {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
+    for probe_service in [LIVENESS_SERVICE, READINESS_SERVICE] {
+        let status = get_status(&mut health_client, probe_service).await.unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "{probe_service} is not in SERVING status. Got status: {status}"
+        );
+    }
 
     Ok(())
 }

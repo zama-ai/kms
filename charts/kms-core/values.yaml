@@ -212,9 +212,11 @@ kmsCore:
     initialDelaySeconds: 10
     periodSeconds: 5
   startupProbe:
-    failureThreshold: 10
-    initialDelaySeconds: 30
+    # failureThreshold x periodSeconds gives a startup budget of about 10 minutes
+    failureThreshold: 60
+    initialDelaySeconds: 0
     periodSeconds: 10
+    timeoutSeconds: 5
   livenessProbe:
     failureThreshold: 10
     initialDelaySeconds: 10
