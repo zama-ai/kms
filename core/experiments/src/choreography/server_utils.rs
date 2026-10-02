@@ -140,7 +140,9 @@ pub fn create_small_sessions<
     base_sessions
         .into_iter()
         .map(|base_session| {
-            let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+            let prss_state = prss_setup
+                .new_prss_session_state(base_session.session_id(), base_session.my_role())
+                .unwrap();
             GenericSmallSessionStruct::new_from_prss_state(base_session, prss_state).unwrap()
         })
         .collect_vec()
