@@ -43,7 +43,7 @@ use kms_grpc::{
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
-use tfhe::{Versionize, zk::CompactPkeCrs};
+use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     config::BatchParams,
@@ -82,9 +82,9 @@ use crate::{
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
-                FheKeyDigestMode, VerifiedFheKeys, VerifiedPublicMaterial,
-                get_verified_crs_material, get_verified_fhe_public_materials,
-                store_verified_public_bytes,
+                FheKeyDigestMode, VerifiedCrsMaterial, VerifiedPublicMaterial,
+                ensure_verified_reshare_public_bytes, get_verified_crs_material,
+                get_verified_fhe_public_materials,
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
@@ -809,7 +809,7 @@ impl<
         verified_materials: Vec<VerifiedPublicMaterial>,
         new_private_keysets: Vec<PrivateKeySet<4>>,
         eip712_domain: &Eip712Domain,
-        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
+        crs_info: Vec<VerifiedCrsMaterial>,
     ) -> anyhow::Result<EpochOutput> {
         let mut fhe_key_infos = Vec::new();
         let mut verified_public_bytes = Vec::new();
@@ -825,14 +825,16 @@ impl<
             // There are ongoing discussions to add the epoch_id and context_id
             // to the struct we sign, in which case we would use the new epoch_id and context_id here.
             // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
-            let (verified_keys, verified_bytes) = verified_material.into_parts();
-            verified_public_bytes.extend(
-                verified_bytes
-                    .into_iter()
-                    .map(|(data_type, bytes)| (key_info.key_id, data_type, bytes)),
-            );
-            match verified_keys {
-                VerifiedFheKeys::Uncompressed(fhe_pubkeys) => {
+            match verified_material {
+                VerifiedPublicMaterial::Uncompressed {
+                    keys: fhe_pubkeys,
+                    server_key_bytes,
+                    public_key_bytes,
+                } => {
+                    verified_public_bytes.extend([
+                        (key_info.key_id, PubDataType::ServerKey, server_key_bytes),
+                        (key_info.key_id, PubDataType::PublicKey, public_key_bytes),
+                    ]);
                     let info = match compute_info_standard_keygen_from_digests(
                         sk,
                         signing_schemes,
@@ -873,7 +875,19 @@ impl<
                     );
                     fhe_key_infos.push(info);
                 }
-                VerifiedFheKeys::Compressed(compressed_keyset) => {
+                VerifiedPublicMaterial::Compressed {
+                    keyset: compressed_keyset,
+                    compressed_keyset_bytes,
+                    public_key_bytes,
+                } => {
+                    verified_public_bytes.extend([
+                        (
+                            key_info.key_id,
+                            PubDataType::CompressedXofKeySet,
+                            compressed_keyset_bytes,
+                        ),
+                        (key_info.key_id, PubDataType::PublicKey, public_key_bytes),
+                    ]);
                     // Sign the digest of the stored PublicKey, which is not necessarily the
                     // one derived from the compressed keyset: a compressed keygen from an
                     // existing keyset keeps the old CompactPublicKey.
@@ -924,10 +938,11 @@ impl<
         }
 
         let mut crs_metadatas = Vec::with_capacity(crs_info.len());
-        for ((crs, crs_bytes), crs_info) in crs_info
+        for (verified_crs, crs_info) in crs_info
             .into_iter()
             .zip_eq(verified_previous_epoch.crs_info.iter())
         {
+            let (crs, crs_bytes) = verified_crs.into_parts();
             verified_public_bytes.push((crs_info.crs_id, PubDataType::CRS, crs_bytes));
             // Sign the digest verified against the stored CRS bytes. Hashing a
             // re-serialization of `crs` would not match them after a version upgrade.
@@ -956,7 +971,7 @@ impl<
         let pub_storage = crypto_storage.inner.get_public_storage();
         let (created_public, public_res) = {
             let mut pub_guard = pub_storage.lock().await;
-            store_verified_public_bytes(&mut *pub_guard, &verified_public_bytes).await
+            ensure_verified_reshare_public_bytes(&mut *pub_guard, &verified_public_bytes).await
         };
         let storage_err_msg = match public_res {
             Err(e) => Some(format!(
@@ -1037,7 +1052,7 @@ impl<
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
-        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
+        crs_info: Vec<VerifiedCrsMaterial>,
         session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -1193,7 +1208,7 @@ impl<
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
-        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
+        crs_info: Vec<VerifiedCrsMaterial>,
         session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -2202,6 +2217,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use std::collections::BTreeMap;
     use strum::IntoEnumIterator;
+    use tfhe::zk::CompactPkeCrs;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
@@ -4143,16 +4159,14 @@ pub(crate) mod tests {
                     crs_digest: crs_digest.clone(),
                 }],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Uncompressed(keyset.public_keys),
-                vec![
-                    (PubDataType::ServerKey, server_key_bytes),
-                    (PubDataType::PublicKey, public_key_bytes),
-                ],
+            vec![VerifiedPublicMaterial::new_uncompressed(
+                keyset.public_keys,
+                server_key_bytes,
+                public_key_bytes,
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![(crs, crs_bytes)],
+            vec![VerifiedCrsMaterial::new(crs, crs_bytes)],
         )
         .await
         .unwrap();
@@ -4238,12 +4252,10 @@ pub(crate) mod tests {
                 key_digests.clone(),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
-                vec![
-                    (PubDataType::CompressedXofKeySet, compressed_keyset_bytes),
-                    (PubDataType::PublicKey, public_key_bytes),
-                ],
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                compressed_keyset_bytes,
+                public_key_bytes,
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
@@ -4324,19 +4336,14 @@ pub(crate) mod tests {
                 key_digests,
                 vec![VerifiedCrsInfo { crs_id, crs_digest }],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
-                vec![
-                    (
-                        PubDataType::CompressedXofKeySet,
-                        compressed_keyset_bytes.clone(),
-                    ),
-                    (PubDataType::PublicKey, public_key_bytes.clone()),
-                ],
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                compressed_keyset_bytes.clone(),
+                public_key_bytes.clone(),
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![(crs, crs_bytes.clone())],
+            vec![VerifiedCrsMaterial::new(crs, crs_bytes.clone())],
         )
         .await
         .unwrap();
@@ -4418,12 +4425,10 @@ pub(crate) mod tests {
                 ]),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
-                vec![
-                    (PubDataType::CompressedXofKeySet, compressed_keyset_bytes),
-                    (PubDataType::PublicKey, public_key_bytes),
-                ],
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                compressed_keyset_bytes,
+                public_key_bytes,
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
@@ -4501,15 +4506,10 @@ pub(crate) mod tests {
                 ]),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
-                vec![
-                    (
-                        PubDataType::CompressedXofKeySet,
-                        compressed_keyset_bytes.clone(),
-                    ),
-                    (PubDataType::PublicKey, public_key_bytes.clone()),
-                ],
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                compressed_keyset_bytes.clone(),
+                public_key_bytes.clone(),
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
@@ -4576,15 +4576,10 @@ pub(crate) mod tests {
             new_epoch_id,
             vec![],
             &previous_epoch,
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
-                vec![
-                    (
-                        PubDataType::CompressedXofKeySet,
-                        b"compressed keyset".to_vec(),
-                    ),
-                    (PubDataType::PublicKey, b"public key".to_vec()),
-                ],
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                b"compressed keyset".to_vec(),
+                b"public key".to_vec(),
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &domain,
@@ -4655,8 +4650,9 @@ pub(crate) mod tests {
                 HashMap::from([(PubDataType::CompressedXofKeySet, vec![1; 32])]),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::new(
-                VerifiedFheKeys::Compressed(compressed_keyset),
+            vec![VerifiedPublicMaterial::new_compressed(
+                compressed_keyset,
+                vec![],
                 vec![],
             )],
             vec![PrivateKeySet::init_dummy(params)],
