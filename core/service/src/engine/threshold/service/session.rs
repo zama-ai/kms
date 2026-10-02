@@ -426,10 +426,11 @@ impl SessionMaker {
     async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
-        // Do not hold the `context_map` guard while the sessions are built. Building a session
-        // awaits, so a writer of `context_map` can queue meanwhile. The tokio lock is fair: every
-        // later read waits behind that writer, and the writer waits for this guard. A read of
-        // `context_map` during the build, as in `get_healthcheck_session`, then never completes.
+        // Building a session connects to every peer, so do not hold the `context_map` guard
+        // across it. While that network I/O runs, a `context_map` writer can queue. The tokio
+        // lock is fair: every later read then waits behind the writer, and the writer waits for
+        // this guard, so a nested read such as the one in `get_healthcheck_session` never
+        // completes.
         let mut contexts = Vec::new();
         {
             let context_map_guard = self.context_map.read().await;
@@ -445,7 +446,7 @@ impl SessionMaker {
         for (context_id, my_role, role_assignment) in contexts {
             health_check_sessions.insert(
                 context_id,
-                nm.make_healthcheck_session(&role_assignment, my_role)
+                nm.make_healthcheck_session(role_assignment, my_role)
                     .await?,
             );
         }
@@ -461,7 +462,7 @@ impl SessionMaker {
         let my_role = self.my_role(context_id).await?;
 
         if let Some(role) = my_role {
-            Ok(nm.make_healthcheck_session(&role_assignment, role).await?)
+            Ok(nm.make_healthcheck_session(role_assignment, role).await?)
         } else {
             Err(anyhow::anyhow!(
                 "My role is not defined for context {}",
