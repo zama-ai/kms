@@ -426,12 +426,29 @@ impl SessionMaker {
     async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
-        let mut health_check_sessions = HashMap::new();
-        for (context_id, context) in self.context_map.read().await.iter() {
-            if context.my_role.is_some() {
-                health_check_sessions
-                    .insert(*context_id, self.get_healthcheck_session(context_id).await?);
+        // Building a session connects to every peer, so do not hold the `context_map` guard
+        // across it. While that network I/O runs, a `context_map` writer can queue. The tokio
+        // lock is fair: every later read then waits behind the writer, and the writer waits for
+        // this guard, so a nested read such as the one in `get_healthcheck_session` never
+        // completes.
+        let mut contexts = Vec::new();
+        {
+            let context_map_guard = self.context_map.read().await;
+            for (context_id, context) in context_map_guard.iter() {
+                if let Some(my_role) = context.my_role {
+                    contexts.push((*context_id, my_role, context.role_assignment.clone()));
+                }
             }
+        }
+
+        let nm = self.networking_manager.read().await;
+        let mut health_check_sessions = HashMap::new();
+        for (context_id, my_role, role_assignment) in contexts {
+            health_check_sessions.insert(
+                context_id,
+                nm.make_healthcheck_session(role_assignment, my_role)
+                    .await?,
+            );
         }
         Ok(health_check_sessions)
     }
@@ -445,7 +462,7 @@ impl SessionMaker {
         let my_role = self.my_role(context_id).await?;
 
         if let Some(role) = my_role {
-            Ok(nm.make_healthcheck_session(&role_assignment, role).await?)
+            Ok(nm.make_healthcheck_session(role_assignment, role).await?)
         } else {
             Err(anyhow::anyhow!(
                 "My role is not defined for context {}",
@@ -1148,11 +1165,69 @@ mod tests {
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
     use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+    use std::time::Duration;
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
         crypto::aws_lc_rs::default_provider,
         pki_types::{ServerName, UnixTime},
     };
+
+    /// Sunshine: one health check session per context that has a role for this party.
+    #[tokio::test]
+    async fn healthcheck_sessions_cover_contexts_with_my_role() {
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut AesRng::seed_from_u64(5)),
+            TaskRngs::insecure_seed_from_u64(6),
+        );
+        let sessions = session_maker
+            .get_healthcheck_session_all_contexts()
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        let session = sessions.get(&*crate::consts::DEFAULT_MPC_CONTEXT).unwrap();
+        assert_eq!(session.get_num_parties(), 4);
+    }
+
+    /// A context change while the health check sessions are built must not deadlock. The test
+    /// polls both futures by hand, so the order does not depend on timing. It holds the networking
+    /// manager, so that the first poll of the health check reads `context_map` and then waits for
+    /// the networking manager. A context change must then complete in one poll, which is only
+    /// possible if the health check holds no `context_map` guard while it waits.
+    #[tokio::test]
+    async fn healthcheck_sessions_do_not_block_a_context_change() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut rng),
+            TaskRngs::insecure_seed_from_u64(8),
+        );
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let networking_guard = session_maker.networking_manager.write().await;
+
+        let mut health_check = std::pin::pin!(session_maker.get_healthcheck_session_all_contexts());
+        assert!(
+            health_check.as_mut().poll(&mut cx).is_pending(),
+            "the health check must wait for the networking manager"
+        );
+
+        let new_context = ContextId::new_random(&mut rng);
+        let mut context_change =
+            std::pin::pin!(session_maker.add_four_party_dummy_context(new_context));
+        assert!(
+            context_change.as_mut().poll(&mut cx).is_ready(),
+            "the context change must not wait for the health check"
+        );
+
+        drop(networking_guard);
+        let sessions = tokio::time::timeout(Duration::from_secs(5), health_check)
+            .await
+            .expect("the health check must finish once the networking manager is free")
+            .unwrap();
+        assert!(sessions.contains_key(&*crate::consts::DEFAULT_MPC_CONTEXT));
+    }
 
     /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
     /// requested context ID, and excludes epochs belonging to other contexts.
