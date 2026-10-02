@@ -2698,10 +2698,10 @@ mod tests {
         // custodian's unsigncryption key, confirming the backup material was sealed correctly.
         let custodian_id = custodian1.verification_key().verf_key_id();
         let unsign_key = UnifiedUnsigncryptionKey::new(
-            custodian1.public_dec_key(),
-            custodian1.public_enc_key(),
-            &server_verf_key,
-            &custodian_id,
+            std::sync::Arc::new(custodian1.public_dec_key().clone()),
+            custodian1.public_enc_key().clone(),
+            server_verf_key.clone(),
+            custodian_id,
         );
         let role_1_ct = internal_rec_req
             .signcryptions()

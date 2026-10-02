@@ -20,8 +20,7 @@ use backward_compatibility::{
     RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    UserDecSignedPayloadTest, data_dir,
+    UnifiedSigncryptionTest, UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -56,11 +55,11 @@ use kms_lib::{
         hybrid_ml_kem::HybridKemCt,
         signatures::{
             NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
-            UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
+            StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
-            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
-            UnifiedUnsigncryptionKeyOwned,
+            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
+            UnifiedUnsigncryptionKey, Unsigncrypt,
         },
     },
     engine::{
@@ -68,7 +67,7 @@ use kms_lib::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
             KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
             PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
-            StoredTypedSignature, UserDecSignedPayload,
+            UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -703,71 +702,6 @@ fn test_unified_public_sig_key(
     Ok(test.success(format))
 }
 
-fn test_signcryption_keys(
-    dir: &Path,
-    test: &UnifiedSigncryptionKeyTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: UnifiedSigncryptionKeyOwned =
-        load_and_unversionize(dir, test, format)?;
-    let mut rng = AesRng::seed_from_u64(test.state);
-    let (_, server_sig_key) = gen_sig_keys(&mut rng);
-    let (client_verf_key, _) = gen_sig_keys(&mut rng);
-    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (_, enc_key) = encryption.keygen().unwrap();
-    let new_versionized = UnifiedSigncryptionKeyOwned::new(
-        server_sig_key.clone(),
-        enc_key,
-        client_verf_key.verf_key_id().to_vec(),
-    );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid UnifiedSigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-/// Observe that this test also indirectly tests UnifiedPublicEncKey and UnifiedPrivateEncKey
-/// Also note that while these keys are currently not stored on disc, they are generated from a seedphrase
-/// for the custodians, so we still need to ensure that they do not change format unexpectedly!
-/// Hence we keep them versioned
-fn test_unsigncryption_keys(
-    dir: &Path,
-    test: &UnifiedUnsigncryptionKeyTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: UnifiedUnsigncryptionKeyOwned =
-        load_and_unversionize(dir, test, format)?;
-    let mut rng = AesRng::seed_from_u64(test.state);
-    let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
-    let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
-    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (dec_key, enc_key) = encryption.keygen().unwrap();
-    let new_versionized = UnifiedUnsigncryptionKeyOwned::new(
-        dec_key,
-        enc_key,
-        server_verf_key,
-        client_verf_key.verf_key_id(),
-    );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid UnifiedUnsigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
 fn test_mlkem1024_p384_public_key(
     dir: &Path,
     test: &MlKem1024P384PublicKeyTest,
@@ -814,25 +748,54 @@ fn test_unified_signcryption(
     let original_versionized: UnifiedSigncryption = load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-    let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (_dec_key, enc_key) = encryption.keygen().unwrap();
-    let signcrypt_key =
-        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key, client_verf_key.verf_key_id());
+    let (dec_key, enc_key) = encryption.keygen().unwrap();
+    let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+        server_sig_key,
+        enc_key.clone(),
+        client_verf_key.verf_key_id(),
+    );
     let new_versionized = signcrypt_key
         .signcrypt(&mut rng, b"TESTTEST", &verf_key)
         .unwrap();
 
     if original_versionized != new_versionized {
-        Err(test.failure(
+        return Err(test.failure(
             format!(
                 "Invalid UnifiedSigncryption:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
-        ))
-    } else {
-        Ok(test.success(format))
+        ));
     }
+
+    // Reading the stored bytes, not just reproducing them. The comparison above
+    // locks the writer; this locks the parser, which is the half that decides
+    // whether a node can still open material an earlier release produced. The
+    // frozen layout carries no version tag and is recovered by subtracting two
+    // fixed-size tail fields, so a change there is silent until something tries.
+    let unsign_key = UnifiedUnsigncryptionKey::new(
+        std::sync::Arc::new(dec_key),
+        enc_key,
+        verf_key.clone(),
+        client_verf_key.verf_key_id(),
+    );
+    let opened: PublicSigKey = unsign_key
+        .unsigncrypt(b"TESTTEST", &original_versionized)
+        .map_err(|e| {
+            test.failure(
+                format!("the stored UnifiedSigncryption no longer opens: {e}"),
+                format,
+            )
+        })?;
+    if opened != verf_key {
+        return Err(test.failure(
+            format!("the stored UnifiedSigncryption opened to the wrong message: {opened:?}"),
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_prss_setup_combined(
@@ -1146,11 +1109,7 @@ fn test_recovery_material(
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: payload.to_vec(),
-                pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
+            signcryption: UnifiedSigncryption::new(payload.to_vec(), BACKUP_PKE_SCHEME),
         };
         cts.insert(cus_role, cts_out.clone());
     }
@@ -1191,11 +1150,7 @@ fn test_internal_recovery_request(
         let cur_role = Role::indexed_from_one(role_j as usize);
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);
-        let signcryption = UnifiedSigncryption {
-            payload: payload.to_vec(),
-            pke_type: BACKUP_PKE_SCHEME,
-            signing_type: SigningSchemeType::Ecdsa256k1,
-        };
+        let signcryption = UnifiedSigncryption::new(payload.to_vec(), BACKUP_PKE_SCHEME);
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
     let new_versionized = InternalRecoveryRequest::new(enc_key, verification_key, cts).unwrap();
@@ -1278,11 +1233,7 @@ fn test_internal_custodian_recovery_output(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
-    let signcryption = UnifiedSigncryption {
-        payload: buf.to_vec(),
-        pke_type: BACKUP_PKE_SCHEME,
-        signing_type: SigningSchemeType::Ecdsa256k1,
-    };
+    let signcryption = UnifiedSigncryption::new(buf.to_vec(), BACKUP_PKE_SCHEME);
 
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
@@ -1816,12 +1767,6 @@ impl TestedModule for KMS {
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::UnifiedSigncryptionKeyOwned(test) => {
-                test_signcryption_keys(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
-                test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::MlKem1024P384PublicKey(test) => {
                 test_mlkem1024_p384_public_key(test_dir.as_ref(), test, format).into()

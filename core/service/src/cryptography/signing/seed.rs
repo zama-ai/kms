@@ -36,6 +36,8 @@ use super::{
     DSEP_SIGKEY_DERIVE, SIGKEY_DERIVATION_VERSION, SigningError, SigningSchemeType,
     UnifiedPrivateSigKey, UnifiedPublicSigKey,
 };
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signing::HasSigningScheme;
 use crate::impl_generic_versionize;
 use hashing::{DIGEST_BYTES, hash_element};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
@@ -127,8 +129,6 @@ impl RootSigningSeed {
     /// use the persisted [`PrivateSigKey`].
     #[cfg(feature = "non-wasm")]
     pub(crate) fn derive_ecdsa_signing_key(&self) -> Result<PrivateSigKey, SigningError> {
-        use crate::cryptography::signing::HasSigningScheme;
-
         match self.derive_signing_key(SigningSchemeType::Ecdsa256k1)? {
             UnifiedPrivateSigKey::Ecdsa256k1(sk) => Ok(sk.clone()),
             other => Err(SigningError::KeyDerivation(format!(
