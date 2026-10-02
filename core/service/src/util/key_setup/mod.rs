@@ -122,7 +122,7 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     }
 
     // Generate new signing key pair
-    let mut rng = get_rng(deterministic, None);
+    let mut rng = get_rng(deterministic, Some(42)).expect("Failed to create RNG");
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
 
     // Store private client key with error handling
@@ -191,9 +191,9 @@ where
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_large_seed_rng(deterministic, Some(0));
+    let mut rng = get_large_seed_rng(deterministic, Some(0))?;
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_large_seed_rng(false, Some(0));
+    let mut rng = get_large_seed_rng(false, Some(0))?;
 
     if let Some(sk) = signing_keys_map.get(&*SIGNING_KEY_ID) {
         // If a signing key already exists under this request ID, then only the
@@ -704,7 +704,7 @@ where
             return false; // Cannot proceed without signing key
         }
     };
-    let mut rng = get_rng(deterministic, Some(0));
+    let mut rng = get_rng(deterministic, Some(0)).expect("Failed to create RNG");
 
     // Calculate max_num_bits based on DKG parameters - now handles errors internally
     let max_num_bits = calculate_max_num_bits(&dkg_params);
@@ -1080,9 +1080,9 @@ where
     PrivS: Storage,
 {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_large_seed_rng(deterministic, Some(party_id.get() as u64));
+    let mut rng = get_large_seed_rng(deterministic, Some(party_id.get() as u64))?;
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_large_seed_rng(false, Some(party_id.get() as u64));
+    let mut rng = get_large_seed_rng(false, Some(party_id.get() as u64))?;
 
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
@@ -1293,7 +1293,8 @@ where
         .await;
     }
 
-    let mut rng = get_rng(deterministic, Some(amount_parties as u64));
+    let mut rng =
+        get_rng(deterministic, Some(amount_parties as u64)).expect("Failed to create RNG");
 
     // Collect signing keys from all private storages with proper error handling
     let mut signing_keys = Vec::new();
@@ -1619,7 +1620,8 @@ where
         panic!("Invalid max_num_bits calculated from DKG parameters");
     }
 
-    let mut rng = get_rng(deterministic, Some(amount_parties as u64));
+    let mut rng =
+        get_rng(deterministic, Some(amount_parties as u64)).expect("Failed to create RNG");
 
     // Generate the public parameters - foundation for the entire cryptographic system
     // PANICS: If parameter generation fails - cannot proceed with insecure parameters
