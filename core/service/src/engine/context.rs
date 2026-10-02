@@ -349,12 +349,21 @@ pub struct NodeInfo {
 impl NodeInfo {
     /// Returns the Ethereum address of the node's ECDSA-256k1 verification key, or `None` if
     /// the context does not list one for this node.
-    pub(crate) fn ecdsa_signer_address(&self) -> Option<SignerAddress> {
-        self.scheme_digests
-            .get(&SigningSchemeType::Ecdsa256k1)
-            // `SchemeDigests::insert` only accepts an ECDSA-256k1 digest of exactly
-            // `Address::len_bytes()` bytes, so `from_slice` cannot panic.
-            .map(|digest| SignerAddress(Address::from_slice(digest)))
+    ///
+    /// Returns an error if the listed digest is not an Ethereum address. [`SchemeDigests::insert`]
+    /// rejects such a digest, but `tfhe-versionable` reads a stored [`SchemeDigests`] back
+    /// without calling it.
+    pub(crate) fn ecdsa_signer_address(&self) -> anyhow::Result<Option<SignerAddress>> {
+        let Some(digest) = self.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) else {
+            return Ok(None);
+        };
+        let address = Address::try_from(digest).map_err(|e| {
+            anyhow::anyhow!(
+                "Invalid ECDSA-256k1 digest for node {}: {e}",
+                self.mpc_identity
+            )
+        })?;
+        Ok(Some(SignerAddress(address)))
     }
 }
 
@@ -570,11 +579,12 @@ impl ContextInfo {
 
         // A signer address identifies one node across contexts, so two nodes must not share it.
         // A node without a listed signer address is not counted.
-        let signers: Vec<_> = self
-            .mpc_nodes
-            .iter()
-            .filter_map(NodeInfo::ecdsa_signer_address)
-            .collect();
+        let mut signers = Vec::new();
+        for node in &self.mpc_nodes {
+            if let Some(signer) = node.ecdsa_signer_address()? {
+                signers.push(signer);
+            }
+        }
         let unique_signers: std::collections::HashSet<_> = signers.iter().collect();
         if unique_signers.len() != signers.len() {
             return Err(anyhow::anyhow!(
@@ -893,10 +903,55 @@ mod tests {
             SchemeDigests::from_ecdsa_verification_key(&verification_key);
 
         assert_eq!(
-            context.mpc_nodes[0].ecdsa_signer_address(),
+            context.mpc_nodes[0].ecdsa_signer_address().unwrap(),
             Some(SignerAddress(verification_key.address()))
         );
-        assert_eq!(context.mpc_nodes[1].ecdsa_signer_address(), None);
+        assert_eq!(context.mpc_nodes[1].ecdsa_signer_address().unwrap(), None);
+    }
+
+    /// Digests of a node whose ECDSA-256k1 digest is too short to be an Ethereum address.
+    /// [`SchemeDigests::insert`] rejects such a digest, but a stored context can still hold one.
+    fn malformed_ecdsa_digests() -> SchemeDigests {
+        SchemeDigests(BTreeMap::from([(
+            SigningSchemeType::Ecdsa256k1,
+            vec![7u8; 3],
+        )]))
+    }
+
+    #[test]
+    fn ecdsa_signer_address_rejects_malformed_digest() {
+        let context = four_node_context([
+            malformed_ecdsa_digests(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+
+        let err = context.mpc_nodes[0].ecdsa_signer_address().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid ECDSA-256k1 digest for node Node1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_info_malformed_signer_digest() {
+        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let context = four_node_context([
+            SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            malformed_ecdsa_digests(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let err = context.verify(&storage).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid ECDSA-256k1 digest for node Node2"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
