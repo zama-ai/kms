@@ -13,6 +13,7 @@ use ml_dsa::{SignatureEncoding, Signer};
 use serde::{Deserialize, Serialize, de::Visitor};
 use std::hash::Hash;
 use tfhe::named::Named;
+use zeroize::Zeroizing;
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
@@ -30,9 +31,9 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
         msg: &[u8],
         sk: &MlDsaSigningKey<P>,
     ) -> Result<Vec<u8>, SigningError> {
-        let signed = [&dsep[..], msg].concat();
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
         let sig: MlDsaSignature<P> = sk
-            .try_sign(&signed)
+            .try_sign(signed.as_slice())
             .map_err(|e| SigningError::Sign(e.to_string()))?;
         Ok(sig.to_vec())
     }
@@ -45,8 +46,8 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     ) -> Result<(), SigningError> {
         let sig = MlDsaSignature::<P>::try_from(sig)
             .map_err(|e| SigningError::MalformedSignature(e.to_string()))?;
-        let signed = [&dsep[..], msg].concat();
-        vk.verify(&signed, &sig)
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
+        vk.verify(signed.as_slice(), &sig)
             .map_err(|e| SigningError::Verify(e.to_string()))
     }
 

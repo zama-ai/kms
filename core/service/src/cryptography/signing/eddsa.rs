@@ -11,6 +11,7 @@ use ed25519_dalek::{
 use hashing::DomainSep;
 use serde::{Deserialize, Serialize, de::Visitor};
 use tfhe::named::Named;
+use zeroize::Zeroizing;
 
 /// The fixed encoded length of an ed25519 signature (`R‖s`), in bytes.
 pub const SIG_SIZE: usize = 64;
@@ -31,9 +32,9 @@ impl SigningScheme for Ed25519 {
 
     #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {
-        let signed = [&dsep[..], msg].concat();
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
         let sig: Ed25519Signature = sk
-            .try_sign(&signed)
+            .try_sign(signed.as_slice())
             .map_err(|e| SigningError::Sign(e.to_string()))?;
         Ok(sig.to_bytes().to_vec())
     }
@@ -51,12 +52,12 @@ impl SigningScheme for Ed25519 {
                     actual: sig.len(),
                 })?;
         let ed_sig = Ed25519Signature::from_bytes(&bytes);
-        let signed = [&dsep[..], msg].concat();
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
         // `verify_strict` (not `verify`) rejects non-canonical `s` and
         // small-order / mixed-order public keys, so ed25519 signatures are
         // non-malleable here — matching the low-`s` normalization the ECDSA
         // backend enforces via `check_normalized`.
-        vk.verify_strict(&signed, &ed_sig)
+        vk.verify_strict(signed.as_slice(), &ed_sig)
             .map_err(|e| SigningError::Verify(e.to_string()))
     }
 

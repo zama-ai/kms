@@ -367,9 +367,10 @@ pub(crate) fn internal_sign<T>(
 where
     T: AsRef<[u8]> + ?Sized,
 {
+    let signed = Zeroizing::new([dsep, msg.as_ref()].concat());
     let sig: k256::ecdsa::Signature = server_sig_key
         .raw_signing_key()
-        .try_sign(&[dsep, msg.as_ref()].concat())?;
+        .try_sign(signed.as_slice())?;
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature::from_ecdsa(sig))
@@ -391,10 +392,11 @@ where
     check_normalized(sig)?;
 
     let ecdsa_sig = sig.ecdsa_sig()?;
+    let signed = Zeroizing::new([dsep, payload.as_ref()].concat());
     // Verify signature
     server_verf_key
         .raw_verifying_key()
-        .verify(&[dsep, payload.as_ref()].concat(), &ecdsa_sig)
+        .verify(signed.as_slice(), &ecdsa_sig)
         .map_err(|e| anyhow_tracked(e.to_string()))
 }
 
