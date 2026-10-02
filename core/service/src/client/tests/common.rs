@@ -401,8 +401,8 @@ fn num_blocks_sunshine() {
     );
 }
 
-/// The host chain a test user decryption comes from. Its handles carry the host chain id, which
-/// decides how the KMS reads the user address and which linker binds the response.
+/// The kind of user a test user decryption is for. The user address decides the receiver and the
+/// linker; the handles do not matter to the KMS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TestHost {
     Evm,
@@ -410,24 +410,7 @@ pub(crate) enum TestHost {
 }
 
 impl TestHost {
-    /// A Solana host chain id: chain type 0x01 in the top byte, then a 56-bit cluster tag.
-    const SOLANA_HOST_CHAIN_ID: u64 = (0x01 << 56) | 12_345;
-
-    /// The external handle of the `index`-th ciphertext of a test request.
-    pub(crate) fn handle(self, index: usize) -> Vec<u8> {
-        match self {
-            // Left-padded to 32 bytes, so the host chain id is zero: an EVM handle.
-            Self::Evm => index.to_be_bytes().to_vec(),
-            Self::Solana => {
-                let mut handle = [0u8; 32];
-                handle[..8].copy_from_slice(&index.to_be_bytes());
-                handle[22..30].copy_from_slice(&Self::SOLANA_HOST_CHAIN_ID.to_be_bytes());
-                handle.to_vec()
-            }
-        }
-    }
-
-    /// Makes `client` the user of this host. An EVM client already is: its address comes from its
+    /// Makes `client` a user of this kind. An EVM client already is: its address comes from its
     /// signing key.
     pub(crate) fn set_user(self, client: &mut Client) {
         if self == Self::Solana {

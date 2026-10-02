@@ -1,8 +1,9 @@
-//! Pins the user-decryption link of each host chain.
+//! Pins the user-decryption link of each kind of user address.
 //!
 //! The link binds a response to its request, and every KMS party and client must compute the same
-//! bytes. A one-byte change to a digest splits threshold aggregation for all traffic of that host,
-//! so the goldens below refuse any change.
+//! bytes. A one-byte change to a digest splits threshold aggregation for every user of that kind,
+//! so the goldens below refuse any change. The handles carry a host chain id as fhevm handles do;
+//! the KMS only hashes them.
 
 #![cfg(feature = "non-wasm")]
 

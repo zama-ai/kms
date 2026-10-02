@@ -339,9 +339,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 /// * `request` - the initial user_decryption request JS object.
 /// It can be set to null if `verify` is false.
 /// Otherwise the caller needs to give the following JS object.
-/// Note that `eip712_verifying_contract` follows EIP-55, and so does `client_address` for a
-/// request on an EVM host chain. For a request on Solana, whose handles embed a Solana host
-/// chain id, `client_address` is the user's base58 public key.
+/// Note that `eip712_verifying_contract` follows EIP-55, and so does `client_address` for an EVM
+/// user. For a Solana user, `client_address` is the user's base58 public key.
 /// The signature field is not needed.
 /// ```
 /// {

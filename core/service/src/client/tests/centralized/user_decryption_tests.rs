@@ -240,7 +240,7 @@ pub(crate) async fn user_decryption_centralized(
                 ciphertext: ct.clone().into(),
                 fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
-                external_handle: host.handle(j),
+                external_handle: j.to_be_bytes().to_vec(),
             }];
             let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
 

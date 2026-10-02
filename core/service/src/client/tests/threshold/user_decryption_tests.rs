@@ -432,7 +432,7 @@ pub(crate) async fn user_decryption_threshold(
                 ciphertext: ct.clone().into(),
                 fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
-                external_handle: host.handle(j),
+                external_handle: j.to_be_bytes().to_vec(),
             }];
             let (req, enc_pk, enc_sk) = internal_client
                 .user_decryption_request(

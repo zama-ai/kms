@@ -1110,17 +1110,8 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
             .map(|buf| alloy_primitives::Signature::try_from(buf.as_slice()))
             .transpose()
             .map_err(|e| JsError::new(&e.to_string()))?;
-        let ciphertext_handles = req_hex
-            .ciphertext_handles
-            .iter()
-            .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
-            .collect::<Result<Vec<_>, JsError>>()?;
-        let client_address =
-            left_padded_handles(ciphertext_handles.iter().map(|handle| handle.0.as_slice()))
-                .and_then(|handles| {
-                    PlaintextReceiver::for_handles(&req_hex.client_address, &handles)
-                })
-                .map_err(|e| JsError::new(&e.to_string()))?;
+        let client_address = PlaintextReceiver::parse(&req_hex.client_address)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
                 .map_err(|e| JsError::new(&e.to_string()))?;
@@ -1133,7 +1124,11 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
             signature,
             client_address,
             enc_key: hex_decode_js_err(&req_hex.enc_key)?,
-            ciphertext_handles,
+            ciphertext_handles: req_hex
+                .ciphertext_handles
+                .iter()
+                .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
+                .collect::<Result<Vec<_>, JsError>>()?,
             eip712_verifying_contract,
             extra_data,
             // The hex form of a request carries no scheme list, which on the wire
@@ -1235,13 +1230,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
 
-        let handles = left_padded_handles(
-            value
-                .typed_ciphertexts
-                .iter()
-                .map(|ct| ct.external_handle.as_slice()),
-        )?;
-        let client_address = PlaintextReceiver::for_handles(&value.client_address, &handles)?;
+        let client_address = PlaintextReceiver::parse(&value.client_address)?;
 
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;

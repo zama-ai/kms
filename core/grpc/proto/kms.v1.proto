@@ -468,15 +468,16 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address on the host chain of the handles: EIP-55 with the
-  // `0x` prefix for an EVM host, base58 of the 32-byte public key for a Solana host.
+  // The client's (blockchain wallet) address: EIP-55 with the `0x` prefix for an EVM user, or
+  // base58 of the 32-byte public key for a Solana user. Its format picks the linker. The KMS does
+  // not check that the handles come from the same kind of host chain as the user; the caller does.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
   // This must be a bincode (v.1) encoded ML-KEM 512 key.
   bytes enc_key = 5;
 
-  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for an EVM host, be distinct from `client_address`.
+  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for an EVM user, be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
   // Extra data used in the EIP712 signature - external_signature.
