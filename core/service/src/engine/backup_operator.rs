@@ -1921,7 +1921,11 @@ mod tests {
         crate::vault::storage::store_recovery_material(&mut tampered_vault.storage, &material)
             .await
             .unwrap();
-        assert!(operator_backup_keys_from_vault(&tampered_vault).await.is_err());
+        assert!(
+            operator_backup_keys_from_vault(&tampered_vault)
+                .await
+                .is_err()
+        );
     }
 
     /// A vault without a secret-sharing keychain cannot recover from custodians, so the node
@@ -1979,7 +1983,10 @@ mod tests {
     /// together with the identity they form.
     async fn operator_after_restore(
         anchored: Option<RequestId>,
-    ) -> (RealBackupOperator<RamStorage, RamStorage>, NodeSigningIdentity) {
+    ) -> (
+        RealBackupOperator<RamStorage, RamStorage>,
+        NodeSigningIdentity,
+    ) {
         let mut rng = AesRng::seed_from_u64(9);
         let (_vk, sig_key) = gen_sig_keys(&mut rng);
         let seed = RootSigningSeed::random(&mut rng);
