@@ -7,7 +7,7 @@ use kms_grpc::{identifiers::ContextId, kms::v1::SchemeDigest};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-use threshold_networking::tls::ReleasePCRValues;
+use threshold_networking::tls::{ReleasePCRValues, extract_subject_from_cert};
 use threshold_types::role::Role;
 
 use crate::{
@@ -21,6 +21,7 @@ const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
+const ERR_CA_SUBJECT_MISMATCH: &str = "CA certificate subject does not match mpc_identity";
 
 #[derive(Clone, Debug, VersionsDispatch)]
 pub enum SoftwareVersionVersions {
@@ -553,6 +554,39 @@ impl ContextInfo {
                 ERR_DUPLICATE_NAMES,
                 self.context_id()
             ));
+        }
+
+        // check that each CA certificate subject matches its mpc_identity
+        for node in &self.mpc_nodes {
+            if let Some(ca_cert_pem) = &node.ca_cert {
+                let (_remaining, ca_cert_pem_parsed) =
+                    x509_parser::pem::parse_x509_pem(ca_cert_pem).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Invalid CA certificate PEM for {}: {}",
+                            node.mpc_identity,
+                            e
+                        )
+                    })?;
+                let ca_x509 = ca_cert_pem_parsed.parse_x509().map_err(|e| {
+                    anyhow::anyhow!("Failed to parse CA cert for {}: {}", node.mpc_identity, e)
+                })?;
+                let ca_subject = extract_subject_from_cert(&ca_x509).map_err(|e| {
+                    anyhow::anyhow!(
+                        "CA cert for {} has no valid subject: {}",
+                        node.mpc_identity,
+                        e
+                    )
+                })?;
+                if ca_subject != node.mpc_identity {
+                    return Err(anyhow::anyhow!(
+                        "{}: CA subject {} does not match mpc_identity {} in context {}",
+                        ERR_CA_SUBJECT_MISMATCH,
+                        ca_subject,
+                        node.mpc_identity,
+                        self.context_id()
+                    ));
+                }
+            }
         }
 
         // check that the urls are valid

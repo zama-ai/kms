@@ -243,7 +243,7 @@ pub(super) fn attested_session_maker(rngs: TaskRngs) -> SessionMaker {
     let networking_manager = Arc::new(RwLock::new(
         GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
     ));
-    SessionMaker::new_uninitialized(
+    SessionMaker::new(
         networking_manager,
         Some(verifier),
         Arc::new(RngSource::from_rngs(rngs)),

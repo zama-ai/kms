@@ -120,6 +120,7 @@ Other command line options are:
  - `-d`/`--download-all`: if set, the tool downloads the generated keys/CRSes from all KMS cores, rather than only from a single core.
  - `--signing-schemes`: the signature schemes the KMS must sign its responses under, as a comma-separated list of scheme names (`Ecdsa256k1`, `Ed25519`, `MlDsa44`, `MlDsa65`, `MlDsa87`; matched case-insensitively). The tool then requires every response to carry a valid signature for each scheme named, so a missing one is an error rather than something to notice later. Before it sends the request, the tool downloads the verification key each KMS core publishes for every named scheme. If the flag is left out, `Ecdsa256k1` alone is requested, which is what the KMS defaults to. Every scheme other than `Ecdsa256k1` requires the KMS nodes to hold a root signing seed — see [Choosing the signature schemes of a response](./entry_points.md#choosing-the-signature-schemes-of-a-response).
  - `-h`/`--help`: show the CLI help
+ - `-V`/`--version`: show the version of the tool
 
 For example, to ask for a composite classic + post-quantum pair on a CRS generation:
 
@@ -708,7 +709,7 @@ The kms core locally checks for existence of the public key material, and if it 
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>]"]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>,public_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>]"]
 ```
 
 Required arguments:
@@ -722,7 +723,7 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
     - `key_id <KEY_ID>`: the ID of the key
     - `preproc_id <PREPROC_ID>`: the preprocessing ID used to generate the key.
     - `server_key_digest <DIGEST>`: the hex-encoded server key digest to use for resharing (if the key is not compressed).
-    - `public_key_digest <DIGEST>`: the hex-encoded public key digest to use for resharing (if the key is not compressed).
+    - `public_key_digest <DIGEST>`: the hex-encoded public key digest to use for resharing (required for both compressed and non-compressed keys).
     - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (if the key is compressed)
  - `previous_crs`: An array (enclosed in square brackets) with the information about the CRSes to re-sign (each CRS is separated by a semicolon, each information concerning a CRS is separated by a coma):
     - `crs_id <CRS_ID>`: The ID of the CRS

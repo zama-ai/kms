@@ -52,7 +52,7 @@ spec:
       dag:
         tasks:
           ##########################################################################
-          # insecure Keygen (v0.13.x: single step, no preprocessing, no -i)
+          # insecure Keygen (v0.13: one step; v0.14+: run-test adds preprocessing)
           ##########################################################################
           - name: insecure-key-gen
             template: run-test
@@ -292,8 +292,29 @@ spec:
           fi
           start_time=$(date +%s)
           set +e
-          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
-          test_exit=${PIPESTATUS[0]}
+          test_command="{{inputs.parameters.test-command}}"
+          # v0.14+ clients split insecure keygen into insecure-preproc-key-gen and
+          # insecure-key-gen -i <preproc-id>. v0.13 clients have no preprocessing
+          # command and run insecure-key-gen in one step, so detect the client.
+          if [ "${test_command}" = "insecure-key-gen" ] && ./bin/kms-core-client insecure-preproc-key-gen --help >/dev/null 2>&1; then
+            echo "Client has insecure-preproc-key-gen, running it before insecure-key-gen"
+            ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
+            preproc_exit=${PIPESTATUS[0]}
+            preproc_id=$(grep -o '"request_id": "[^"]*"' /tmp/preproc_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+            if [ "${preproc_exit}" -ne 0 ] || [ -z "${preproc_id}" ]; then
+              echo "insecure-preproc-key-gen failed (exit code ${preproc_exit}, request_id '${preproc_id}'), skipping insecure-key-gen"
+              test_command=""
+            else
+              test_command="insecure-key-gen -i ${preproc_id}"
+            fi
+          fi
+          if [ -n "${test_command}" ]; then
+            ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml ${test_command} 2>&1 | tee /tmp/test_logs.txt
+            test_exit=${PIPESTATUS[0]}
+          else
+            : > /tmp/test_logs.txt
+            test_exit=1
+          fi
           set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))

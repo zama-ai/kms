@@ -38,6 +38,7 @@ use kms_lib::{
         },
     },
 };
+use observability::health::register_process_health;
 use std::{net::ToSocketAddrs, num::NonZero, sync::Arc, thread};
 use thread_handles::init_rayon_thread_pool;
 use threshold_networking::tls::AttestedVerifier;
@@ -52,7 +53,7 @@ use tokio_rustls::rustls::{
 };
 
 #[derive(Parser)]
-#[clap(name = "KMS server")]
+#[clap(name = "KMS server", version)]
 #[clap(
     about = "We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file. \
     See the help page for additional details (`kms-server --help`). \n
@@ -654,19 +655,19 @@ async fn main_exec() -> anyhow::Result<()> {
             };
 
             let service_config = core_config.service.clone();
-            let (kms, (health_reporter, health_service), metastore_status_service) =
-                new_real_threshold_kms(
-                    core_config,
-                    public_vault,
-                    private_vault,
-                    backup_vault,
-                    security_module,
-                    mpc_listener,
-                    base_kms,
-                    tls_identity,
-                    std::future::pending(),
-                )
-                .await?;
+            let (kms, (health, health_service), metastore_status_service) = new_real_threshold_kms(
+                core_config,
+                public_vault,
+                private_vault,
+                backup_vault,
+                security_module,
+                mpc_listener,
+                base_kms,
+                tls_identity,
+                std::future::pending(),
+            )
+            .await?;
+            register_process_health(health.clone())?;
             let meta_store_status_service = Arc::new(metastore_status_service);
             tracing::info!(
                 "Starting threshold KMS server v{}...",
@@ -678,7 +679,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
-                health_reporter,
+                health,
                 std::future::pending(),
             )
             .await?;
@@ -693,7 +694,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let service_config = core_config.service.clone();
             create_default_centralized_context_in_storage(&mut private_vault, identity.ecdsa())
                 .await?;
-            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+            let (kms, (health, health_service)) = RealCentralizedKms::new(
                 core_config,
                 public_vault,
                 private_vault,
@@ -702,6 +703,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 identity,
             )
             .await?;
+            register_process_health(health.clone())?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
                 Some(Arc::clone(kms.get_key_gen_meta_store())), // key_gen_store
                 Some(Arc::clone(kms.get_pub_dec_meta_store())), // pub_dec_store
@@ -716,7 +718,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
-                health_reporter,
+                health,
                 std::future::pending(),
             )
             .await?

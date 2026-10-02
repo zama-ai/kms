@@ -2081,6 +2081,7 @@ pub(crate) mod tests {
                 // Every other scheme signs the serialized CRS payload, prefixed
                 // by the scheme set the response was produced under.
                 scheme => {
+                    let signed_payload = scheme_bound_preimage(&schemes, &payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_CRS, &signed_payload, &sig, &vk)
@@ -2141,6 +2142,7 @@ pub(crate) mod tests {
                     assert_eq!(stored.signature, inner.external_signature);
                 }
                 scheme => {
+                    let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {

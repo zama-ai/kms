@@ -7,11 +7,10 @@ use validator::Validate;
 // CLI
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    println!("Starting KMS Core Client v{}", SoftwareVersion::current()?);
-
     // Parse command line arguments and configuration file
     // TODO: handle different deployment modes in the configuration
     let config = CmdConfig::parse();
+    println!("Starting KMS Core Client v{}", SoftwareVersion::current()?);
     config.validate()?;
     if config.logs {
         // Logging configuration
