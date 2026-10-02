@@ -46,7 +46,6 @@ use crate::cryptography::signing::UnifiedPublicSigKey;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
-#[cfg(any(test, feature = "testing", feature = "insecure"))]
 use crate::vault::storage::crypto_material::get_large_seed_rng;
 use crate::vault::storage::crypto_material::{
     get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success, read_verf_key_at,
