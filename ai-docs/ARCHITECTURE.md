@@ -273,6 +273,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
+  Each party also rejects a key without a non-empty public-key digest and a
+  non-empty server-key or compressed-keyset digest before role dispatch.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
