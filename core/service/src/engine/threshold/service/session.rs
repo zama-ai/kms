@@ -1,12 +1,12 @@
 // === Standard Library ===
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     hash::Hash,
     sync::{Arc, Weak},
 };
 
 use crate::engine::{
-    context::ContextInfo,
+    context::{ContextInfo, SignerAddress},
     rng_source::{RngSource, RngSourceError},
     threshold::service::epoch_manager::EpochData,
     utils::MetricedError,
@@ -52,6 +52,8 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tonic::Code;
 
 struct Context {
+    // The ID under which the session maker stores this context.
+    context_id: ContextId,
     // I may not belong to all the contexts I am aware of
     // especially in the case of resharing where I only belong
     // in one of the two contexts at play.
@@ -60,6 +62,9 @@ struct Context {
     // to build a RoleAssignment on a TwoSetRole,
     // we need 2 contexts
     role_assignment: RoleAssignment<Role>,
+    // Signer address of each party whose node lists one in the context. A party without a
+    // listed signer address has no entry.
+    signers: HashMap<Role, SignerAddress>,
     threshold: u8,
 }
 
@@ -323,6 +328,7 @@ impl SessionMaker {
             context_id,
             Some(Role::indexed_from_one(1)),
             four_party_dummy_role_assignment(),
+            HashMap::new(),
             1,
         )
         .await;
@@ -342,9 +348,11 @@ impl SessionMaker {
 
         let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {
+            context_id: default_context_id,
             threshold: 1,
             my_role: Some(Role::indexed_from_one(1)),
             role_assignment,
+            signers: HashMap::new(),
         };
 
         let default_epoch = match (prss_setup_z128, prss_setup_z64) {
@@ -448,14 +456,17 @@ impl SessionMaker {
         context_id: ContextId,
         my_role: Option<Role>,
         role_assignment: RoleAssignment<Role>,
+        signers: HashMap<Role, SignerAddress>,
         threshold: u8,
     ) {
         let mut context_map = self.context_map.write().await;
         context_map.insert(
             context_id,
             Context {
+                context_id,
                 my_role,
                 role_assignment,
+                signers,
                 threshold,
             },
         );
@@ -468,6 +479,7 @@ impl SessionMaker {
         info: &ContextInfo,
     ) -> anyhow::Result<()> {
         let mut role_assignment_map = HashMap::new();
+        let mut signers = HashMap::new();
         let mut ca_certs_map = HashMap::new();
 
         let num_nodes = info.mpc_nodes.len();
@@ -507,6 +519,12 @@ impl SessionMaker {
                     info.context_id()
                 ));
             }
+            let signer = node
+                .ecdsa_signer_address()
+                .map_err(|e| anyhow::anyhow!("{e} in context {}", info.context_id()))?;
+            if let Some(signer) = signer {
+                signers.insert(Role::indexed_from_one(party_id), signer);
+            }
 
             if let Some(ca_cert) = &node.ca_cert {
                 let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
@@ -531,8 +549,10 @@ impl SessionMaker {
         context_map.insert(
             context_id,
             Context {
+                context_id,
                 my_role,
                 role_assignment,
+                signers,
                 threshold: info.threshold as u8,
             },
         );
@@ -832,9 +852,6 @@ impl SessionMaker {
             threshold_set_2: context_info_s2.threshold,
         };
 
-        let role_assignment_s1 = context_info_s1.role_assignment.clone().inner;
-        let role_assignment_s2 = context_info_s2.role_assignment.clone().inner;
-
         let my_role_both_sets = match (context_info_s1.my_role, context_info_s2.my_role) {
             (None, None) => {
                 return Err(anyhow::anyhow!(
@@ -851,41 +868,15 @@ impl SessionMaker {
             }),
         };
 
-        // Go over role_assignment_s1 and role_assignment_s2, if one of the value is common to both return
-        // TwoSetsRole::Both, else TwoSetsRole::Set1 or TwoSetsRole::Set2
-        let mut reversed_role_assignment_both_sets = role_assignment_s1
-            .into_iter()
-            .map(|(role, id)| (id, TwoSetsRole::OnlySet1(role)))
-            .collect::<HashMap<_, _>>();
-
-        role_assignment_s2.into_iter().for_each(|(role, id)| {
-            match reversed_role_assignment_both_sets.entry(id) {
-                Entry::Occupied(occupied_entry) => {
-                    let role_set_1 = occupied_entry.into_mut();
-                    match role_set_1 {
-                        TwoSetsRole::OnlySet1(role1) => {
-                            *role_set_1 = TwoSetsRole::Both(DualRole {
-                                role_set_1: *role1,
-                                role_set_2: role,
-                            });
-                        }
-                        _ => {
-                            panic!("Inconsistent state in role assignment for two sets session");
-                        }
-                    }
-                }
-                Entry::Vacant(vacant_entry) => {
-                    let _ = vacant_entry.insert(TwoSetsRole::OnlySet2(role));
-                }
-            }
-        });
-
-        let role_assignment_both_sets = RoleAssignment {
-            inner: reversed_role_assignment_both_sets
-                .into_iter()
-                .map(|(id, role)| (role, id))
-                .collect(),
-        };
+        let role_assignment_both_sets =
+            merge_two_sets_role_assignments(context_info_s1, context_info_s2)?;
+        // `my_role` comes from the signer address of this node, the merge from MPC identities.
+        // They disagree if one context lists my MPC identity without my signer address.
+        if !role_assignment_both_sets.contains_key(&my_role_both_sets) {
+            return Err(anyhow::anyhow!(
+                "My role {my_role_both_sets} is not in the merged party set of contexts {context_id_set1} and {context_id_set2}: both contexts list my MPC identity, but only one lists my signer address"
+            ));
+        }
         let session_parameters = TwoSetsSessionParameters::new(
             threshold,
             session_id,
@@ -939,6 +930,118 @@ impl SessionMaker {
             .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
         Ok(context_info.role_assignment.len())
     }
+}
+
+/// Merges the role assignments of the two contexts of a two-sets session.
+///
+/// A party of set 1 and a party of set 2 become one [`TwoSetsRole::Both`] party if they have
+/// the same MPC identity. TLS authenticates the MPC identity, and the networking layer routes
+/// messages by it. The URL only tells where to connect, so the merge ignores it. A merged party
+/// keeps its set 2 [`Identity`], so the session connects to it at the URL of the new context.
+///
+/// Returns an error if the contexts disagree about a party: one MPC identity with two different
+/// signer addresses, or one signer address with two different MPC identities. A party without a
+/// listed signer address merges by MPC identity alone. Also returns an error if one context
+/// lists an MPC identity or a signer address twice.
+fn merge_two_sets_role_assignments(
+    context_set1: &Context,
+    context_set2: &Context,
+) -> anyhow::Result<RoleAssignment<TwoSetsRole>> {
+    let context_id_set1 = &context_set1.context_id;
+    let context_id_set2 = &context_set2.context_id;
+    // Set 1 is indexed only to reject duplicates in it.
+    roles_by_mpc_identity(context_set1)?;
+    roles_by_signer(context_set1)?;
+    let mut set2_by_mpc_identity = roles_by_mpc_identity(context_set2)?;
+    let set2_by_signer = roles_by_signer(context_set2)?;
+
+    let mut merged = RoleAssignment::empty();
+    for (role_set_1, identity_set_1) in context_set1.role_assignment.iter() {
+        let mpc_identity = identity_set_1.mpc_identity();
+        let signer_set_1 = context_set1.signers.get(role_set_1);
+        let role_by_mpc_identity = set2_by_mpc_identity
+            .get(&mpc_identity)
+            .map(|(role, _)| *role);
+
+        if let Some(signer) = signer_set_1
+            && let Some(role_by_signer) = set2_by_signer.get(signer)
+            && role_by_mpc_identity != Some(*role_by_signer)
+        {
+            let other_mpc_identity = context_set2
+                .role_assignment
+                .get(role_by_signer)
+                .map(|identity| identity.mpc_identity().to_string())
+                .unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Signer {} is party {role_set_1} with MPC identity {mpc_identity} in context {context_id_set1}, but party {role_by_signer} with MPC identity {other_mpc_identity} in context {context_id_set2}",
+                signer.0
+            ));
+        }
+
+        let Some((role_set_2, identity_set_2)) = set2_by_mpc_identity.remove(&mpc_identity) else {
+            merged.insert(TwoSetsRole::OnlySet1(*role_set_1), identity_set_1.clone());
+            continue;
+        };
+        if let (Some(signer_1), Some(signer_2)) =
+            (signer_set_1, context_set2.signers.get(&role_set_2))
+            && signer_1 != signer_2
+        {
+            return Err(anyhow::anyhow!(
+                "MPC identity {mpc_identity} is party {role_set_1} with signer {} in context {context_id_set1}, but party {role_set_2} with signer {} in context {context_id_set2}",
+                signer_1.0,
+                signer_2.0
+            ));
+        }
+        merged.insert(
+            TwoSetsRole::Both(DualRole {
+                role_set_1: *role_set_1,
+                role_set_2,
+            }),
+            identity_set_2.clone(),
+        );
+    }
+
+    // The set 2 parties left in the index have no MPC identity in set 1.
+    for (role_set_2, identity_set_2) in set2_by_mpc_identity.into_values() {
+        merged.insert(TwoSetsRole::OnlySet2(role_set_2), identity_set_2.clone());
+    }
+    Ok(merged)
+}
+
+/// Maps each MPC identity of `context` to the role and the network identity of its party.
+///
+/// Returns an error if two parties of the context have the same MPC identity.
+fn roles_by_mpc_identity(
+    context: &Context,
+) -> anyhow::Result<HashMap<MpcIdentity, (Role, &Identity)>> {
+    let mut roles = HashMap::new();
+    for (role, identity) in context.role_assignment.iter() {
+        if let Some((other_role, _)) = roles.insert(identity.mpc_identity(), (*role, identity)) {
+            return Err(anyhow::anyhow!(
+                "Parties {other_role} and {role} have the same MPC identity {} in context {}",
+                identity.mpc_identity(),
+                context.context_id
+            ));
+        }
+    }
+    Ok(roles)
+}
+
+/// Maps each listed signer address of `context` to the role of its party.
+///
+/// Returns an error if two parties of the context have the same signer address.
+fn roles_by_signer(context: &Context) -> anyhow::Result<HashMap<SignerAddress, Role>> {
+    let mut roles = HashMap::new();
+    for (role, signer) in context.signers.iter() {
+        if let Some(other_role) = roles.insert(*signer, *role) {
+            return Err(anyhow::anyhow!(
+                "Parties {other_role} and {role} have the same signer {} in context {}",
+                signer.0,
+                context.context_id
+            ));
+        }
+    }
+    Ok(roles)
 }
 
 /// This is the same as [SessionMaker] but it does not allow mutation of the inner state.
@@ -1121,6 +1224,8 @@ pub(crate) async fn validate_context_and_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::engine::{
         context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
@@ -1274,6 +1379,7 @@ mod tests {
                 context_id,
                 Some(Role::indexed_from_one(1)),
                 RoleAssignment::empty(),
+                HashMap::new(),
                 1,
             )
             .await;
@@ -1808,5 +1914,306 @@ mod tests {
                 .is_err()
         );
         assert_eq!(session_maker.context_count().await, 1);
+    }
+
+    /// One node of a test context for the two-sets merge.
+    struct TestNode {
+        mpc_identity: String,
+        host: String,
+        port: u16,
+        signer: Option<SignerAddress>,
+    }
+
+    fn test_signer(byte: u8) -> SignerAddress {
+        SignerAddress(alloy_primitives::Address::repeat_byte(byte))
+    }
+
+    /// Node `i` with MPC identity `node-{i}`, host `node-{i}{host_suffix}`, port 50001 and the
+    /// signer `test_signer(i)`.
+    fn test_node(i: u8, host_suffix: &str) -> TestNode {
+        TestNode {
+            mpc_identity: format!("node-{i}"),
+            host: format!("node-{i}{host_suffix}"),
+            port: 50001,
+            signer: Some(test_signer(i)),
+        }
+    }
+
+    fn four_test_nodes(host_suffix: &str) -> Vec<TestNode> {
+        (1..=4).map(|i| test_node(i, host_suffix)).collect()
+    }
+
+    /// Registers a threshold 1 context through [`SessionMaker::add_context_info`], in which
+    /// party `i` (one-based) is `nodes[i - 1]`.
+    async fn add_test_context(
+        session_maker: &SessionMaker,
+        context_id: ContextId,
+        my_role: Option<usize>,
+        nodes: &[TestNode],
+    ) {
+        let context = ContextInfo {
+            mpc_nodes: nodes
+                .iter()
+                .enumerate()
+                .map(|(i, node)| NodeInfo {
+                    mpc_identity: node.mpc_identity.clone(),
+                    party_id: i as u32 + 1,
+                    external_url: format!("http://{}:{}", node.host, node.port),
+                    ca_cert: None,
+                    public_storage_url: String::new(),
+                    public_storage_prefix: None,
+                    extra_signer_addresses: vec![],
+                    scheme_digests: node
+                        .signer
+                        .map(SchemeDigests::from_ecdsa_address)
+                        .unwrap_or_default(),
+                })
+                .collect(),
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 1,
+            pcr_values: vec![],
+        };
+        session_maker
+            .add_context_info(my_role.map(Role::indexed_from_one), &context)
+            .await
+            .unwrap();
+    }
+
+    /// Registers `set1` and `set2` as two contexts and builds the two-sets session parameters.
+    async fn two_sets_params(
+        my_role_set1: Option<usize>,
+        set1: &[TestNode],
+        my_role_set2: Option<usize>,
+        set2: &[TestNode],
+    ) -> anyhow::Result<(TwoSetsSessionParameters, RoleAssignment<TwoSetsRole>)> {
+        let mut rng = AesRng::seed_from_u64(300);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(301));
+        let context_set1 = ContextId::new_random(&mut rng);
+        let context_set2 = ContextId::new_random(&mut rng);
+        add_test_context(&session_maker, context_set1, my_role_set1, set1).await;
+        add_test_context(&session_maker, context_set2, my_role_set2, set2).await;
+        session_maker
+            .get_session_params_two_sets(SessionId::from(1u128), &context_set1, &context_set2)
+            .await
+    }
+
+    /// Same as [`two_sets_params`], but expects an error and returns its message.
+    async fn two_sets_error(
+        my_role_set1: Option<usize>,
+        set1: &[TestNode],
+        my_role_set2: Option<usize>,
+        set2: &[TestNode],
+    ) -> String {
+        match two_sets_params(my_role_set1, set1, my_role_set2, set2).await {
+            Ok(_) => panic!("building the two-sets session parameters must fail"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    fn both(role_set_1: usize, role_set_2: usize) -> TwoSetsRole {
+        TwoSetsRole::Both(DualRole {
+            role_set_1: Role::indexed_from_one(role_set_1),
+            role_set_2: Role::indexed_from_one(role_set_2),
+        })
+    }
+
+    fn assert_unique_mpc_identities(role_assignment: &RoleAssignment<TwoSetsRole>) {
+        let mpc_identities: HashSet<_> = role_assignment
+            .iter()
+            .map(|(_, identity)| identity.mpc_identity())
+            .collect();
+        assert_eq!(mpc_identities.len(), role_assignment.len());
+    }
+
+    /// Sunshine: parties with the same MPC identity and signer merge even though their host and
+    /// port differ, and the merged party uses the set 2 URL.
+    #[tokio::test]
+    async fn two_sets_merge_ignores_url() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes(".kms.svc.cluster.local");
+        set2[3].port = 50002;
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        assert_eq!(role_assignment.len(), 4);
+        for i in 1..=4 {
+            let identity = role_assignment.get(&both(i, i)).unwrap();
+            assert_eq!(
+                identity.hostname(),
+                format!("node-{i}.kms.svc.cluster.local")
+            );
+        }
+        assert_eq!(role_assignment.get(&both(4, 4)).unwrap().port(), 50002);
+    }
+
+    /// Sunshine: a party can have another role in set 2 than in set 1. The merge pairs the two
+    /// roles by MPC identity, and the merged party uses the set 2 URL.
+    #[tokio::test]
+    async fn two_sets_merge_reordered_roles() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes(".kms.svc.cluster.local");
+        set2.reverse();
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(4), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 4));
+        assert_eq!(role_assignment.len(), 4);
+        for i in 1..=4 {
+            let identity = role_assignment.get(&both(i, 5 - i)).unwrap();
+            assert_eq!(identity.mpc_identity(), MpcIdentity(format!("node-{i}")));
+            assert_eq!(
+                identity.hostname(),
+                format!("node-{i}.kms.svc.cluster.local")
+            );
+        }
+    }
+
+    /// Sunshine: a context that lists only this node's signer, as the default context built
+    /// from the peer list does, merges with a context that lists every signer.
+    #[tokio::test]
+    async fn two_sets_merge_by_mpc_identity_when_signers_are_missing() {
+        let mut set1 = four_test_nodes("");
+        for node in &mut set1[1..] {
+            node.signer = None;
+        }
+        let set2 = four_test_nodes(".kms.svc.cluster.local");
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        for i in 1..=4 {
+            assert!(role_assignment.contains_key(&both(i, i)));
+        }
+    }
+
+    /// Sunshine: a node with a new signer and a new MPC identity is a new party. The old party
+    /// stays in set 1 only and the new party is in set 2 only.
+    #[tokio::test]
+    async fn two_sets_merge_new_signer_is_new_party() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[3] = test_node(5, "");
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        assert_eq!(role_assignment.len(), 5);
+        for i in 1..=3 {
+            assert!(role_assignment.contains_key(&both(i, i)));
+        }
+        let old_party = TwoSetsRole::OnlySet1(Role::indexed_from_one(4));
+        let new_party = TwoSetsRole::OnlySet2(Role::indexed_from_one(4));
+        assert_eq!(
+            role_assignment.get(&old_party).unwrap().mpc_identity(),
+            MpcIdentity("node-4".to_string())
+        );
+        assert_eq!(
+            role_assignment.get(&new_party).unwrap().mpc_identity(),
+            MpcIdentity("node-5".to_string())
+        );
+        assert_unique_mpc_identities(&role_assignment);
+    }
+
+    /// Sunshine: two sets without a common MPC identity or signer do not merge any party.
+    #[tokio::test]
+    async fn two_sets_merge_disjoint_sets() {
+        let set1 = four_test_nodes("");
+        let set2: Vec<_> = (5..=8).map(|i| test_node(i, "")).collect();
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, None, &set2).await.unwrap();
+
+        assert_eq!(
+            params.my_role(),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(1))
+        );
+        assert_eq!(role_assignment.len(), 8);
+        for i in 1..=4 {
+            assert!(
+                role_assignment.contains_key(&TwoSetsRole::OnlySet1(Role::indexed_from_one(i)))
+            );
+            assert!(
+                role_assignment.contains_key(&TwoSetsRole::OnlySet2(Role::indexed_from_one(i)))
+            );
+        }
+        assert_unique_mpc_identities(&role_assignment);
+    }
+
+    /// Negative: one MPC identity with two different signers is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_mpc_identity_with_other_signer() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[1].signer = Some(test_signer(9));
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("MPC identity node-2"), "{err}");
+        assert!(err.contains(&test_signer(9).0.to_string()), "{err}");
+    }
+
+    /// Negative: one signer with two different MPC identities is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_signer_with_other_mpc_identity() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[1].mpc_identity = "node-2-renamed".to_string();
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains(&test_signer(2).0.to_string()), "{err}");
+        assert!(err.contains("node-2-renamed"), "{err}");
+    }
+
+    /// Negative: a context that lists one MPC identity twice is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_duplicate_mpc_identity() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[3].mpc_identity = "node-3".to_string();
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("same MPC identity node-3"), "{err}");
+    }
+
+    /// Negative: a context that lists one signer twice is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_duplicate_signer() {
+        let mut set1 = four_test_nodes("");
+        set1[3].signer = Some(test_signer(3));
+        let set2 = four_test_nodes("");
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("same signer"), "{err}");
+    }
+
+    /// Negative: if set 2 lists this node's MPC identity without its signer, this node is in
+    /// set 1 only by signer but merged by MPC identity, and the parameters are rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_my_mpc_identity_without_my_signer() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[0].signer = None;
+
+        let err = two_sets_error(Some(1), &set1, None, &set2).await;
+
+        assert!(err.contains("only one lists my signer address"), "{err}");
     }
 }

@@ -277,8 +277,16 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
-  Each party also rejects a key without a non-empty public-key digest and a
+  Each party also rejects a key unless it has a non-empty public-key digest and exactly one
   non-empty server-key or compressed-keyset digest before role dispatch.
+  The resharing session matches the parties of the two contexts by MPC identity.
+  A party with the same MPC identity in both contexts is a `Both` party, and the
+  session connects to it at its set 2 URL. The URL is not compared. The request
+  fails if the contexts give one MPC identity two different signer addresses, or
+  one signer address two different MPC identities. A party without a listed
+  signer address matches by MPC identity alone. A node that changes its signing
+  key is a new party: it needs a new MPC identity, and it runs as a separate
+  core during the reshare.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never
@@ -290,28 +298,33 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
   epoch. The party deletes the epoch data and forgets the epoch only once the
-  epoch holds no key share and no CRS metadata. Public data remains because an
-  epoch change does not affect it. A failed deletion keeps the epoch registered
-  so that deletion can be retried. `DestroyMpcEpoch` erases a whole epoch
-  instead, and covers the material of every request.  `DestroyMpcContext` takes
+  epoch holds no key share and no CRS metadata. The `VerifiedCrsMaterial`
+  constructor checks the expected digest and deserializes the CRS from the same
+  bytes. A reshare retains the exact public bytes that it verifies, and restores
+  missing material during its locked storage phase. A failed reshare deletes only
+  public material that its storage phase created. It deletes that material only
+  after private cleanup succeeds. One lock serializes all reshare storage and
+  rollback on a party. Public material that existed before the storage phase
+  remains unchanged. A failed private deletion keeps the epoch and its public
+  material so cleanup can be retried. `DestroyMpcEpoch` erases a whole epoch
+  instead, and covers the material of every request. `DestroyMpcContext` takes
   a stable snapshot of the context's registered epochs and erases their secret
-  shares before it forgets the context and removes its TLS trust-root
-  references.
-  
-  A trust root remains if another live context uses it. This ensures retiring a
-  party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context.  In-memory lifecycle leases
-  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
-  its target context and epoch through all PRSS, resharing and persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases
-  before taking snapshots or deleting data. A conflicting destruction is refused
-  with `FailedPrecondition`, including while PRSS is still running and the new
-  epoch has not yet been registered in the session maker; callers retry once
-  creation has settled. MPC context updates serialize the existence check with
-  storage and cache or session updates. A failed deletion keeps the in-memory
-  context if its persistent entry remains, which permits a retry before or after
-  restart.
-  
+  shares before it forgets the context and removes its TLS trust-root references.
+
+  A trust root remains if another live context uses it. This order leaves no
+  usable key shares after the party set retires. The kms-connector is the source
+  of truth for which epochs belong to a context. In-memory lifecycle leases
+  serialize creation against destruction. `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing, and persistence work.
+  A reshare also holds shared leases for its source context and epoch.
+  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  taking snapshots or deleting data. A conflicting destruction is refused with
+  `FailedPrecondition`, including while PRSS is still running and the new epoch
+  has not yet been registered in the session maker; callers retry once creation
+  has settled. MPC context updates serialize the existence check with storage and
+  cache or session updates. A failed deletion keeps the in-memory context if its
+  persistent entry remains, which permits a retry before or after restart.
+
   The TLS verifier stores one trust root per context and MPC identity. Different
   trust roots for one identity coexist while their contexts remain active. Each
   root is evaluated with only its context's PCR allowlist, and a handshake
@@ -491,8 +504,11 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 
 The public half has no epoch. The private half has an epoch and contains one party's material.
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
-accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
-public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+accepts one-sided writes. Resharing normally writes only the private half for the new epoch. A
+party without the public half fetches its raw bytes from a peer and verifies the request digest.
+The party stores those exact bytes before it writes private metadata. An existing public entry
+must match the verified bytes. A `ContextInfo` write stores one request-scoped private entry with
+no public half.
 
 Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
 and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys
