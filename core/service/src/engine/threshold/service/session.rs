@@ -55,6 +55,8 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tonic::Code;
 
 struct Context {
+    // The ID under which the session maker stores this context.
+    context_id: ContextId,
     // I may not belong to all the contexts I am aware of
     // especially in the case of resharing where I only belong
     // in one of the two contexts at play.
@@ -392,6 +394,7 @@ impl SessionMaker {
 
         let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {
+            context_id: default_context_id,
             threshold: 1,
             my_role: Some(Role::indexed_from_one(1)),
             role_assignment,
@@ -488,6 +491,7 @@ impl SessionMaker {
         context_map.insert(
             context_id,
             Context {
+                context_id,
                 my_role,
                 role_assignment,
                 signers,
@@ -884,12 +888,8 @@ impl SessionMaker {
             }),
         };
 
-        let role_assignment_both_sets = merge_two_sets_role_assignments(
-            context_id_set1,
-            context_info_s1,
-            context_id_set2,
-            context_info_s2,
-        )?;
+        let role_assignment_both_sets =
+            merge_two_sets_role_assignments(context_info_s1, context_info_s2)?;
         // `my_role` comes from the signer address of this node, the merge from MPC identities.
         // They disagree if one context lists my MPC identity without my signer address.
         if !role_assignment_both_sets.contains_key(&my_role_both_sets) {
@@ -964,16 +964,16 @@ impl SessionMaker {
 /// listed signer address merges by MPC identity alone. Also returns an error if one context
 /// lists an MPC identity or a signer address twice.
 fn merge_two_sets_role_assignments(
-    context_id_set1: &ContextId,
     context_set1: &Context,
-    context_id_set2: &ContextId,
     context_set2: &Context,
 ) -> anyhow::Result<RoleAssignment<TwoSetsRole>> {
+    let context_id_set1 = &context_set1.context_id;
+    let context_id_set2 = &context_set2.context_id;
     // Set 1 is indexed only to reject duplicates in it.
-    roles_by_mpc_identity(context_id_set1, context_set1)?;
-    roles_by_signer(context_id_set1, context_set1)?;
-    let mut set2_by_mpc_identity = roles_by_mpc_identity(context_id_set2, context_set2)?;
-    let set2_by_signer = roles_by_signer(context_id_set2, context_set2)?;
+    roles_by_mpc_identity(context_set1)?;
+    roles_by_signer(context_set1)?;
+    let mut set2_by_mpc_identity = roles_by_mpc_identity(context_set2)?;
+    let set2_by_signer = roles_by_signer(context_set2)?;
 
     let mut merged = RoleAssignment::empty();
     for (role_set_1, identity_set_1) in context_set1.role_assignment.iter() {
@@ -1031,16 +1031,16 @@ fn merge_two_sets_role_assignments(
 /// Maps each MPC identity of `context` to the role and the network identity of its party.
 ///
 /// Returns an error if two parties of the context have the same MPC identity.
-fn roles_by_mpc_identity<'a>(
-    context_id: &ContextId,
-    context: &'a Context,
-) -> anyhow::Result<HashMap<MpcIdentity, (Role, &'a Identity)>> {
+fn roles_by_mpc_identity(
+    context: &Context,
+) -> anyhow::Result<HashMap<MpcIdentity, (Role, &Identity)>> {
     let mut roles = HashMap::new();
     for (role, identity) in context.role_assignment.iter() {
         if let Some((other_role, _)) = roles.insert(identity.mpc_identity(), (*role, identity)) {
             return Err(anyhow::anyhow!(
-                "Parties {other_role} and {role} have the same MPC identity {} in context {context_id}",
-                identity.mpc_identity()
+                "Parties {other_role} and {role} have the same MPC identity {} in context {}",
+                identity.mpc_identity(),
+                context.context_id
             ));
         }
     }
@@ -1050,16 +1050,14 @@ fn roles_by_mpc_identity<'a>(
 /// Maps each listed signer address of `context` to the role of its party.
 ///
 /// Returns an error if two parties of the context have the same signer address.
-fn roles_by_signer(
-    context_id: &ContextId,
-    context: &Context,
-) -> anyhow::Result<HashMap<SignerAddress, Role>> {
+fn roles_by_signer(context: &Context) -> anyhow::Result<HashMap<SignerAddress, Role>> {
     let mut roles = HashMap::new();
     for (role, signer) in context.signers.iter() {
         if let Some(other_role) = roles.insert(*signer, *role) {
             return Err(anyhow::anyhow!(
-                "Parties {other_role} and {role} have the same signer {} in context {context_id}",
-                signer.0
+                "Parties {other_role} and {role} have the same signer {} in context {}",
+                signer.0,
+                context.context_id
             ));
         }
     }
