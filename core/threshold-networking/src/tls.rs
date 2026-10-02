@@ -27,6 +27,8 @@ use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem
 
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::api::nsm::AttestationDoc;
+#[cfg(feature = "insecure")]
+use rcgen::PublicKeyData;
 
 #[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
 pub enum ReleasePCRValuesVersions {
@@ -313,6 +315,10 @@ Crypto provider should exist at this point"
         server_data: Option<(&ServerName<'_>, &[u8])>,
     ) -> Result<(), Error> {
         let mut last_error = None;
+        let attestation_required = verifiers
+            .candidates
+            .iter()
+            .any(|candidate| !candidate.pcrs.is_empty());
 
         for candidate in &verifiers.candidates {
             let x509_ok = match server_data {
@@ -337,6 +343,20 @@ Crypto provider should exist at this point"
                     )),
                 ));
                 continue;
+            }
+
+            if candidate.pcrs.is_empty() {
+                if attestation_required {
+                    last_error = Some((
+                        candidate.context_id,
+                        Error::General(format!(
+                            "context {} has no PCR allowlist while another active context requires attestation",
+                            candidate.context_id
+                        )),
+                    ));
+                    continue;
+                }
+                return Ok(());
             }
 
             let cert_verifier_for_attestation = match server_data {
@@ -365,6 +385,7 @@ Crypto provider should exist at this point"
                         candidate.context_id,
                         e
                     );
+                    last_error = Some((candidate.context_id, Error::General(e.to_string())));
                 }
             }
         }
@@ -830,7 +851,7 @@ pub async fn generate_mock_ca_cert_with_attestation(
         .pcrs(Pcrs::rand())
         .build();
         let keypair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
-        let pub_key = keypair.serialize_der();
+        let pub_key = keypair.subject_public_key_info();
         let attestation_doc = mock_attest(&nitro, pub_key);
         let pcr_values = extract_pcr_from_attestation_doc(&attestation_doc)?;
         let mut cp = CertificateParams::new(vec![identity.to_string()]).unwrap();
@@ -918,7 +939,7 @@ mod tests {
             .pcrs(Pcrs::zeros())
             .build();
             let tls_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-            let pub_key = tls_keypair.serialize_der();
+            let pub_key = tls_keypair.subject_public_key_info();
             let attestation_doc = mock_attest(&nitro, pub_key);
             let mut tls_cp = CertificateParams::new(vec![identity.to_string()]).unwrap();
             tls_cp.is_ca = IsCa::ExplicitNoCa;
@@ -951,6 +972,38 @@ mod tests {
             let cert_der = certified_key.end_entity_cert().unwrap().to_vec();
             (certified_key, cert_der)
         });
+        let pem = Pem {
+            label: "CERTIFICATE".to_string(),
+            contents: cert_der,
+        };
+        (Arc::new(certified_key), pem)
+    }
+
+    fn generate_manual_tls_cert(identity: &str) -> (Arc<CertifiedKey>, Pem) {
+        _ = default_provider().install_default();
+        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut cert_params = CertificateParams::new(vec![identity.to_string()]).unwrap();
+        cert_params.is_ca = IsCa::ExplicitNoCa;
+        let mut distinguished_name = rcgen::DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, identity);
+        cert_params.distinguished_name = distinguished_name;
+        cert_params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+            KeyUsagePurpose::KeyAgreement,
+        ];
+        cert_params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+        let cert = cert_params.self_signed(&keypair).unwrap();
+        let key_der =
+            tokio_rustls::rustls::pki_types::PrivateKeyDer::try_from(keypair.serialize_der())
+                .unwrap();
+        let crypto_provider = tokio_rustls::rustls::crypto::CryptoProvider::get_default().unwrap();
+        let certified_key =
+            CertifiedKey::from_der(vec![cert.der().clone()], key_der, crypto_provider).unwrap();
+        let cert_der = certified_key.end_entity_cert().unwrap().to_vec();
         let pem = Pem {
             label: "CERTIFICATE".to_string(),
             contents: cert_der,
@@ -1106,6 +1159,40 @@ mod tests {
     }
 
     #[test]
+    fn manual_certificate_is_accepted_when_no_context_requires_attestation() {
+        _ = default_provider().install_default();
+        let identity = "manual.example.com";
+        let (cert, ca) = generate_manual_tls_cert(identity);
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "insecure")]
+            false,
+        )
+        .unwrap();
+        verifier
+            .add_context(
+                SessionId::from(12u128),
+                HashMap::from([(MpcIdentity(identity.to_string()), ca)]),
+                None,
+            )
+            .unwrap();
+
+        let server_result = verifier.verify_server_cert(
+            cert.end_entity_cert().unwrap(),
+            &[],
+            &ServerName::try_from(identity).unwrap(),
+            &[],
+            UnixTime::now(),
+        );
+        let client_result =
+            verifier.verify_client_cert(cert.end_entity_cert().unwrap(), &[], UnixTime::now());
+
+        assert!(server_result.is_ok());
+        assert!(client_result.is_ok());
+    }
+
+    #[test]
     fn duplicate_context_is_rejected_without_replacing_verifier_state() {
         _ = default_provider().install_default();
         let identity = "duplicate.example.com";
@@ -1223,26 +1310,25 @@ mod tests {
             )
             .unwrap();
 
-        let (_, x509_cert) = parse_x509_certificate(cert.end_entity_cert().unwrap()).unwrap();
-        let verifiers = verifier
-            .get_verifiers_and_pcrs_for_x509_cert(&x509_cert)
-            .unwrap();
-
         let server_name = ServerName::try_from(identity).unwrap();
-        let result = verifiers.candidates[0]
-            .trust_root
-            .server
-            .verify_server_cert(
-                cert.end_entity_cert().unwrap(),
-                &[],
-                &server_name,
-                &[],
-                UnixTime::now(),
-            );
+        let server_result = verifier.verify_server_cert(
+            cert.end_entity_cert().unwrap(),
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        let client_result =
+            verifier.verify_client_cert(cert.end_entity_cert().unwrap(), &[], UnixTime::now());
         assert!(
-            result.is_ok(),
-            "mock attestation document should pass full validation: {:?}",
-            result
+            server_result.is_ok(),
+            "mock attestation document should pass server validation: {:?}",
+            server_result
+        );
+        assert!(
+            client_result.is_ok(),
+            "mock attestation document should pass client validation: {:?}",
+            client_result
         );
     }
 }
