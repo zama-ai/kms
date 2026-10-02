@@ -823,8 +823,8 @@ pub async fn recovery_mode_verf_key<S: StorageReader>(
         Ok(verf_key) => Ok(verf_key),
         Err(e) => {
             tracing::warn!(
-                "No verification key in public storage ({e}); taking the backup verification \
-                 keys from the recovery material in the backup vault"
+                "Could not read the verification key in public storage ({e}); taking the backup verification \
+                 keys from the recovery material in the backup vault."
             );
             let vault = backup_vault.ok_or_else(|| {
                 anyhow::anyhow!(

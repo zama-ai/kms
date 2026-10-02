@@ -235,7 +235,7 @@ NOTE: You may have multiple custodian contexts. However, the system only makes b
 
 #### Recovery
 
-> **WARNING — validate the `VerfKey` before starting recovery.** Recovery assumes the KMS does not have access to its private storage, so the `VerfKey` in the KMS's public storage is the trust anchor for the whole procedure. Before starting, you **must** verify that this `VerfKey` is byte-equal to the current verification key on the gateway. We do not assume the public storage is safe from modification by an adversary, so skipping this check would let an attacker substitute their own key.
+> **WARNING — validate the operator's backup verification keys before passing on a recovery request.** Recovery assumes the KMS does not have access to its private storage, so the trust anchor for the whole procedure is the set of backup verification keys that `custodian-recovery-init` prints, one per backup signing scheme. These come from the KMS's public storage and recovery material, neither of which we assume is safe from modification by an adversary. Before passing the request on, you **must** check the `Ecdsa256k1` address against the current verification key on the gateway, and every other key digest against your own records, as described in step 1 below. Skipping a check would let an attacker substitute their own key for that scheme.
 > **NOTE — TLS may need be disabled during recovery** In case the loss of private data includes the `SigKey` then it is not possible for the KMS core to initialize TLS (as this key is required). Hence the KMS will boot without TLS. 
 
 The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.

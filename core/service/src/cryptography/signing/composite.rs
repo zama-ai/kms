@@ -23,7 +23,10 @@
 //! ```
 //!
 //! Each backend prepends the domain separator, so a component signs
-//! `dsep ‖ preimage`. The parts of the draft map onto this encoding:
+//! ```text
+//! dsep ‖ M'
+//! ```
+//! The parts of the draft map onto this encoding as follows:
 //!
 //! - **[`COMPOSITE_PREFIX`]** marks the bytes as a composite
 //!   preimage, so no component reads as a signature of another construction. The
@@ -36,8 +39,10 @@
 //!   schemes, which the draft fixes per combination, and the usage, which the
 //!   message type states: `CompositeSigncryptionPayload` for a signcryption,
 //!   `KeygenSignedPayload` or `CrsSignedPayload` for a result, and so on.
-//! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
-//!   length prefix the draft puts on ctx is not necessary.
+//! - **ctx** has no counterpart in the preimage. However, the domain separator plays the
+//!   role of an application context, but it sits in front of the Prefix rather
+//!   than after the Label, and it carries no length prefix because a
+//!   [`DomainSep`] is always 8 bytes.
 //! - **Hash(M)** is the message itself. The draft pre-hashes the message and
 //!   assumes that the hash resists collisions. The message keeps the same
 //!   unforgeability argument without that assumption.
