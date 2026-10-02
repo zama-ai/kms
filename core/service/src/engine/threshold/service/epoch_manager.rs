@@ -4536,6 +4536,140 @@ pub(crate) mod tests {
         );
     }
 
+    /// A public mismatch must stop private writes and remove only the public entries created by the reshare.
+    #[tokio::test]
+    async fn test_reshare_rejects_existing_public_bytes_that_differ_from_peers() {
+        use crate::vault::storage::test_support::StorageOp;
+
+        let mut rng = AesRng::seed_from_u64(51);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            RamStorage::new(),
+            FailingRamStorage::new(),
+            None,
+            HashMap::new(),
+        );
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_mismatch").unwrap();
+        let preproc_id = derive_request_id("fetched_key_mismatch_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let public_storage = crypto_storage.inner.get_public_storage();
+        public_storage
+            .lock()
+            .await
+            .store_bytes(
+                b"other public key",
+                &key_id,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let epoch_data = dummy_epoch_data(*DEFAULT_MPC_CONTEXT);
+        epoch_manager
+            .session_maker
+            .add_epoch(new_epoch_id, epoch_data.clone())
+            .await;
+        let private_storage = crypto_storage.get_private_storage();
+        {
+            let mut guard = private_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *guard,
+                &new_epoch_id.into(),
+                &epoch_data,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            guard.clear_events();
+        }
+
+        let (keyset, _compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.signing_identity().unwrap();
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            &crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::ServerKey, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::new_uncompressed(
+                keyset.public_keys,
+                b"server key".to_vec(),
+                b"public key".to_vec(),
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("Failed to ensure verified public material")
+                && message.contains("differs from the verified bytes"),
+            "unexpected error: {err}"
+        );
+
+        {
+            let guard = public_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists(&key_id, &PubDataType::ServerKey.to_string())
+                    .await
+                    .unwrap(),
+                "the server key stored from peers must be rolled back"
+            );
+            assert_eq!(
+                guard
+                    .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                    .await
+                    .unwrap(),
+                b"other public key",
+                "the public key that existed before must be kept"
+            );
+        }
+        let guard = private_storage.lock().await;
+        assert!(
+            guard
+                .events()
+                .iter()
+                .all(|event| event.operation != StorageOp::Store),
+            "no private writes may run after the public mismatch: {:?}",
+            guard.events()
+        );
+        assert!(
+            guard.state().is_empty(),
+            "rollback must remove the epoch data"
+        );
+        assert!(
+            !epoch_manager
+                .session_maker
+                .epoch_exists(&new_epoch_id)
+                .await,
+            "rollback must remove the epoch registration"
+        );
+    }
+
     #[tokio::test]
     async fn test_reshare_storage_waits_for_reshare_storage_lock() {
         let mut rng = AesRng::seed_from_u64(52);
