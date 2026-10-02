@@ -189,10 +189,21 @@ pub(crate) struct VerifiedCrsMaterial {
 }
 
 impl VerifiedCrsMaterial {
-    pub(crate) fn new(crs: CompactPkeCrs, bytes: Vec<u8>) -> Self {
-        Self { crs, bytes }
+    /// Verifies `bytes` against `expected_digest` and deserializes the CRS.
+    ///
+    /// Returns an error if the digest differs or the bytes cannot be deserialized.
+    pub(crate) fn new(bytes: Vec<u8>, expected_digest: &[u8]) -> anyhow::Result<Self> {
+        verify_crs_digest_from_bytes(&bytes, expected_digest)
+            .map_err(|e| anyhow::anyhow!("CRS digest verification failed: {}", e))?;
+        let crs = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&bytes),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e))?;
+        Ok(Self { crs, bytes })
     }
 
+    /// Returns the CRS and the exact verified bytes.
     pub(crate) fn into_parts(self) -> (CompactPkeCrs, Vec<u8>) {
         (self.crs, self.bytes)
     }
@@ -641,12 +652,7 @@ async fn fetch_public_crs_materials_from_peers<
     let crs_bytes = verified
         .remove(&PubDataType::CRS)
         .expect("fetcher returns every requested entry");
-    let crs = tfhe::safe_serialization::safe_deserialize(
-        std::io::Cursor::new(&crs_bytes),
-        crate::consts::SAFE_SER_SIZE_LIMIT,
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e))?;
-    Ok(VerifiedCrsMaterial::new(crs, crs_bytes))
+    VerifiedCrsMaterial::new(crs_bytes, crs_digests)
 }
 
 pub(crate) async fn get_verified_crs_material<
@@ -672,30 +678,9 @@ pub(crate) async fn get_verified_crs_material<
     };
 
     match crs_bytes_res {
-        Ok(crs_bytes) => {
-            verify_crs_digest_from_bytes(&crs_bytes, crs_digest).map_err(|e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    Some(*request_id),
-                    anyhow::anyhow!("CRS digest verification failed: {}", e),
-                    tonic::Code::Internal,
-                )
-            })?;
-
-            let crs = tfhe::safe_serialization::safe_deserialize(
-                std::io::Cursor::new(&crs_bytes),
-                crate::consts::SAFE_SER_SIZE_LIMIT,
-            )
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    Some(*request_id),
-                    anyhow::anyhow!("Failed to deserialize CRS: {}", e),
-                    tonic::Code::Internal,
-                )
-            })?;
-            Ok(VerifiedCrsMaterial::new(crs, crs_bytes))
-        }
+        Ok(crs_bytes) => VerifiedCrsMaterial::new(crs_bytes, crs_digest).map_err(|e| {
+            MetricedError::new(OP_NEW_EPOCH, Some(*request_id), e, tonic::Code::Internal)
+        }),
         Err(_) => fetch_public_crs_materials_from_peers::<_, _, G, R>(
             crypto_storage,
             crs_id,
@@ -720,6 +705,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
+    use super::VerifiedCrsMaterial;
     use crate::engine::context::ContextInfo;
     use crate::engine::context::SoftwareVersion;
     use crate::engine::context::{NodeInfo, SchemeDigests};
@@ -1608,6 +1594,54 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
+    }
+
+    #[test]
+    fn verified_crs_material_constructor_retains_exact_bytes() {
+        let params = crate::consts::TEST_PARAM;
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(config, 256).unwrap();
+        let mut serialized = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &crs,
+            &mut serialized,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        let mut bytes = serialized.clone();
+        bytes.extend_from_slice(b"trailing bytes");
+        let digest = hashing::hash_element(&crate::engine::base::DSEP_PUBDATA_CRS, &bytes);
+
+        let (loaded_crs, verified_bytes) = VerifiedCrsMaterial::new(bytes.clone(), &digest)
+            .unwrap()
+            .into_parts();
+        assert_eq!(verified_bytes, bytes);
+        let mut loaded_serialized = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &loaded_crs,
+            &mut loaded_serialized,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert_eq!(loaded_serialized, serialized);
+    }
+
+    #[test]
+    fn verified_crs_material_constructor_rejects_digest_mismatch() {
+        let bytes = b"invalid CRS".to_vec();
+        let digest = hashing::hash_element(&crate::engine::base::DSEP_PUBDATA_CRS, b"other bytes");
+        let err = VerifiedCrsMaterial::new(bytes, &digest).err().unwrap();
+        assert!(err.to_string().contains("CRS digest verification failed"));
+    }
+
+    #[test]
+    fn verified_crs_material_constructor_rejects_invalid_bytes_with_matching_digest() {
+        let bytes = b"invalid CRS".to_vec();
+        let digest = hashing::hash_element(&crate::engine::base::DSEP_PUBDATA_CRS, &bytes);
+        let err = VerifiedCrsMaterial::new(bytes, &digest).err().unwrap();
+        assert!(err.to_string().contains("Failed to deserialize CRS"));
     }
 
     #[tokio::test]

@@ -974,12 +974,15 @@ impl<
                 "Failed to ensure verified public material for new epoch {new_epoch_id}: {e:?}"
             )),
             Ok(()) => {
-                let res = join_all(storage_tasks).await;
-                let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
-                (!error_agg.is_empty()).then(|| {
+                let errors = join_all(storage_tasks)
+                    .await
+                    .into_iter()
+                    .filter_map(Result::err)
+                    .collect::<Vec<_>>();
+                (!errors.is_empty()).then(|| {
                     format!(
                         "Failed to store all reshared keys for new epoch {}: {:?}",
-                        new_epoch_id, error_agg
+                        new_epoch_id, errors
                     )
                 })
             }
@@ -4019,8 +4022,7 @@ pub(crate) mod tests {
     ///
     /// This is a stand-in for material written by an older tfhe-rs version, whose stored bytes
     /// differ from a re-serialization on the current version. It is not a realistic legacy
-    /// encoding: the tests using it never deserialize these bytes, they only hash them the way
-    /// the boot check does.
+    /// encoding: the suffix only lets these tests distinguish stored bytes from a re-serialization.
     fn serialize_with_trailing_bytes<
         T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
     >(
@@ -4162,7 +4164,7 @@ pub(crate) mod tests {
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![VerifiedCrsMaterial::new(crs, crs_bytes)],
+            vec![VerifiedCrsMaterial::new(crs_bytes, &crs_digest).unwrap()],
         )
         .await
         .unwrap();
@@ -4330,7 +4332,10 @@ pub(crate) mod tests {
                 &preproc_id,
                 params,
                 key_digests,
-                vec![VerifiedCrsInfo { crs_id, crs_digest }],
+                vec![VerifiedCrsInfo {
+                    crs_id,
+                    crs_digest: crs_digest.clone(),
+                }],
             ),
             vec![VerifiedPublicMaterial::new_compressed(
                 compressed_keyset,
@@ -4339,7 +4344,7 @@ pub(crate) mod tests {
             )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![VerifiedCrsMaterial::new(crs, crs_bytes.clone())],
+            vec![VerifiedCrsMaterial::new(crs_bytes.clone(), &crs_digest).unwrap()],
         )
         .await
         .unwrap();

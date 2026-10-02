@@ -286,7 +286,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
   epoch. The party deletes the epoch data and forgets the epoch only once
-  the epoch holds no key share and no CRS metadata. A reshare retains the exact public bytes
+  the epoch holds no key share and no CRS metadata. The `VerifiedCrsMaterial` constructor checks
+  the expected digest and deserializes the CRS from the same bytes. A reshare retains the exact public bytes
   that it verifies, and restores missing material during its locked storage phase. A failed
   reshare deletes only public material that its storage phase created. It deletes that material
   only after private cleanup succeeds. One lock serializes all reshare storage and rollback on a
