@@ -1424,19 +1424,19 @@ impl KmsV0_15_0 {
         let mut rng = AesRng::seed_from_u64(RECOVERY_MATERIAL_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
         let operator_identity = seeded_identity(&mut rng);
-        let operator_pk =
+        let operator_verf_key_set =
             VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
         let mut commitments = BTreeMap::new();
         let mut cts = BTreeMap::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
-            let custodian_pk = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+            let custodian_verf_key_set = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let backup_material = BackupMaterial {
                 backup_id,
                 mpc_context_id: kms_grpc_0_15_0::ContextId::from_bytes([9u8; 32]),
-                custodian_pk,
+                custodian_verf_key_set,
                 custodian_role: cus_role,
-                operator_pk: operator_pk.clone(),
+                operator_verf_key_set: operator_verf_key_set.clone(),
                 shares: Vec::new(),
             };
             let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
