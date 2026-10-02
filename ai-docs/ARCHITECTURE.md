@@ -273,7 +273,7 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
-  Each party also rejects a key without a non-empty public-key digest and a
+  Each party also rejects a key unless it has a non-empty public-key digest and exactly one
   non-empty server-key or compressed-keyset digest before role dispatch.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
@@ -286,9 +286,13 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
   epoch. The party deletes the epoch data and forgets the epoch only once
-  the epoch holds no key share and no CRS metadata. Public data remains because
-  an epoch change does not affect it. A failed deletion keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
+  the epoch holds no key share and no CRS metadata. A reshare retains the exact public bytes
+  that it verifies, and restores missing material during its locked storage phase. A failed
+  reshare deletes only public material that its storage phase created. It deletes that material
+  only after private cleanup succeeds. One lock serializes all reshare storage and rollback on a
+  party. Public material that existed before the storage phase remains unchanged. A failed
+  private deletion keeps the epoch and its public material so cleanup can be retried.
+  `DestroyMpcEpoch` erases a whole
   epoch instead, and covers the material of every request.
   `DestroyMpcContext` takes a stable
   snapshot of the context's registered epochs and erases their secret shares
@@ -458,8 +462,11 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 
 The public half has no epoch. The private half has an epoch and contains one party's material.
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
-accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
-public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+accepts one-sided writes. Resharing normally writes only the private half for the new epoch. A
+party without the public half fetches its raw bytes from a peer and verifies the request digest.
+The party stores those exact bytes before it writes private metadata. An existing public entry
+must match the verified bytes. A `ContextInfo` write stores one request-scoped private entry with
+no public half.
 
 Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
 and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys

@@ -153,9 +153,22 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     );
 
     let public_before;
+    let (compressed_keyset_bytes, public_key_bytes, crs_bytes);
     {
         let public_storage = crypto_storage.inner.get_public_storage();
         let mut guard = public_storage.lock().await;
+        compressed_keyset_bytes = guard
+            .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .unwrap();
+        public_key_bytes = guard
+            .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        crs_bytes = guard
+            .load_bytes(&crs_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         guard.clear_events();
         public_before = guard.state();
     }
@@ -203,15 +216,22 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     >::store_reshared_keys(
         &crypto_storage,
         &epoch_manager.session_maker,
+        &epoch_manager.reshare_storage_lock,
         &sk,
         &[SigningSchemeType::Ecdsa256k1],
         new_epoch_id,
         vec![],
         &previous_epoch,
-        vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+        vec![VerifiedPublicMaterial::new(
+            VerifiedFheKeys::Compressed(compressed_keyset),
+            vec![
+                (PubDataType::CompressedXofKeySet, compressed_keyset_bytes),
+                (PubDataType::PublicKey, public_key_bytes),
+            ],
+        )],
         vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
         &dummy_domain(),
-        vec![crs],
+        vec![(crs, crs_bytes)],
     )
     .await;
     assert!(
