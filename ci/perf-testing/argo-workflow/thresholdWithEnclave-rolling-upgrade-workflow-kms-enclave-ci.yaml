@@ -57,7 +57,7 @@ spec:
     - name: num_total
       value: "13"
     # Unique per-stage decrypt request-IDs (32-byte hex). Below/above the PRSS-mask
-    # threshold (100). Must differ across pub/user and across the 5/13 & 9/13 runs.
+    # threshold (100). Must differ across pub/user and across the batch 1 & batch 2 runs.
     - name: pdec-below-id
       value: ""
     - name: pdec-above-id
@@ -76,7 +76,7 @@ spec:
           ##########################################################################
           # Legacy-PRSS-mask boundary probe. Threshold = 100 (set on the upgraded
           # parties in phase 2). Each decrypt pins a UNIQUE request-ID (they must be
-          # globally unique — across pub/user AND across the 5/13 and 9/13 runs, else
+          # globally unique — across pub/user AND across the batch 1 and batch 2 runs, else
           # the cores reject the duplicate) via a per-stage workflow parameter, landing
           # below (<100 -> legacy mask on both sides -> reconstructs) or above (>100 ->
           # new mask on the upgraded nodes -> Gao decode fails vs the legacy old nodes).

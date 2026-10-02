@@ -303,6 +303,90 @@ class DiagnosticTests(TemporaryWorkingDirectory):
             ],
         )
 
+    @patch.object(metrics.time, "sleep", side_effect=AssertionError("--once must not loop"))
+    @patch.object(metrics, "scrape_once")
+    def test_scrape_once_takes_a_single_snapshot(self, scrape, sleep):
+        with patch.object(sys, "argv", ["metrics", "ns", "--once"]):
+            metrics.main()
+        scrape.assert_called_once_with("ns", 9646, 4.0)
+        sleep.assert_not_called()
+
+    def test_network_event_deltas_cover_labels_missing_pods_and_restarts(self):
+        before = [
+            't0 kms-core-1-core-1 kms_network_debug_events_total{event="send_retry"} 5',
+            't0 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 100',
+            't0 kms-core-10-core-10 kms_network_debug_events_total{a="b",event="send_failed"} 7',
+            't0 kms-core-10-core-10 kms_network_debug_events_total{event="send_active"} 1',
+            't0 kms-core-11-core-11 kms_network_debug_events_total{event="send_retry"} 4',
+            't0 kms-core-12-core-12 kms_network_debug_events_total{event="send_retry"} 4',
+            "t0 kms-core-1-core-1 kms_active_sessions 2",
+        ]
+        after = [
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_retry"} 45',
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 100',
+            't1 kms-core-10-core-10 kms_network_debug_events_total{a="b",event="send_failed"} 2',
+            't1 kms-core-10-core-10 kms_network_debug_events_total{event="send_active"} 6',
+            't1 kms-core-11-core-11 kms_network_debug_events_total{event="send_active"} 8',
+            't1 kms-core-6-core-6 kms_network_debug_events_total{event="receive_wait_timeout"} 3',
+            "t1 kms-core-1-core-1 kms_active_sessions 9",
+        ]
+        deltas, restarted = metrics.network_event_deltas(before, after)
+        self.assertEqual(
+            deltas,
+            {
+                ("kms-core-1-core-1", "send_retry"): 40,
+                ("kms-core-10-core-10", "send_failed"): 2,
+                ("kms-core-10-core-10", "send_active"): 6,
+                ("kms-core-11-core-11", "send_active"): 8,
+                ("kms-core-6-core-6", "receive_wait_timeout"): 3,
+            },
+        )
+        # Pod 10 has a counter that went down and pod 11 one that disappeared. Pod 12 was not
+        # scraped the second time, which is no restart.
+        self.assertEqual(restarted, {"kms-core-10-core-10", "kms-core-11-core-11"})
+
+    def test_network_summary_warns_once_per_growing_event(self):
+        Path("before").write_text(
+            't0 kms-core-10-core-10 kms_network_debug_events_total{event="send_retry"} 1\n'
+            't0 kms-core-3-core-3 kms_network_debug_events_total{event="send_failed"} 9\n'
+        )
+        Path("after").write_text(
+            't1 kms-core-10-core-10 kms_network_debug_events_total{event="send_retry"} 4\n'
+            't1 kms-core-2-core-2 kms_network_debug_events_total{event="send_retry"} 2\n'
+            't1 kms-core-3-core-3 kms_network_debug_events_total{event="send_failed"} 1\n'
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 12\n'
+            't1 kms-core-5-core-5 scrape_error error="timeout"\n'
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            metrics.summarize_network_events(
+                Path("before"), Path("after"), "batch 2, 13/13 upgraded"
+            )
+        lines = output.getvalue().splitlines()
+        self.assertIn('t1 kms-core-5-core-5 scrape_error error="timeout"', lines)
+        self.assertIn(
+            "Restarted between the snapshots, counted from the restart: kms-core-3-core-3", lines
+        )
+        # The failure after the restart of pod 3 still warns, although its counter went down.
+        title = "Network events (batch 2%2C 13/13 upgraded)"
+        self.assertEqual(
+            [line for line in lines if line.startswith("::warning")],
+            [
+                f"::warning title={title}::send_failed on kms-core-3-core-3 (+1 since restart)",
+                (
+                    f"::warning title={title}::send_retry on "
+                    "kms-core-2-core-2 (+2), kms-core-10-core-10 (+3)"
+                ),
+            ],
+        )
+        pods = [line.split()[0] for line in lines if line.startswith("kms-core-")]
+        self.assertEqual(pods[:2], ["kms-core-1-core-1", "kms-core-2-core-2"])
+
+    def test_annotation_property_escapes_workflow_command_characters(self):
+        self.assertEqual(
+            metrics.escape_annotation_property("a, b: 5% \r\n"), "a%2C b%3A 5%25 %0D%0A"
+        )
+
     def test_network_deltas_preserve_missing_and_reset_counter_semantics(self):
         row = dict(zip(network.HEADER, ["p", "c", "eth0", "9001", *(["10"] * 8)]))
         after = dict(row, rx_bytes="25", tx_bytes="2")

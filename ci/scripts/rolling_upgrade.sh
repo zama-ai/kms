@@ -18,13 +18,26 @@
 #     --namespace <namespace> \
 #     --num-parties <n> \
 #     --deployment-type thresholdWithEnclave \
-#     [--kms-chart-version <version>] \
+#     [--old-kms-chart-version <version>] \
+#     [--new-kms-chart-version <version>] \
 #     [--tkms-infra-version <version>]
 #
 # The --all-upgraded-parties flag is the cumulative list of all parties
 # that should be on the new version after this upgrade step. For the
-# first upgrade (5/13), this equals --parties-to-upgrade. For the second
-# upgrade (9/13), this should be "1,2,3,4,5,6,7,8,9".
+# first batch, this equals --parties-to-upgrade. For the second batch with
+# the default party IDs, this is "1,2,3,4,5,6,7,8,9". The script acts on
+# --all-upgraded-parties only; --parties-to-upgrade is logged for reference.
+#
+# Optional environment variables:
+#   EPOCH_MIGRATION=true        Pass the 0.15 epoch-data migration config to
+#                               the upgraded parties (v0.14 -> v0.15+ only).
+#   RESTART_PARTIES=<ids|all>   Restart the core pods of these parties at the
+#                               end (comma-separated party IDs, or "all").
+#   ENABLE_PRSS_THRESHOLD=true  Enable the PRSS-Mask threshold on the upgraded
+#                               parties (prss-threshold profile);
+#                               LEGACY_PRSS_MASK_THRESHOLD sets it (default 100).
+#   OLD_* / NEW_KMS_CORE_{,CLIENT_,ENCLAVE_}IMAGE_NAME
+#                               Image repositories of the old and new side.
 #=============================================================================
 
 set -euo pipefail
@@ -139,10 +152,10 @@ fetch_pcrs_for_tag() {
     local FULL_IMAGE="${image_name}:${tag}"
 
     log_info "Pulling ${FULL_IMAGE}..."
-    docker pull "${FULL_IMAGE}" > /dev/null 2>&1 || {
-        log_error "Failed to pull image: ${FULL_IMAGE}"
+    if ! docker pull --quiet "${FULL_IMAGE}"; then
+        log_error "Failed to pull image: ${FULL_IMAGE}. Check that the tag exists in this repository (see the new_image_repository input)."
         exit 1
-    }
+    fi
 
     local pcr0 pcr1 pcr2
     pcr0=$(docker inspect "${FULL_IMAGE}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]' || echo "")
@@ -164,10 +177,70 @@ fetch_pcrs_for_tag() {
 }
 
 #=============================================================================
+# Restart Parties
+#
+# Restarts the core pods of the selected parties at the same time, at the end
+# of each batch. The first batch restarts all parties anyway, because
+# trustedReleases changes on each of them. Later batches only restart the
+# upgraded parties, while the other parties keep running. Restarting a chosen
+# subset shows which of the running parties hold state that breaks the mixed
+# cluster. RESTART_PARTIES selects the parties: empty (none), "all", or
+# comma-separated party IDs.
+#=============================================================================
+RESTART_PARTY_IDS=()
+
+resolve_restart_parties() {
+    local spec="${RESTART_PARTIES:-}"
+    spec="$(echo "${spec}" | tr -d ' ')"
+    if [[ -z "${spec}" ]]; then
+        return 0
+    fi
+    if [[ "${spec}" == "all" ]]; then
+        mapfile -t RESTART_PARTY_IDS < <(seq 1 "${NUM_PARTIES}")
+        return 0
+    fi
+    local id
+    IFS=',' read -ra ids <<< "${spec}"
+    for id in "${ids[@]}"; do
+        if ! [[ "${id}" =~ ^[0-9]+$ ]] || (( id < 1 || id > NUM_PARTIES )); then
+            log_error "Invalid RESTART_PARTIES entry '${id}' in '${RESTART_PARTIES}': expected 'all' or comma-separated party IDs between 1 and ${NUM_PARTIES}"
+            exit 1
+        fi
+        RESTART_PARTY_IDS+=("${id}")
+    done
+}
+
+restart_parties() {
+    log_info "Restarting the core pods of parties [${RESTART_PARTY_IDS[*]}]..."
+    local i
+    for i in "${RESTART_PARTY_IDS[@]}"; do
+        kubectl rollout restart statefulset "${HELM_RELEASE_PREFIX}-${i}-core" -n "${NAMESPACE}"
+    done
+    for i in "${RESTART_PARTY_IDS[@]}"; do
+        kubectl rollout status statefulset "${HELM_RELEASE_PREFIX}-${i}-core" \
+            -n "${NAMESPACE}" --timeout=1200s
+    done
+    log_info "Parties [${RESTART_PARTY_IDS[*]}] restarted and ready."
+}
+
+#=============================================================================
+# Finish: optional restart of the selected parties, then the completion banner.
+#=============================================================================
+finish_rolling_upgrade() {
+    if [[ "${#RESTART_PARTY_IDS[@]}" -gt 0 ]]; then
+        restart_parties
+    fi
+    log_info "========================================="
+    log_info "Rolling Upgrade Complete!"
+    log_info "========================================="
+}
+
+#=============================================================================
 # Main
 #=============================================================================
 main() {
     parse_rolling_upgrade_args "$@"
+    resolve_restart_parties
 
     log_info "========================================="
     log_info "Rolling Upgrade Starting"
@@ -179,6 +252,8 @@ main() {
     log_info "Namespace:             ${NAMESPACE}"
     log_info "Deployment type:       ${DEPLOYMENT_TYPE}"
     log_info "Num parties:           ${NUM_PARTIES}"
+    log_info "Epoch migration:       ${EPOCH_MIGRATION:-false}"
+    log_info "Restart parties:       ${RESTART_PARTIES:-none}"
     log_info "========================================="
 
     #=========================================================================
@@ -241,9 +316,7 @@ main() {
     #=========================================================================
     if [[ "${ENABLE_PRSS_THRESHOLD:-false}" != "true" ]]; then
         log_info "Step 4: PRSS-Mask threshold rollout skipped (ENABLE_PRSS_THRESHOLD != true)."
-        log_info "========================================="
-        log_info "Rolling Upgrade Complete!"
-        log_info "========================================="
+        finish_rolling_upgrade
         return 0
     fi
 
@@ -305,9 +378,7 @@ main() {
     fi
     log_info "PRSS-Mask threshold enabled on all upgraded parties."
 
-    log_info "========================================="
-    log_info "Rolling Upgrade Complete!"
-    log_info "========================================="
+    finish_rolling_upgrade
 }
 
 main "$@"

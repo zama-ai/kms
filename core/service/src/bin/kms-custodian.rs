@@ -57,6 +57,7 @@ pub struct DecryptParams {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[clap(version)]
 pub enum CustodianCommand {
     Generate(GenerateParams),
     Verify(VerifyParams),

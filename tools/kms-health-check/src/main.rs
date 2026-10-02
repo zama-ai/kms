@@ -12,7 +12,7 @@ mod grpc_client;
 mod output;
 
 #[derive(Parser)]
-#[command(name = "kms-health-check")]
+#[command(name = "kms-health-check", version)]
 #[command(
     about = "Minimal KMS health check tool for configuration validation and live health monitoring"
 )]
@@ -168,4 +168,18 @@ async fn main() -> Result<()> {
     };
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_flag_prints_package_version() {
+        let err = Cli::try_parse_from(["kms-health-check", "--version"])
+            .err()
+            .expect("--version should stop parsing with clap's DisplayVersion error");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(env!("CARGO_PKG_VERSION")));
+    }
 }
