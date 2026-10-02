@@ -856,7 +856,8 @@ mod tests {
                     .into_iter()
                     .map(|message| message.try_into().unwrap())
                     .collect(),
-                custodian_context_id: None,
+                // The accepted cases get past node validation, so they need a valid ID.
+                custodian_context_id: Some(RequestId::from_bytes([44; 32]).into()),
                 threshold: 1,
             };
 

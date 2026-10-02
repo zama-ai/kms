@@ -1513,6 +1513,15 @@ mod tests {
     const EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY: &str =
         "Duplicate custodian verification key found in custodian context";
 
+    /// Attaches a fixed root seed to `sig_key`. A custodian context setup signs backups under
+    /// every scheme of [`BACKUP_SIGNING_SCHEMES`], and is refused up front without a seed.
+    fn with_root_seed(sig_key: PrivateSigKey) -> NodeSigningIdentity {
+        NodeSigningIdentity::new(
+            sig_key,
+            RootSigningSeed::random(&mut AesRng::seed_from_u64(0)),
+        )
+    }
+
     async fn setup_crypto_storage(
         make_default_context: bool,
     ) -> (
@@ -2819,7 +2828,11 @@ mod tests {
     #[tokio::test]
     async fn test_custodian_context_fails_on_backup_update_failure() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
 
         // Store corrupt data in private storage under ContextInfo type.
         {
@@ -2968,7 +2981,11 @@ mod tests {
         use crate::vault::storage::Storage;
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let previous_id = RequestId::from_bytes([6u8; 32]);
         let context_id = RequestId::from_bytes([7u8; 32]);
         // The keychain holds a previous context, so a restore and a reset differ.
@@ -3037,7 +3054,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([9u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -3077,7 +3098,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_survives_a_dropped_request() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([8u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -3137,7 +3162,11 @@ mod tests {
         use crate::vault::storage::{Storage, StorageReader};
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([7u8; 32]);
 
         // Make `write_backup_keys` report a duplicate.

@@ -45,7 +45,11 @@ impl CustodianFixture {
             StorageProxy::from(FailingRamStorage::new()),
         )
         .await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, signing_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(signing_key),
+            test_rng_source(),
+        );
         let session_maker = SessionMaker::four_party_dummy_session(
             None,
             None,
