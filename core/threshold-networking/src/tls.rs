@@ -773,11 +773,11 @@ pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
         .collect::<Result<HashMap<MpcIdentity, Pem>, _>>()
 }
 
-/// Generates a mock CA certificate with an embedded attestation document and returns
+/// Generates a mock TLS certificate with an embedded attestation document and returns
 /// the certificate PEM along with the PCR values from the attestation document.
 /// This is useful for tests that need certificates with attestation documents.
 #[cfg(feature = "insecure")]
-pub async fn generate_mock_ca_cert_with_attestation(
+pub async fn generate_mock_tls_cert_with_attestation(
     identity: &str,
 ) -> anyhow::Result<(Pem, ReleasePCRValues)> {
     _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -788,7 +788,9 @@ pub async fn generate_mock_ca_cert_with_attestation(
         use nsm_nitro_enclave_utils::pcr::Pcrs;
         use p384::SecretKey;
         use p384::pkcs8::EncodePrivateKey;
-        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
+        use rcgen::{
+            CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+        };
 
         const MOCK_NITRO_SIGNING_KEY_BYTES: &[u8] =
             include_bytes!("../../service/certs/mock_nitro_signing_key.der");
@@ -855,14 +857,18 @@ pub async fn generate_mock_ca_cert_with_attestation(
         let attestation_doc = mock_attest(&nitro, pub_key);
         let pcr_values = extract_pcr_from_attestation_doc(&attestation_doc)?;
         let mut cp = CertificateParams::new(vec![identity.to_string()]).unwrap();
-        cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        cp.is_ca = IsCa::ExplicitNoCa;
         let mut dn = rcgen::DistinguishedName::new();
         dn.push(DnType::CommonName, identity);
         cp.distinguished_name = dn;
         cp.key_usages = vec![
             KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
+            KeyUsagePurpose::KeyEncipherment,
+            KeyUsagePurpose::KeyAgreement,
+        ];
+        cp.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
         ];
         cp.custom_extensions = vec![rcgen::CustomExtension::from_oid_content(
             &[1, 2, 840, 113549, 1, 7, 2],

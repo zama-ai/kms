@@ -1127,7 +1127,12 @@ mod tests {
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
     use std::time::Duration;
-    use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
+    use tokio_rustls::rustls::{
+        client::danger::ServerCertVerifier,
+        crypto::aws_lc_rs::default_provider,
+        pki_types::{CertificateDer, ServerName, UnixTime},
+        server::danger::ClientCertVerifier,
+    };
 
     /// Sunshine: one health check session per context that has a role for this party.
     #[tokio::test]
@@ -1584,15 +1589,23 @@ mod tests {
         }
     }
 
+    fn certificate_der(certificate_pem: &[u8]) -> Vec<u8> {
+        x509_parser::pem::parse_x509_pem(certificate_pem)
+            .unwrap()
+            .1
+            .contents
+    }
+
     #[tokio::test]
     async fn remove_context_updates_attested_verifier_references() {
-        let (session_maker, _verifier) = session_maker_with_attested_verifier();
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
 
         let identity = "shared.example.com";
         let (ca_pem, pcr_values) =
-            threshold_networking::tls::generate_mock_ca_cert_with_attestation(identity)
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
                 .await
                 .unwrap();
+        let certificate_der = certificate_der(&ca_pem.contents);
         let mut rng = AesRng::seed_from_u64(7);
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
@@ -1616,29 +1629,54 @@ mod tests {
             .await
             .unwrap();
 
+        let server_name = ServerName::try_from(identity).unwrap();
+        let verify_server = || {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
+        };
+        let verify_client = || {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                UnixTime::now(),
+            )
+        };
         assert!(session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_a).await.unwrap();
         assert!(!session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_b).await.unwrap();
         assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_err());
+        assert!(verify_client().is_err());
     }
 
     #[tokio::test]
     async fn remove_context_removes_only_its_attested_verifier_root() {
-        let (session_maker, _verifier) = session_maker_with_attested_verifier();
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
         let identity = "rotated.example.com";
         let (ca_pem_a, pcr_values_a) =
-            threshold_networking::tls::generate_mock_ca_cert_with_attestation(identity)
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
                 .await
                 .unwrap();
         let (ca_pem_b, pcr_values_b) =
-            threshold_networking::tls::generate_mock_ca_cert_with_attestation(identity)
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
                 .await
                 .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
         let mut rng = AesRng::seed_from_u64(10);
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
@@ -1658,29 +1696,58 @@ mod tests {
             .await
             .unwrap();
 
+        let server_name = ServerName::try_from(identity).unwrap();
+        let verify_server = |certificate: &[u8]| {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
+        };
+        let verify_client = |certificate: &[u8]| {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                UnixTime::now(),
+            )
+        };
         assert!(session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_ok());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_a).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
 
         session_maker.remove_context(&context_a).await.unwrap();
         assert!(!session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_err());
+        assert!(verify_client(&certificate_der_a).is_err());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
 
         session_maker.remove_context(&context_b).await.unwrap();
         assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_b).is_err());
+        assert!(verify_client(&certificate_der_b).is_err());
     }
 
     #[tokio::test]
     async fn duplicate_context_is_rejected_without_replacing_its_verifier_root() {
-        let (session_maker, _verifier) = session_maker_with_attested_verifier();
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
         let identity = "duplicate.example.com";
         let (ca_pem_a, pcr_values_a) =
-            threshold_networking::tls::generate_mock_ca_cert_with_attestation(identity)
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
                 .await
                 .unwrap();
         let (ca_pem_b, pcr_values_b) =
-            threshold_networking::tls::generate_mock_ca_cert_with_attestation(identity)
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
                 .await
                 .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
         let mut rng = AesRng::seed_from_u64(11);
         let context_id = ContextId::new_random(&mut rng);
 
@@ -1699,6 +1766,47 @@ mod tests {
             .await
             .unwrap_err();
 
+        let server_name = ServerName::try_from(identity).unwrap();
+        assert!(
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
+        );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
+        );
+        assert!(
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
         assert_eq!(session_maker.context_count().await, 1);
     }
 }
