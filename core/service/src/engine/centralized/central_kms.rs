@@ -956,7 +956,7 @@ impl<
         base_kms: BaseKmsStruct,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
-        (HealthReporter, HealthServer<impl Health>),
+        (HealthState, HealthServer<impl Health>),
     )> {
         let key_info_with_epoch: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(

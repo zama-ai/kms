@@ -894,7 +894,7 @@ pub async fn setup_recovery_mode<
                 .unwrap();
             let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
             let core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-            let (kms, (health_reporter, health_service)) =
+            let (kms, (health, health_service)) =
                 RealCentralizedKms::<PubS, PrivS>::new_from_base_kms(
                     core_config,
                     pub_storage,
@@ -907,6 +907,7 @@ pub async fn setup_recovery_mode<
                 .expect("a server without its signing key must boot in recovery mode");
             let kms = Arc::new(kms);
             let server = Arc::clone(&kms);
+            let handle_health = health.clone();
             let service_config = ServiceEndpoint {
                 listen_address: ip_addr.to_string(),
                 listen_port: service_port,
@@ -920,13 +921,13 @@ pub async fn setup_recovery_mode<
                     server,
                     meta_store_status_service,
                     health_service,
-                    health_reporter,
+                    handle_health,
                     service_shutdown_rx.map(drop),
                 )
                 .await
                 .expect("Could not start server");
             });
-            ServerHandle::new_centralized(kms, service_port, service_shutdown_tx)
+            ServerHandle::new_centralized(kms, service_port, service_shutdown_tx, health)
         }
         Some(party_id) => {
             let base_kms = BaseKmsStruct::new_no_signing_key(
@@ -949,7 +950,7 @@ pub async fn setup_recovery_mode<
                 .pop()
                 .unwrap();
             let (mpc_shutdown_tx, mpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            let (kms, (health_reporter, health_service), _metastore_status_service) =
+            let (kms, (health, health_service), _metastore_status_service) =
                 new_real_threshold_kms(
                     core_config,
                     pub_storage,
@@ -965,6 +966,7 @@ pub async fn setup_recovery_mode<
                 .expect("a server without its signing key must boot in recovery mode");
             let kms = Arc::new(kms);
             let server = Arc::clone(&kms);
+            let handle_health = health.clone();
             let service_config = ServiceEndpoint {
                 listen_address: ip_addr.to_string(),
                 listen_port: service_port,
@@ -978,7 +980,7 @@ pub async fn setup_recovery_mode<
                     server,
                     meta_store_status_service,
                     health_service,
-                    health_reporter,
+                    handle_health,
                     service_shutdown_rx.map(drop),
                 )
                 .await
@@ -990,6 +992,7 @@ pub async fn setup_recovery_mode<
                 mpc_port,
                 service_shutdown_tx,
                 mpc_shutdown_tx,
+                health,
             )
         }
     };
