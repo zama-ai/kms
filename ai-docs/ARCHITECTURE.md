@@ -277,6 +277,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
+  Each party also rejects a key without a non-empty public-key digest and a
+  non-empty server-key or compressed-keyset digest before role dispatch.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
@@ -729,9 +731,7 @@ exact commands.
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
-- **Kubernetes** — a Helm chart is provided at
-  [charts/kms-core/](../charts/kms-core/) for both centralized and threshold
-  deployments, including Nitro Enclaves when configured.
+- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for both centralized and threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
 
 ## Further reading
 

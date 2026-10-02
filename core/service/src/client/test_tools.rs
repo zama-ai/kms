@@ -26,6 +26,7 @@ use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
+use observability::health::HealthState;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -40,7 +41,6 @@ use tonic::transport::{Channel, Uri};
 use tonic_health::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_client::HealthClient;
-use tonic_health::server::HealthReporter;
 
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.
@@ -194,7 +194,7 @@ pub async fn setup_threshold_no_client<
     servers.sort_by_key(|(idx, _, _, _)| *idx);
     let mut server_handles = HashMap::new();
     for (
-        ((i, cur_server, service_config, (health_reporter, cur_health_service)), cur_mpc_shutdown),
+        ((i, cur_server, service_config, (health, cur_health_service)), cur_mpc_shutdown),
         (service_listener, _service_port),
     ) in servers
         .into_iter()
@@ -204,6 +204,7 @@ pub async fn setup_threshold_no_client<
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
         let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle_health = health.clone();
         tokio::spawn(async move {
             run_server(
                 service_config,
@@ -213,7 +214,7 @@ pub async fn setup_threshold_no_client<
                     None, None, None, None, None, None,
                 )),
                 cur_health_service,
-                health_reporter,
+                health,
                 server_shutdown_rx.map(drop),
             )
             .await
@@ -227,6 +228,7 @@ pub async fn setup_threshold_no_client<
                 mpc_confs[i - 1].port,
                 server_shutdown_tx,
                 cur_mpc_shutdown,
+                handle_health,
             ),
         );
         // Wait until MPC server is ready, this should happen as soon as the MPC server boots up
@@ -392,7 +394,7 @@ pub async fn setup_threshold_with_custom_peers<
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
                 RealThresholdKms<PubS, PrivS>,
-                (HealthReporter, _),
+                (HealthState, _),
                 MetaStoreStatusServiceImpl,
             )> = new_real_threshold_kms(
                 core_config,
@@ -434,7 +436,7 @@ pub async fn setup_threshold_with_custom_peers<
     let mut server_handles = HashMap::new();
     for (
         (
-            (server_idx, _my_id, cur_server, service_config, (health_reporter, cur_health_service)),
+            (server_idx, _my_id, cur_server, service_config, (health, cur_health_service)),
             cur_mpc_shutdown,
         ),
         (service_listener, _service_port),
@@ -446,6 +448,7 @@ pub async fn setup_threshold_with_custom_peers<
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
         let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle_health = health.clone();
         tokio::spawn(async move {
             run_server(
                 service_config,
@@ -455,7 +458,7 @@ pub async fn setup_threshold_with_custom_peers<
                     None, None, None, None, None, None,
                 )),
                 cur_health_service,
-                health_reporter,
+                health,
                 server_shutdown_rx.map(drop),
             )
             .await
@@ -470,6 +473,7 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_ports[server_idx],
                 server_shutdown_tx,
                 cur_mpc_shutdown,
+                handle_health,
             ),
         );
         // Wait until MPC server is ready
@@ -551,6 +555,9 @@ pub struct ServerHandle {
     pub service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
     // The handle to shut down the optional MPC server
     pub mpc_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    // Liveness and readiness of the server. Tests read them here, because the gRPC health service
+    // can be gone after the server shuts down.
+    pub health: HealthState,
 }
 
 impl ServerHandle {
@@ -560,6 +567,7 @@ impl ServerHandle {
         mpc_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
         mpc_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        health: HealthState,
     ) -> Self {
         Self {
             server,
@@ -567,6 +575,7 @@ impl ServerHandle {
             mpc_port: Some(mpc_port),
             service_shutdown_tx,
             mpc_shutdown_tx: Some(mpc_shutdown_tx),
+            health,
         }
     }
 
@@ -574,6 +583,7 @@ impl ServerHandle {
         server: Arc<dyn Shutdown + Send + Sync + 'static>,
         service_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        health: HealthState,
     ) -> Self {
         Self {
             server,
@@ -581,6 +591,7 @@ impl ServerHandle {
             mpc_port: None,
             service_shutdown_tx,
             mpc_shutdown_tx: None,
+            health,
         }
     }
 
@@ -744,7 +755,7 @@ pub async fn setup_centralized_no_client<
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+    let (kms, (health, health_service)) = RealCentralizedKms::new(
         core_config,
         pub_storage,
         priv_storage,
@@ -756,6 +767,7 @@ pub async fn setup_centralized_no_client<
     .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
+    let handle_health = health.clone();
     tokio::spawn(async move {
         let config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
@@ -772,7 +784,7 @@ pub async fn setup_centralized_no_client<
                 None, None, None, None, None, None,
             )),
             health_service,
-            health_reporter,
+            health,
             rx.map(drop),
         )
         .await
@@ -782,7 +794,7 @@ pub async fn setup_centralized_no_client<
             RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
     await_server_ready(service_name, listen_port).await;
-    ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
+    ServerHandle::new_centralized(arc_kms_clone, listen_port, tx, handle_health)
 }
 
 pub(crate) async fn setup_centralized<

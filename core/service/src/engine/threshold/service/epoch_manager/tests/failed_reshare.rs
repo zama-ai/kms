@@ -179,16 +179,20 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
         .build();
     let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 
-    let mut previous_epoch = make_verified_previous_epoch(
+    let previous_epoch = make_verified_previous_epoch(
         keeper_epoch_id,
         &key_id,
         &preproc_id,
         crate::consts::TEST_PARAM,
+        HashMap::from([
+            (PubDataType::CompressedXofKeySet, vec![1; 32]),
+            (PubDataType::PublicKey, vec![2; 32]),
+        ]),
+        vec![VerifiedCrsInfo {
+            crs_id,
+            crs_digest: vec![],
+        }],
     );
-    previous_epoch.crs_info.push(VerifiedCrsInfo {
-        crs_id,
-        crs_digest: vec![],
-    });
 
     let sk = epoch_manager.base_kms.signing_identity().unwrap();
     let res = RealThresholdEpochManager::<

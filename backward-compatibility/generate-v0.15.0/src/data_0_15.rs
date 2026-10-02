@@ -35,6 +35,7 @@ use kms_0_15_0::cryptography::{
         CompositeEnvelope, CompositeSigncryptionPayload, Signcrypt, UnifiedSigncryption,
         UnifiedSigncryptionKey,
     },
+    signcryption::{Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey},
 };
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,

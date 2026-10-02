@@ -30,6 +30,7 @@ test-utils.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 tonic.workspace = true
+tonic-health.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
 tracing-appender.workspace = true
 tracing-opentelemetry.workspace = true

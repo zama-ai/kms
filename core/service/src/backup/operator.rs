@@ -543,6 +543,9 @@ impl Operator {
             }
             Some(identity) => identity,
         };
+        // Built once and shared by every per-custodian sealer below, so the
+        // signing key is not copied per custodian.
+        let identity = Arc::new(NodeSigningIdentity::from(sk.clone()));
         let n = self.custodian_keys.len();
         let t = self.threshold;
 

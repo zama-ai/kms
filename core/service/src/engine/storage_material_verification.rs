@@ -186,7 +186,7 @@ async fn check_legacy_keyset_presence<S: StorageReader + Sync, T>(
 ///
 /// Current metadata is verified by digest; legacy metadata has no digest and is checked only
 /// for the presence of its raw public objects.
-async fn verify_keysets<S>(
+pub(crate) async fn verify_keysets<S>(
     public_storage: &S,
     entries: &[(RequestId, KeyGenMetadata)],
 ) -> anyhow::Result<()>
@@ -213,7 +213,7 @@ where
 ///
 /// Current metadata is verified by digest; legacy metadata has no digest and is checked only
 /// for the presence of its raw public object.
-async fn verify_crses<S>(
+pub(crate) async fn verify_crses<S>(
     public_storage: &S,
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
 ) -> anyhow::Result<()>

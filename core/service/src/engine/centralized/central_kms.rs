@@ -36,6 +36,7 @@ use crate::vault::storage::{
 };
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::health::HealthState;
 use observability::metrics_names::OP_BOOT;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -83,7 +84,6 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
 use zeroize::Zeroizing;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
@@ -479,8 +479,8 @@ pub struct CentralizedKms<
     pub(crate) backup_operator: BO,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
-    // Health reporter for the the grpc server
-    pub(crate) health_reporter: HealthReporter,
+    // Liveness and readiness that the gRPC health service reports
+    pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
 }
@@ -927,7 +927,7 @@ impl<
         signing_identity: NodeSigningIdentity,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
-        (HealthReporter, HealthServer<impl Health>),
+        (HealthState, HealthServer<impl Health>),
     )> {
         let rng_source = Arc::new(RngSource::new(security_module.clone())?);
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity, rng_source);
@@ -1067,7 +1067,7 @@ impl<
             crypto_storage.clone(),
             telemetry_conf.refresh_interval(),
         );
-        let (health_reporter, health_service) = tonic_health::server::health_reporter();
+        let (health, health_service) = HealthState::new().await;
         // We will serve as soon as the server is started
 
         Ok((
@@ -1086,10 +1086,10 @@ impl<
                 context_manager,
                 backup_operator,
                 rate_limiter,
-                health_reporter: health_reporter.clone(),
+                health: health.clone(),
                 tracker: Arc::clone(&tracker),
             },
-            (health_reporter, health_service),
+            (health, health_service),
         ))
     }
 }
@@ -1135,10 +1135,12 @@ impl<
 > Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let h_repoter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = self.tracker.clone();
         let handle = tokio::task::spawn(async move {
-            h_repoter
+            health.mark_shutting_down().await;
+            health
+                .reporter()
                 .set_not_serving::<CoreServiceEndpointServer<Self>>()
                 .await;
             tracker.close();

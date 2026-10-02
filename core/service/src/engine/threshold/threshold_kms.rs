@@ -4,11 +4,11 @@ use crate::engine::threshold::bandwidth_bench::new_bandwidth_bench_limiter;
 use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use observability::health::HealthState;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
-use tonic_health::server::HealthReporter;
 
 pub struct ThresholdKms<
     EP: Sync,
@@ -40,7 +40,7 @@ pub struct ThresholdKms<
     /// Caller-input bounds enforced by the `bandwidth_benchmark` endpoint.
     pub(crate) bandwidth_bench_config: BandwidthBenchmarkConfig,
     tracker: Arc<TaskTracker>,
-    health_reporter: HealthReporter,
+    health: HealthState,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
 }
 
@@ -73,7 +73,7 @@ impl<
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         bandwidth_bench_config: BandwidthBenchmarkConfig,
-        health_reporter: HealthReporter,
+        health: HealthState,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
@@ -93,7 +93,7 @@ impl<
                 bandwidth_bench_config.max_concurrent_runs,
             ),
             bandwidth_bench_config,
-            health_reporter,
+            health,
             mpc_abort_handle,
         }
     }
@@ -115,13 +115,15 @@ impl<
 > Shutdown for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let health_reporter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = Arc::clone(&self.tracker);
         let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
         let handle = {
             let new_handle_clone = mpc_abort_handle.clone();
             tokio::task::spawn(async move {
-                health_reporter
+                health.mark_shutting_down().await;
+                health
+                    .reporter()
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
                 tracing::trace!("Set not serving");
@@ -188,7 +190,7 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         bandwidth_bench_config: BandwidthBenchmarkConfig,
-        health_reporter: HealthReporter,
+        health: HealthState,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
@@ -206,7 +208,7 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
                 bandwidth_bench_config.max_concurrent_runs,
             ),
             bandwidth_bench_config,
-            health_reporter,
+            health,
             mpc_abort_handle,
         }
     }
@@ -218,13 +220,15 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
     for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let health_reporter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = Arc::clone(&self.tracker);
         let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
         let handle = {
             let new_handle_clone = mpc_abort_handle.clone();
             tokio::task::spawn(async move {
-                health_reporter
+                health.mark_shutting_down().await;
+                health
+                    .reporter()
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
                 tracing::trace!("Set not serving");
