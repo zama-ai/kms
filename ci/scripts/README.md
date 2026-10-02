@@ -252,7 +252,7 @@ Dispatch inputs:
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
 | `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
-| `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
+| `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold`. Set it to test with a custom core-client build, e.g. one with more logs to debug an upgrade problem |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
 | `tkms_infra_chart_version` | TKMS Infra Helm chart version (default `0.3.2`) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in batch 1 / batch 2 (default `1,2,3,4,5` / `6,7,8,9`) |

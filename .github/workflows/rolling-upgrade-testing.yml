@@ -75,10 +75,15 @@
 #                            test. A set tag comes from the new side's
 #                            repository; the default comes from the old one, so
 #                            the harness is never newer than the oldest core.
-#                            Required for test_profile=prss-threshold. The
-#                            baseline run always pins the core-client to
-#                            old_image_tag so the harness matches the all-old
-#                            cluster.
+#                            Required for test_profile=prss-threshold. Set it
+#                            to test with a custom core-client build that is
+#                            in neither the old nor the new release, e.g. a
+#                            request-ID-capable build for prss-threshold, or a
+#                            build with more logs to debug an upgrade problem.
+#                            The build must keep the v0.13/v0.14 CLI (see
+#                            ci/scripts/README.md). The baseline run always
+#                            pins the core-client to old_image_tag so the
+#                            harness matches the all-old cluster.
 #   client_logs            (boolean, default false)
 #                            Enable core-client tracing logs.
 #   build                  (boolean, default false)
@@ -611,7 +616,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
-          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 1)..."
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 1, parties ${FIRST_BATCH})..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -659,7 +664,7 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming batch 1 mixed-state workflow logs..."
+          echo "Streaming batch 1 (upgraded parties ${FIRST_BATCH}) mixed-state workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch1-logs.txt
           echo "Batch 1 mixed-state tests completed."
 
@@ -727,7 +732,7 @@ jobs:
         run: |
           ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
           NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
-          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 2)..."
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 2, parties ${ALL_UPGRADED})..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -774,7 +779,7 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming batch 2 mixed-state workflow logs..."
+          echo "Streaming batch 2 (upgraded parties ${ALL_UPGRADED}) mixed-state workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch2-logs.txt
           echo "Batch 2 mixed-state tests completed."
 

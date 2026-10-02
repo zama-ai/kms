@@ -9,15 +9,15 @@ You need the migration config if both of these conditions are true:
 - Your party runs in threshold mode. A centralized KMS does not migrate PRSS data.
 - Your party ran `kms-init` or another new-MPC-epoch request on v0.14, so its private storage holds PRSS data.
 
-A fresh v0.15 installation has no legacy PRSS data. Do not set the migration config on a fresh installation, because the migration then fails (see [Error messages](#error-messages)).
+A fresh v0.15 installation has no legacy PRSS data. Do not set the migration config on a fresh installation. The core checks that each epoch in the config has PRSS data in storage, so on a fresh installation it stops at startup (see [Error messages](#error-messages)).
 
 ## What the core does at startup
 
 v0.14 stores one PRSS setup per epoch in private storage, under the `PrssSetupCombined` data type. The stored setup does not record the MPC context that the epoch belongs to.
 
-v0.15 stores epochs as `EpochData` entries, and each entry records its context. At startup, the core reads each legacy PRSS setup and writes it again as an `EpochData` entry. The migration config supplies the context for each epoch.
+v0.15 stores epochs as `EpochData` entries, and each entry records its context. At startup, the core reads each legacy PRSS setup and writes it again as an `EpochData` entry. The migration config supplies the context for each epoch. The core finds the legacy PRSS data without help, but it cannot find the context of an epoch, because the legacy data does not record it.
 
-The migration is idempotent. The core skips each epoch that already has an `EpochData` entry. The legacy PRSS data stays in storage for all v0.15.x releases, and the core checks it at each startup. Thus the config must stay in place while the party runs v0.15.x.
+The migration is idempotent: the core skips each epoch that already has an `EpochData` entry, so a restart with the same config is safe. The legacy PRSS data stays in storage for all v0.15.x releases. At each startup, the core compares the config with the legacy PRSS data again. Thus the config must stay in place, unchanged, while the party runs v0.15.x.
 
 ## Find the epochs to list
 
@@ -26,11 +26,15 @@ The config must list each epoch that has PRSS data in private storage, and no ot
 - S3 storage: `s3://<private-bucket>/<private-prefix>/PrssSetupCombined/<epoch-id>`
 - File storage: `<private-path>/<private-prefix>/PrssSetupCombined/<epoch-id>`
 
-For example, with the AWS CLI:
+`<private-bucket>`, `<private-path>` and `<private-prefix>` are the `bucket`, `path` and `prefix` values of the private vault in the core config (`[private_vault.storage.s3]` or `[private_vault.storage.file]`). With the Helm chart, the bucket and the prefix are `kmsCore.privateVault.s3.bucket` and `kmsCore.privateVault.s3.prefix`. If the prefix is not set, the core uses `PRIV`.
+
+For example, for party 1 with the bucket `kms-private` and the prefix `PRIV-p1`, list the epochs with the AWS CLI:
 
 ```bash
-aws s3 ls "s3://<private-bucket>/<private-prefix>/PrssSetupCombined/"
+aws s3 ls "s3://kms-private/PRIV-p1/PrssSetupCombined/"
 ```
+
+The output has one entry per epoch. The name of the entry is the epoch ID, for example `0800000000000000000000000000000000000000000000000000000000000001` (the default epoch ID without the `0x` prefix).
 
 Each epoch belongs to the context that the new-MPC-epoch request used when it created the epoch. `kms-init` creates the first epoch with these default IDs:
 
