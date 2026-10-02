@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::constants::{SEND_DEADLINE_CLOSED_SESSION, SEND_DEADLINE_LIVE_SESSION};
+use crate::constants::SEND_DEADLINE_CLOSED_SESSION;
 use crate::ggen::SendValueRequest;
 use crate::ggen::Status;
 use crate::ggen::gnetworking_client::GnetworkingClient;
@@ -247,22 +247,22 @@ impl GrpcSendingService {
                 );
             };
 
-            // Single unified retry strategy, bounded more tightly once the session is gone.
-            let deadline = if receiver.is_closed() {
-                SEND_DEADLINE_CLOSED_SESSION
+            // Single unified retry strategy. In a live session a dropped message stalls the
+            // receiving party until its round timeout, so delivery is bounded only by the retry
+            // policy. Once the session has dropped its sender, bound each remaining message so a
+            // slow or unresponsive peer cannot keep this task alive.
+            let delivery = retry_notify(exponential_backoff.clone(), send_fn, on_network_fail);
+            let res: Result<_, _> = if receiver.is_closed() {
+                timeout(SEND_DEADLINE_CLOSED_SESSION, delivery)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(tonic::Status::deadline_exceeded(format!(
+                            "no delivery within {SEND_DEADLINE_CLOSED_SESSION:?} after the session closed"
+                        )))
+                    })
             } else {
-                SEND_DEADLINE_LIVE_SESSION
+                delivery.await
             };
-            let res: Result<_, _> = timeout(
-                deadline,
-                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                Err(tonic::Status::deadline_exceeded(format!(
-                    "no delivery within {deadline:?}"
-                )))
-            });
             match res {
                 Ok(send_response) => {
                     match send_response.status() {

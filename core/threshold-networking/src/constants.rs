@@ -34,12 +34,9 @@ pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 /// to allow recovery
 pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(90);
 
-/// EXPERIMENT: upper bound on delivering one message to a peer, retries included, while the
-/// session is live. A message that misses it is dropped, which fails the protocol for that peer.
-pub(crate) const SEND_DEADLINE_LIVE_SESSION: Duration = Duration::from_secs(30);
-
-/// EXPERIMENT: the same bound once the session has dropped its sender, so that messages still
-/// queued for a slow or unresponsive peer cannot keep the network task alive.
+/// EXPERIMENT: once a session has dropped its sender, upper bound on delivering each message still
+/// queued for a peer, retries included, so that a slow or unresponsive peer cannot keep the network
+/// task alive. Messages of live sessions are not bounded by this.
 pub(crate) const SEND_DEADLINE_CLOSED_SESSION: Duration = Duration::from_secs(10);
 
 /// Once a peer has reported a session `Completed`, how long `receive` still waits for a message
