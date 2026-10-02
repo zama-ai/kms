@@ -8,6 +8,7 @@ use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
+use crate::engine::rng_source::RngSource;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
@@ -44,6 +45,7 @@ use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
@@ -836,6 +838,35 @@ pub async fn recovery_mode_verf_key<S: StorageReader>(
                 tracing::warn!("VALIDATE THIS VERIFICATION KEY BEFORE PROCEEDING! {fingerprint}");
             }
             Ok(verf_keys.ecdsa()?.clone())
+        }
+    }
+}
+
+/// The base KMS a server boots with.
+///
+/// A node whose private storage holds its signing identity boots under it. A node that lost it
+/// boots in recovery mode, where only custodian backup recovery is possible, under the key
+/// [`recovery_mode_verf_key`] picks from `public_storage` or `backup_vault`.
+pub async fn boot_base_kms<PrivS: StorageReader, PubS: StorageReader>(
+    kms_type: KMSType,
+    private_storage: &PrivS,
+    public_storage: &PubS,
+    backup_vault: Option<&Vault>,
+    rng_source: Arc<RngSource>,
+) -> anyhow::Result<BaseKmsStruct> {
+    match get_core_signing_identity(private_storage).await {
+        Ok(identity) => Ok(BaseKmsStruct::new(kms_type, identity, rng_source)),
+        Err(e) => {
+            tracing::warn!("Error loading signing key: {e:?}");
+            tracing::warn!(
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done and TLS must not be available!\n
+                Make sure to use a configuration file without TLS configured and\n
+                make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
+            );
+            let verf_key = recovery_mode_verf_key(public_storage, backup_vault).await?;
+            Ok(BaseKmsStruct::new_no_signing_key(
+                kms_type, verf_key, rng_source,
+            ))
         }
     }
 }
@@ -1746,6 +1777,108 @@ mod tests {
             recovery_mode_verf_key(&lost, Some(&make_unencrypted_vault()))
                 .await
                 .is_err()
+        );
+    }
+
+    /// A node boots under the signing identity in its private storage. Without one it boots in
+    /// recovery mode: under the published key while public storage holds one, and under the key
+    /// its backup vault names once public storage is lost too.
+    #[tokio::test]
+    async fn boot_base_kms_enters_recovery_mode_without_a_signing_key() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let backed_up = seeded_identity(&mut rng);
+        let mut vault = make_unencrypted_vault();
+        store_dummy_recovery_material(
+            &mut vault.storage,
+            &RequestId::from_bytes([1; 32]),
+            &backed_up,
+        )
+        .await;
+        let lost = RamStorage::new();
+
+        // With its signing identity the node boots normally, whatever the vault names.
+        let seed = RootSigningSeed::random(&mut rng);
+        let sk = seed.derive_ecdsa_signing_key().unwrap();
+        let mut private_storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut private_storage,
+            &SIGNING_KEY_ID,
+            &seed,
+            &PrivDataType::SigningSeed.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut private_storage,
+            &SIGNING_KEY_ID,
+            &sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let base_kms = boot_base_kms(
+            KMSType::Centralized,
+            &private_storage,
+            &lost,
+            Some(&vault),
+            test_rng_source(),
+        )
+        .await
+        .unwrap();
+        let identity = base_kms
+            .signing_identity()
+            .expect("a node holding its signing key must not enter recovery mode");
+        assert_eq!(identity.verf_key(), PublicSigKey::from_sk(&sk));
+        assert_eq!(*base_kms.verf_key(), PublicSigKey::from_sk(&sk));
+
+        // Without it, the published key is used while public storage holds one.
+        let no_identity = RamStorage::new();
+        let published = seeded_identity(&mut rng).verf_key();
+        let mut public_storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut public_storage,
+            &SIGNING_KEY_ID,
+            &published,
+            &PubDataType::VerfKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let base_kms = boot_base_kms(
+            KMSType::Threshold,
+            &no_identity,
+            &public_storage,
+            Some(&vault),
+            test_rng_source(),
+        )
+        .await
+        .unwrap();
+        assert!(base_kms.signing_identity().is_err());
+        assert_eq!(*base_kms.verf_key(), published);
+
+        // Once public storage is lost too, the key comes from the recovery material in the vault.
+        let base_kms = boot_base_kms(
+            KMSType::Threshold,
+            &no_identity,
+            &lost,
+            Some(&vault),
+            test_rng_source(),
+        )
+        .await
+        .unwrap();
+        assert!(base_kms.signing_identity().is_err());
+        assert_eq!(*base_kms.verf_key(), backed_up.verf_key());
+
+        // With neither public storage nor a backup vault, there is nothing to boot under.
+        assert!(
+            boot_base_kms(
+                KMSType::Threshold,
+                &no_identity,
+                &lost,
+                None,
+                test_rng_source(),
+            )
+            .await
+            .is_err()
         );
     }
 

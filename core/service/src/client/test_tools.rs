@@ -5,7 +5,7 @@ use crate::conf::{
 };
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::cryptography::signatures::PublicSigKey;
-use crate::engine::backup_operator::recovery_mode_verf_key;
+use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
@@ -842,8 +842,9 @@ pub async fn custodian_backup_vault(material_path: &Path, prefix: Option<&str>) 
     }
 }
 
-/// Boots one server that has no signing key in `priv_storage`, as `kms-server` does in recovery
-/// mode: under the key that [`recovery_mode_verf_key`] returns. With `threshold_party_id` the
+/// Boots one server that has no signing key in `priv_storage`, through the [`boot_base_kms`] that
+/// `kms-server` boots with, so it enters recovery mode exactly as a deployed node does. With
+/// `threshold_party_id` the
 /// server is that threshold party and runs without peers, since backup recovery is local to the
 /// node. Without it, the server is centralized.
 ///
@@ -865,13 +866,24 @@ pub async fn setup_recovery_mode<
     CoreServiceEndpointClient<Channel>,
     PublicSigKey,
 ) {
+    let kms_type = match threshold_party_id {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    let base_kms = boot_base_kms(
+        kms_type,
+        &priv_storage,
+        &pub_storage,
+        Some(&backup_vault),
+        test_rng_source(),
+    )
+    .await
+    .expect("no verification key to boot in recovery mode under");
     assert!(
-        get_core_signing_identity(&priv_storage).await.is_err(),
+        base_kms.signing_identity().is_err(),
         "a server in recovery mode must have no signing key"
     );
-    let verf_key = recovery_mode_verf_key(&pub_storage, Some(&backup_vault))
-        .await
-        .expect("no verification key to boot in recovery mode under");
+    let verf_key = (*base_kms.verf_key()).clone();
     let ip_addr = DEFAULT_URL.parse().unwrap();
     let (service_listener, service_port) = get_listeners_random_free_ports(&ip_addr, 1)
         .await
@@ -884,11 +896,6 @@ pub async fn setup_recovery_mode<
     ));
     let server_handle = match threshold_party_id {
         None => {
-            let base_kms = BaseKmsStruct::new_no_signing_key(
-                KMSType::Centralized,
-                verf_key.clone(),
-                test_rng_source(),
-            );
             create_default_centralized_context_in_storage(&mut priv_storage, &verf_key)
                 .await
                 .unwrap();
@@ -930,11 +937,6 @@ pub async fn setup_recovery_mode<
             ServerHandle::new_centralized(kms, service_port, service_shutdown_tx, health)
         }
         Some(party_id) => {
-            let base_kms = BaseKmsStruct::new_no_signing_key(
-                KMSType::Threshold,
-                verf_key.clone(),
-                test_rng_source(),
-            );
             let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
             let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
             let threshold_config = core_config
