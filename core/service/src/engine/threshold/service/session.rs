@@ -5,14 +5,11 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use crate::{
-    engine::{
-        context::{ContextInfo, SignerAddress},
-        rng_source::{RngSource, RngSourceError},
-        threshold::service::epoch_manager::EpochData,
-        utils::MetricedError,
-    },
-    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
+use crate::engine::{
+    context::{ContextInfo, SignerAddress},
+    rng_source::{RngSource, RngSourceError},
+    threshold::service::epoch_manager::EpochData,
+    utils::MetricedError,
 };
 
 // === External Crates ===
@@ -186,50 +183,7 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 }
 
 impl SessionMaker {
-    /// Builds a session maker that serves `all_epochs`, the epoch data read from private
-    /// storage, and every MPC context stored in `crypto_storage`.
-    pub(crate) async fn new_initialized<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-    >(
-        my_id: Option<Role>,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        all_epochs: HashMap<EpochId, EpochData>,
-        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-        verifier: Option<Arc<AttestedVerifier>>,
-        rng_source: Arc<RngSource>,
-    ) -> anyhow::Result<Self> {
-        let session_maker: SessionMaker =
-            Self::new_uninitialized(networking_manager, verifier, rng_source);
-        if all_epochs.is_empty() {
-            tracing::warn!(
-                "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
-            );
-        }
-        for (epoch_id, prss) in all_epochs {
-            session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                "Loaded epoch data from storage for request ID {}.",
-                epoch_id
-            );
-        }
-        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
-        if mpc_contexts.is_empty() {
-            tracing::warn!(
-                "No MPC context found in storage! There should at a minimum be a default context!"
-            );
-        }
-        for context_info in mpc_contexts {
-            session_maker.add_context_info(my_id, &context_info).await?;
-            tracing::info!(
-                "Loaded MPC context from storage for context ID {}.",
-                context_info.context_id()
-            );
-        }
-        Ok(session_maker)
-    }
-
-    pub(crate) fn new_uninitialized(
+    pub(crate) fn new(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng_source: Arc<RngSource>,
@@ -496,6 +450,7 @@ impl SessionMaker {
         }
     }
 
+    #[cfg(test)]
     async fn add_context(
         &self,
         context_id: ContextId,
@@ -583,32 +538,40 @@ impl SessionMaker {
             inner: role_assignment_map,
         };
 
-        self.add_context(
-            *info.context_id(),
-            my_role,
-            role_assignment,
-            signers,
-            info.threshold as u8,
-        )
-        .await;
+        let context_id = *info.context_id();
 
-        match self.verifier.as_ref() {
-            Some(verifier) => {
-                let context_id_as_session_id = info.context_id().derive_session_id()?;
-                let release_pcrs = if info.pcr_values.is_empty() {
-                    tracing::warn!(
-                        "No PCR values provided for context {}, attested TLS verification may be weakened",
-                        info.context_id()
-                    );
-                    None
-                } else {
-                    Some(info.pcr_values.iter().cloned().collect())
-                };
-                verifier
-                    .add_context(context_id_as_session_id, ca_certs_map, release_pcrs)
-                    .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {}", e))?;
-            }
-            _ => { /* do nothing */ }
+        let mut context_map = self.context_map.write().await;
+        if context_map.contains_key(&context_id) {
+            tracing::error!("Refusing to replace existing MPC context {context_id}");
+            anyhow::bail!("MPC context {context_id} already exists");
+        }
+
+        context_map.insert(
+            context_id,
+            Context {
+                context_id,
+                my_role,
+                role_assignment,
+                signers,
+                threshold: info.threshold as u8,
+            },
+        );
+        drop(context_map);
+
+        if let Some(verifier) = &self.verifier {
+            let verifier_context_id = context_id.derive_session_id()?;
+            let release_pcrs = if info.pcr_values.is_empty() {
+                tracing::warn!(
+                    "No PCR values provided for context {}, attested TLS verification may be weakened",
+                    info.context_id()
+                );
+                None
+            } else {
+                Some(info.pcr_values.iter().cloned().collect())
+            };
+            verifier
+                .add_context(verifier_context_id, ca_certs_map, release_pcrs)
+                .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {e}"))?;
         }
 
         Ok(())
@@ -1268,12 +1231,12 @@ mod tests {
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
-    use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
     use std::time::Duration;
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
         crypto::aws_lc_rs::default_provider,
-        pki_types::{ServerName, UnixTime},
+        pki_types::{CertificateDer, ServerName, UnixTime},
+        server::danger::ClientCertVerifier,
     };
 
     /// Sunshine: one health check session per context that has a role for this party.
@@ -1680,8 +1643,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn remove_context_updates_attested_verifier_references() {
+    fn session_maker_with_attested_verifier() -> (SessionMaker, Arc<AttestedVerifier>) {
         _ = default_provider().install_default();
         let verifier = Arc::new(
             AttestedVerifier::new(
@@ -1695,26 +1657,27 @@ mod tests {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
-        let session_maker = SessionMaker::new_uninitialized(
+        let session_maker = SessionMaker::new(
             networking_manager,
             Some(Arc::clone(&verifier)),
             Arc::new(RngSource::from_rngs(TaskRngs::insecure_seed_from_u64(6))),
         );
 
-        let identity = "shared.example.com";
-        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-        let (_, certificate, _) =
-            threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
-                identity, false, false, &keypair,
-            )
-            .unwrap();
-        let certificate_pem = certificate.pem().into_bytes();
-        let make_context = |context_id| ContextInfo {
+        (session_maker, verifier)
+    }
+
+    fn context_with_ca(
+        identity: &str,
+        certificate_pem: Vec<u8>,
+        context_id: ContextId,
+        pcr_values: Vec<threshold_networking::tls::ReleasePCRValues>,
+    ) -> ContextInfo {
+        ContextInfo {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: identity.to_string(),
                 party_id: 1,
                 external_url: format!("https://{identity}:8443"),
-                ca_cert: Some(certificate_pem.clone()),
+                ca_cert: Some(certificate_pem),
                 public_storage_url: String::new(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
@@ -1728,40 +1691,229 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
-            pcr_values: vec![],
-        };
+            pcr_values,
+        }
+    }
+
+    fn certificate_der(certificate_pem: &[u8]) -> Vec<u8> {
+        x509_parser::pem::parse_x509_pem(certificate_pem)
+            .unwrap()
+            .1
+            .contents
+    }
+
+    #[tokio::test]
+    async fn remove_context_updates_attested_verifier_references() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+
+        let identity = "shared.example.com";
+        let (ca_pem, pcr_values) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der = certificate_der(&ca_pem.contents);
         let mut rng = AesRng::seed_from_u64(7);
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
         session_maker
-            .add_context_info(None, &make_context(context_a))
+            .add_context_info(
+                None,
+                &context_with_ca(
+                    identity,
+                    ca_pem.contents.clone(),
+                    context_a,
+                    vec![pcr_values.clone()],
+                ),
+            )
             .await
             .unwrap();
         session_maker
-            .add_context_info(None, &make_context(context_b))
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem.contents, context_b, vec![pcr_values]),
+            )
             .await
             .unwrap();
 
         let server_name = ServerName::try_from(identity).unwrap();
-        let verify_certificate = || {
-            verifier.verify_server_cert(certificate.der(), &[], &server_name, &[], UnixTime::now())
+        let verify_server = || {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
         };
-        assert!(verify_certificate().is_ok());
+        let verify_client = || {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        assert!(session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_a).await.unwrap();
         assert!(!session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
-        assert!(
-            verify_certificate().is_ok(),
-            "the shared trust root must remain while another live context references it"
-        );
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_b).await.unwrap();
         assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_err());
+        assert!(verify_client().is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_context_removes_only_its_attested_verifier_root() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+        let identity = "rotated.example.com";
+        let (ca_pem_a, pcr_values_a) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let (ca_pem_b, pcr_values_b) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
+        let mut rng = AesRng::seed_from_u64(10);
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_a.contents, context_a, vec![pcr_values_a]),
+            )
+            .await
+            .unwrap();
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_b.contents, context_b, vec![pcr_values_b]),
+            )
+            .await
+            .unwrap();
+
+        let server_name = ServerName::try_from(identity).unwrap();
+        let verify_server = |certificate: &[u8]| {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
+        };
+        let verify_client = |certificate: &[u8]| {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        assert!(session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_ok());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_a).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
+
+        session_maker.remove_context(&context_a).await.unwrap();
+        assert!(!session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_err());
+        assert!(verify_client(&certificate_der_a).is_err());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
+
+        session_maker.remove_context(&context_b).await.unwrap();
+        assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_b).is_err());
+        assert!(verify_client(&certificate_der_b).is_err());
+    }
+
+    #[tokio::test]
+    async fn duplicate_context_is_rejected_without_replacing_its_verifier_root() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+        let identity = "duplicate.example.com";
+        let (ca_pem_a, pcr_values_a) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let (ca_pem_b, pcr_values_b) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
+        let mut rng = AesRng::seed_from_u64(11);
+        let context_id = ContextId::new_random(&mut rng);
+
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_a.contents, context_id, vec![pcr_values_a]),
+            )
+            .await
+            .unwrap();
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_b.contents, context_id, vec![pcr_values_b]),
+            )
+            .await
+            .unwrap_err();
+
+        let server_name = ServerName::try_from(identity).unwrap();
         assert!(
-            verify_certificate().is_err(),
-            "the trust root must be removed after its last live context is removed"
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
         );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
+        );
+        assert!(
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
+        assert_eq!(session_maker.context_count().await, 1);
     }
 
     /// One node of a test context for the two-sets merge.
