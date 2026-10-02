@@ -169,9 +169,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   party validates this unambiguous layout before role dispatch. A storage failure during
   resharing rolls the new epoch back on the party that fails. 
   That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
-  Observe that public data that existed before the reshare is not deleted as this is, and should be, unaffected by an epoch change;
-  only public data that the party fetched from its peers during this reshare (see below) is deleted again.
-  Fetched public data is deleted only after all private data for the failed epoch has been removed;
+  Observe that public data that still exists when the locked storage phase begins is not deleted as this is, and should be, unaffected by an epoch change.
+  Every reshare retains the exact public bytes it verified, whether read locally or fetched from a peer, so it can restore material removed by an earlier concurrent rollback.
+  Only public data created or restored by the failing storage phase is deleted again, and only after all private data for the failed epoch has been removed;
   if private cleanup fails, the public data is retained so the node can still validate its remaining metadata on restart.
   One lock serializes the storage and rollback steps of all reshares on a party, so a rollback cannot delete public data that a concurrent reshare kept.
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
