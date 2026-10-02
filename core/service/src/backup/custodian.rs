@@ -362,19 +362,14 @@ pub struct Custodian {
     dec_key: UnifiedPrivateEncKey,
 }
 
-/// The custodian is the entity can sign and decrypt messages,
+/// The custodian is the entity that signs and decrypts messages,
 /// which are usually secret shares that are needed for recovery.
 /// Since the secrets should be kept safe for a long time, the
 /// public key encryption scheme is post quantum: MLKEM1024-P384, the composite of ML-KEM-1024 and
-/// P-384 (see [`crate::backup::BACKUP_PKE_SCHEME`]). Both keys are derived from the custodian's
-/// BIP-39 seed phrase by [`crate::backup::seed_phrase::custodian_from_seed_phrase`].
-///
-/// The signing key is stored on AWS KMS
-///
-/// For decryption, there are two keys, the RSA OAEP decryption
-/// is stored on AWS KMS, the post-quantum decryption key is stored on
-/// AWS Secret Manager because post quantum algorithms are not
-/// supported on AWS KMS at the moment.
+/// P-384 (see [`crate::backup::BACKUP_PKE_SCHEME`]), and the custodian signs under every scheme in
+/// [`crate::backup::BACKUP_SIGNING_SCHEMES`]. Its encryption key pair and its signing identity are
+/// both derived from the custodian's BIP-39 seed phrase by
+/// [`crate::backup::seed_phrase::custodian_from_seed_phrase`].
 impl Custodian {
     /// A custodian for `role` that signs with `signing_identity`.
     pub fn new(

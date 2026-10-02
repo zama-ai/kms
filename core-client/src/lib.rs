@@ -2066,8 +2066,7 @@ pub async fn execute_cmd(
                     &client_param,
                     cc_conf.decryption_mode,
                 )
-                .await
-                .unwrap(),
+                .await?,
             );
         }
     }
