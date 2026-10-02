@@ -164,7 +164,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   refreshes secret shares as part of epoch creation; the outcome is fetched
   via `GetEpochResult`. When resharing legacy key material that has no
   dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
-  reshared private keyset keeps that field absent. A storage failure during
+  reshared private keyset keeps that field absent. Each reshared key must provide a non-empty
+  public-key digest and exactly one non-empty server-key or compressed-XOF-keyset digest; every
+  party validates this unambiguous layout before role dispatch. A storage failure during
   resharing rolls the new epoch back on the party that fails. 
   That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
   Observe that public data that existed before the reshare is not deleted as this is, and should be, unaffected by an epoch change;

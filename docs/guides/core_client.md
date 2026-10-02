@@ -696,9 +696,9 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
  - `previous_keys`: An array (enclosed in square brackets) with the information about the keys to reshare (each key is separated by a semicolon, each information concerning a key is separated by a coma):
     - `key_id <KEY_ID>`: the ID of the key
     - `preproc_id <PREPROC_ID>`: the preprocessing ID used to generate the key.
-    - `server_key_digest <DIGEST>`: the hex-encoded server key digest to use for resharing (if the key is not compressed).
+    - `server_key_digest <DIGEST>`: the hex-encoded server key digest to use for resharing (required if the key is not compressed; mutually exclusive with `xof_key_digest`).
     - `public_key_digest <DIGEST>`: the hex-encoded public key digest to use for resharing (required for both compressed and non-compressed keys).
-    - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (if the key is compressed)
+    - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (required if the key is compressed; mutually exclusive with `server_key_digest`)
  - `previous_crs`: An array (enclosed in square brackets) with the information about the CRSes to re-sign (each CRS is separated by a semicolon, each information concerning a CRS is separated by a coma):
     - `crs_id <CRS_ID>`: The ID of the CRS
     - `digest <DIGEST>`: the hex-encoded CRS digest

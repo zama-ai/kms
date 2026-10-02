@@ -80,8 +80,9 @@ use crate::{
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
-                VerifiedFheKeys, VerifiedPublicMaterial, get_verified_crs_material,
-                get_verified_fhe_public_materials, store_peer_public_bytes,
+                FheKeyDigestMode, VerifiedFheKeys, VerifiedPublicMaterial,
+                get_verified_crs_material, get_verified_fhe_public_materials,
+                store_peer_public_bytes,
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
@@ -318,30 +319,16 @@ fn verify_epoch_info(
                         tonic::Code::InvalidArgument,
                     )
                 })?;
-            // Every party checks this, so a request that a set 2 party would reject in
-            // `get_verified_fhe_public_materials` does not start the protocol on a set 1 party.
-            let has_digest = |key_type: PubDataType| {
-                key_digests
-                    .get(&key_type)
-                    .is_some_and(|digest| !digest.is_empty())
-            };
-            if !has_digest(PubDataType::PublicKey)
-                || !(has_digest(PubDataType::ServerKey)
-                    || has_digest(PubDataType::CompressedXofKeySet))
-            {
-                return Err(MetricedError::new(
+            // Every party validates the same unambiguous digest shape before role dispatch, so a
+            // request that set 2 would reject does not start the protocol on a set 1 party.
+            FheKeyDigestMode::from_digests(&key_digests).map_err(|e| {
+                MetricedError::new(
                     OP_NEW_EPOCH,
                     Some(*epoch_id_as_request_id),
-                    anyhow::anyhow!(
-                        "Key {key_id} needs a {} digest and a {} or {} digest, got {:?}",
-                        PubDataType::PublicKey,
-                        PubDataType::ServerKey,
-                        PubDataType::CompressedXofKeySet,
-                        key_digests.keys().collect::<Vec<_>>()
-                    ),
+                    e.context(format!("Invalid key digests for key {key_id}")),
                     tonic::Code::InvalidArgument,
-                ));
-            }
+                )
+            })?;
             Ok(VerifiedKeyInfo {
                 key_id,
                 preproc_id,
@@ -829,7 +816,7 @@ impl<
                     };
 
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
-                        fhe_pubkeys.server_key.clone().into_raw_parts();
+                        fhe_pubkeys.server_key.into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
                         Arc::new(new_private_keyset),
@@ -2741,8 +2728,8 @@ pub(crate) mod tests {
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
         // Every party checks the key digests, so a request without them is rejected before the
-        // protocol starts: each key needs a public key digest and a server key or compressed
-        // keyset digest, and an empty digest counts as missing.
+        // protocol starts: each key needs a public key digest and exactly one of a server key or
+        // compressed keyset digest. Empty and ambiguous digest layouts are rejected.
         let previous_epoch_with_digests = |key_digests| PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
@@ -2773,6 +2760,21 @@ pub(crate) mod tests {
             vec![
                 key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
                 key_digest(PubDataType::PublicKey, vec![]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
             ],
         ] {
             let err = verify_epoch_info(&new_epoch_id, previous_epoch_with_digests(key_digests))

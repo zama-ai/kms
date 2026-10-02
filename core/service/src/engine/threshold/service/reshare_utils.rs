@@ -23,6 +23,53 @@ use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
+/// Public-key representation selected by the validated digest fields of a reshare request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FheKeyDigestMode {
+    /// A `ServerKey` and `PublicKey` pair.
+    Uncompressed,
+    /// A `CompressedXofKeySet` and `PublicKey` pair.
+    Compressed,
+}
+
+impl FheKeyDigestMode {
+    /// Validate the digest shape and return its unambiguous public-key representation.
+    pub(crate) fn from_digests(
+        key_digests: &HashMap<PubDataType, Vec<u8>>,
+    ) -> anyhow::Result<Self> {
+        let public_key_digest = key_digests
+            .get(&PubDataType::PublicKey)
+            .ok_or_else(|| anyhow::anyhow!("missing {} digest", PubDataType::PublicKey))?;
+        if public_key_digest.is_empty() {
+            anyhow::bail!("{} digest must not be empty", PubDataType::PublicKey);
+        }
+
+        let server_key_digest = key_digests.get(&PubDataType::ServerKey);
+        let compressed_keyset_digest = key_digests.get(&PubDataType::CompressedXofKeySet);
+        match (server_key_digest, compressed_keyset_digest) {
+            (Some(_), Some(_)) => anyhow::bail!(
+                "key digests must contain exactly one of {} or {}, not both",
+                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet
+            ),
+            (Some(digest), None) if !digest.is_empty() => Ok(Self::Uncompressed),
+            (None, Some(digest)) if !digest.is_empty() => Ok(Self::Compressed),
+            (Some(_), None) => {
+                anyhow::bail!("{} digest must not be empty", PubDataType::ServerKey)
+            }
+            (None, Some(_)) => anyhow::bail!(
+                "{} digest must not be empty",
+                PubDataType::CompressedXofKeySet
+            ),
+            (None, None) => anyhow::bail!(
+                "missing {} or {} digest",
+                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet
+            ),
+        }
+    }
+}
+
 /// Enum to represent verified public keys that can be either uncompressed or compressed.
 /// This allows resharing to work with both standard keys (ServerKey + PublicKey) and
 /// compressed keys (CompressedXofKeySet).
@@ -217,8 +264,7 @@ async fn fetch_public_fhe_materials_from_peers<
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> anyhow::Result<VerifiedPublicMaterial> {
-    // Determine if we're dealing with compressed or uncompressed keys
-    let is_compressed = key_digests.contains_key(&PubDataType::CompressedXofKeySet);
+    let key_digest_mode = FheKeyDigestMode::from_digests(key_digests)?;
 
     // fetch the context info
     let context = fetch_context_from_storage(crypto_storage, context_id).await?;
@@ -242,7 +288,7 @@ async fn fetch_public_fhe_materials_from_peers<
             node.public_storage_prefix.as_deref(),
         )?;
 
-        if is_compressed {
+        if key_digest_mode == FheKeyDigestMode::Compressed {
             // Handle compressed keys
             let expected_compressed_digest = key_digests
                 .get(&PubDataType::CompressedXofKeySet)
@@ -427,10 +473,16 @@ pub(crate) async fn get_verified_fhe_public_materials<
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> Result<VerifiedPublicMaterial, MetricedError> {
-    // Determine if we're dealing with compressed or uncompressed keys
-    let is_compressed = key_digests.contains_key(&PubDataType::CompressedXofKeySet);
+    let key_digest_mode = FheKeyDigestMode::from_digests(key_digests).map_err(|e| {
+        MetricedError::new(
+            OP_NEW_EPOCH,
+            Some(*request_id),
+            e,
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
-    if is_compressed {
+    if key_digest_mode == FheKeyDigestMode::Compressed {
         // Handle compressed keys
         let expected_compressed_digest = key_digests
             .get(&PubDataType::CompressedXofKeySet)
