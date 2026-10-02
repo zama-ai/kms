@@ -84,13 +84,6 @@ pub trait Unsigncrypt {
         schemes: &[SigningSchemeType],
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError>;
-
-    /// Authenticate a signcrypted message and discard the payload.
-    fn validate_signcryption(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-    ) -> Result<(), CryptographyError>;
 }
 
 pub trait SigncryptFHEPlaintext: Signcrypt {
@@ -143,19 +136,6 @@ impl UnifiedSigncryptionKey {
             receiver_enc_key,
             receiver_id,
         }
-    }
-
-    /// A sealer for a caller that holds only an ECDSA key.
-    pub fn from_signing_key(
-        signing_key: PrivateSigKey,
-        receiver_enc_key: UnifiedPublicEncKey,
-        receiver_id: Vec<u8>,
-    ) -> Self {
-        Self::new(
-            Arc::new(NodeSigningIdentity::from(signing_key)),
-            receiver_enc_key,
-            receiver_id,
-        )
     }
 
     /// The ECDSA key the frozen layout signs with.
@@ -478,21 +458,6 @@ impl Unsigncrypt for UnifiedUnsigncryptionKey {
         safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
     }
-
-    fn validate_signcryption(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-    ) -> Result<(), CryptographyError> {
-        // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
-        let _ = self.open(dsep, signcryption).map_err(|e| {
-            CryptographyError::VerificationError(format!(
-                "failed to decrypt signcryption for validation: {}",
-                e
-            ))
-        })?;
-        Ok(())
-    }
 }
 
 impl UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey {
@@ -533,7 +498,7 @@ pub fn ephemeral_signcryption_key_generation(
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::{
         encryption::{Encryption, PkeScheme},
-        signatures::gen_sig_keys,
+        signatures::{gen_sig_keys, test_support::identity_with_ecdsa},
     };
 
     let (server_verf_key, server_sig_key) = match server_sig_key {
@@ -543,8 +508,8 @@ pub fn ephemeral_signcryption_key_generation(
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     UnifiedSigncryptionKeyPairOwned {
-        signcrypt_key: UnifiedSigncryptionKey::from_signing_key(
-            server_sig_key.clone(),
+        signcrypt_key: UnifiedSigncryptionKey::new(
+            Arc::new(identity_with_ecdsa(server_sig_key.clone())),
             enc_key.clone(),
             client_verf_key_id.to_vec(),
         ),
