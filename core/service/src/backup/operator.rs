@@ -389,8 +389,9 @@ pub struct RecoveryValidationMaterialPayload {
     pub custodian_context: InternalCustodianContext,
     /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
     pub mpc_context: ContextId,
-    /// The operator's verification keys, covering every scheme in [`BACKUP_SIGNING_SCHEMES`].
-    /// A node holding only its ECDSA key takes the other keys from here.
+    /// The operator's verification keys for [`BACKUP_SIGNING_SCHEMES`].
+    /// Recovery mode accesses them through
+    /// [`RecoveryValidationMaterial::recover_verf_keys_using_ecdsa`].
     pub operator_verf_keys: VerfKeySet,
 }
 impl Named for RecoveryValidationMaterialPayload {
