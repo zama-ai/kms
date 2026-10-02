@@ -39,7 +39,7 @@ impl FheKeyDigestMode {
     ) -> anyhow::Result<Self> {
         let public_key_digest = key_digests
             .get(&PubDataType::PublicKey)
-            .ok_or_else(|| anyhow::anyhow!("missing {} digest", PubDataType::PublicKey))?;
+            .ok_or_else(|| anyhow::anyhow!("missing digest for public key"))?;
         if public_key_digest.is_empty() {
             anyhow::bail!("{} digest must not be empty", PubDataType::PublicKey);
         }

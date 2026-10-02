@@ -319,8 +319,8 @@ fn verify_epoch_info(
                         tonic::Code::InvalidArgument,
                     )
                 })?;
-            // Every party validates the same unambiguous digest shape before role dispatch, so a
-            // request that set 2 would reject does not start the protocol on a set 1 party.
+            // Every party validates the same unambiguous digest shape before role dispatch.
+            // Set 2 separately verifies the digest values against the stored public material.
             FheKeyDigestMode::from_digests(&key_digests).map_err(|e| {
                 MetricedError::new(
                     OP_NEW_EPOCH,
