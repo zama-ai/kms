@@ -955,27 +955,31 @@ impl<
             }
         };
         if let Some(storage_err_msg) = storage_err_msg {
-            // Delete the public material this call created. Material that existed before may
-            // belong to other epochs of the same key, so it is kept.
-            {
-                let mut pub_guard = pub_storage.lock().await;
-                for (data_id, data_type) in &created_public {
-                    if let Err(e) = pub_guard.delete_data(data_id, &data_type.to_string()).await {
-                        tracing::error!(
-                            "Rollback of epoch {new_epoch_id} failed to delete {data_type} of {data_id} fetched from peers: {e:?}"
-                        );
-                    }
-                }
-            }
-
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
             let priv_storage = crypto_storage.get_private_storage();
             match Self::purge_epoch_material(&new_epoch_id, &priv_storage).await {
-                Ok(()) => session_maker.remove_epoch(&new_epoch_id).await,
+                Ok(()) => {
+                    // Delete the public material this call created only after all private metadata
+                    // that refers to it is gone. Material that existed before may belong to other
+                    // epochs of the same key, so it is kept.
+                    {
+                        let mut pub_guard = pub_storage.lock().await;
+                        for (data_id, data_type) in &created_public {
+                            if let Err(e) =
+                                pub_guard.delete_data(data_id, &data_type.to_string()).await
+                            {
+                                tracing::error!(
+                                    "Rollback of epoch {new_epoch_id} failed to delete {data_type} of {data_id} fetched from peers: {e:?}"
+                                );
+                            }
+                        }
+                    }
+                    session_maker.remove_epoch(&new_epoch_id).await;
+                }
                 Err(e) => tracing::error!(
                     "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
-                 epoch remains registered so that the deletion can be retried."
+                 epoch and its public material remain so that deletion can be retried and the node can restart."
                 ),
             }
             // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
@@ -1962,7 +1966,7 @@ pub(crate) mod tests {
         vault::storage::{
             StorageReader, StorageReaderExt, StorageType,
             file::FileStorage,
-            ram::{self, RamStorage},
+            ram::{self, FailingRamStorage, RamStorage},
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
             tests::TestType,
@@ -3772,6 +3776,127 @@ pub(crate) mod tests {
                 .unwrap(),
             b"public key",
             "the public key that existed before must be kept"
+        );
+    }
+
+    /// If private rollback fails, keep the fetched public material so rollback cannot leave
+    /// private metadata without the public dependencies required at boot.
+    #[tokio::test]
+    async fn test_failed_reshare_keeps_fetched_public_bytes_when_private_rollback_fails() {
+        let mut rng = AesRng::seed_from_u64(53);
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_failed_private_rollback").unwrap();
+        let preproc_id = derive_request_id("fetched_key_failed_private_rollback_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &DEFAULT_EPOCH_ID,
+            base_kms.new_rng().await,
+        );
+
+        let mut private_storage = FailingRamStorage::new(usize::MAX);
+        store_versioned_at_request_and_epoch_id(
+            &mut private_storage,
+            &key_id,
+            &new_epoch_id,
+            &TestType { i: 42 },
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        private_storage.set_fail_epoch_deletes(true);
+
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            RamStorage::new(),
+            private_storage,
+            None,
+            HashMap::new(),
+        );
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let compressed_keyset_bytes = b"compressed keyset".to_vec();
+        let public_key_bytes = b"public key".to_vec();
+        let reshare_storage_lock = tokio::sync::Mutex::new(());
+        let sk = base_kms.sig_key().unwrap();
+
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            &crypto_storage,
+            &session_maker,
+            &reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::CompressedXofKeySet, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::from_peer(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (
+                        PubDataType::CompressedXofKeySet,
+                        compressed_keyset_bytes.clone(),
+                    ),
+                    (PubDataType::PublicKey, public_key_bytes.clone()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("[Err(Duplicate)]"),
+            "unexpected error: {err}"
+        );
+
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let guard = public_storage.lock().await;
+        assert_eq!(
+            guard
+                .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                .await
+                .unwrap(),
+            compressed_keyset_bytes
+        );
+        assert_eq!(
+            guard
+                .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap(),
+            public_key_bytes
+        );
+        drop(guard);
+
+        let private_storage = crypto_storage.get_private_storage();
+        let guard = private_storage.lock().await;
+        assert!(
+            guard
+                .data_exists_at_epoch(
+                    &key_id,
+                    &new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap(),
+            "the failed private deletion must leave the metadata behind"
         );
     }
 

@@ -169,6 +169,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
   Observe that public data that existed before the reshare is not deleted as this is, and should be, unaffected by an epoch change;
   only public data that the party fetched from its peers during this reshare (see below) is deleted again.
+  Fetched public data is deleted only after all private data for the failed epoch has been removed;
+  if private cleanup fails, the public data is retained so the node can still validate its remaining metadata on restart.
   One lock serializes the storage and rollback steps of all reshares on a party, so a rollback cannot delete public data that a concurrent reshare kept.
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
   `DestroyMpcContext` carries

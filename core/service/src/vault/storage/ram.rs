@@ -325,6 +325,7 @@ pub struct FailingRamStorage {
     corrupt_epoch_writes: bool,
     skip_epoch_writes: bool,
     fail_data_exists: bool,
+    fail_epoch_deletes: bool,
     inner: RamStorage,
 }
 
@@ -337,6 +338,7 @@ impl FailingRamStorage {
             corrupt_epoch_writes: false,
             skip_epoch_writes: false,
             fail_data_exists: false,
+            fail_epoch_deletes: false,
             inner: RamStorage::new(),
         }
     }
@@ -369,6 +371,11 @@ impl FailingRamStorage {
     /// The real backends run that query inside `store_bytes` before they write.
     pub fn set_fail_data_exists(&mut self, fail_data_exists: bool) {
         self.fail_data_exists = fail_data_exists
+    }
+
+    /// When set, epoch-aware deletes fail without removing the entry.
+    pub fn set_fail_epoch_deletes(&mut self, fail_epoch_deletes: bool) {
+        self.fail_epoch_deletes = fail_epoch_deletes
     }
 
     /// Consumes one epoch-write budget unit, or returns an error if the budget is exhausted.
@@ -547,6 +554,9 @@ impl StorageExt for FailingRamStorage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.fail_epoch_deletes {
+            anyhow::bail!("epoch deletion failed!")
+        }
         self.inner
             .delete_data_at_epoch(data_id, epoch_id, data_type)
             .await
