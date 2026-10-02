@@ -248,7 +248,7 @@ mod tests {
     fn the_frozen_opener_rejects_a_composite_envelope() {
         for (seed, schemes) in [
             (300_u64, BACKUP_SIGNING_SCHEMES),
-            (400_u64, &vec![SigningSchemeType::Ecdsa256k1]),
+            (400_u64, &[SigningSchemeType::Ecdsa256k1]),
         ] {
             let mut f = composite_fixture(PkeSchemeType::MlKem512, seed, schemes);
             let demanded = f.schemes();
