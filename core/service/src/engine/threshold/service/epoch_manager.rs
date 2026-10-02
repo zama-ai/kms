@@ -80,8 +80,9 @@ use crate::{
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
-                VerifiedPublicMaterial, get_verified_crs_material,
-                get_verified_fhe_public_materials,
+                FheKeyDigestMode, VerifiedFheKeys, VerifiedPublicMaterial,
+                get_verified_crs_material, get_verified_fhe_public_materials,
+                store_verified_public_bytes,
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
@@ -318,6 +319,16 @@ fn verify_epoch_info(
                         tonic::Code::InvalidArgument,
                     )
                 })?;
+            // Every party validates the same unambiguous digest shape before role dispatch.
+            // Set 2 separately verifies the digest values against the stored public material.
+            FheKeyDigestMode::from_digests(&key_digests).map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*epoch_id_as_request_id),
+                    e.context(format!("Invalid key digests for key {key_id}")),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
             Ok(VerifiedKeyInfo {
                 key_id,
                 preproc_id,
@@ -372,6 +383,10 @@ pub struct RealThresholdEpochManager<
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
+    /// Held by a reshare from its first storage write through its rollback, so that a rollback
+    /// cannot delete public material that a concurrent reshare found present and kept.
+    /// See [`Self::store_reshared_keys`].
+    pub(crate) reshare_storage_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) _init: PhantomData<Init>,
     pub(crate) _reshare: PhantomData<Reshare>,
 }
@@ -740,10 +755,18 @@ impl<
 
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
+    ///
+    /// Verified public material is checked or restored under `reshare_storage_lock` before the
+    /// private material is written. Material created by this call is deleted again if storing
+    /// fails; public material that still existed when the lock was acquired is never deleted.
+    ///
+    /// `reshare_storage_lock` is held from the first storage write to the return, so the
+    /// storage and rollback of concurrent reshares do not interleave.
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
+        reshare_storage_lock: &tokio::sync::Mutex<()>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
@@ -751,9 +774,12 @@ impl<
         verified_materials: Vec<VerifiedPublicMaterial>,
         new_private_keysets: Vec<PrivateKeySet<4>>,
         eip712_domain: &Eip712Domain,
-        crs_info: Vec<CompactPkeCrs>,
+        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
     ) -> anyhow::Result<EpochOutput> {
         let mut fhe_key_infos = Vec::new();
+        // Raw public bytes retained during verification, to be checked or restored under the
+        // reshare storage lock.
+        let mut verified_public_bytes = Vec::new();
         let mut storage_tasks = Vec::new();
         for (verified_material, (new_private_keyset, key_info)) in
             verified_materials.into_iter().zip_eq(
@@ -766,8 +792,14 @@ impl<
             // There are ongoing discussions to add the epoch_id and context_id
             // to the struct we sign, in which case we would use the new epoch_id and context_id here.
             // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
-            match verified_material {
-                VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+            let (verified_keys, verified_bytes) = verified_material.into_parts();
+            verified_public_bytes.extend(
+                verified_bytes
+                    .into_iter()
+                    .map(|(data_type, bytes)| (key_info.key_id, data_type, bytes)),
+            );
+            match verified_keys {
+                VerifiedFheKeys::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_standard_keygen_from_digests(
                         sk,
                         &key_info.preproc_id,
@@ -784,7 +816,7 @@ impl<
                     };
 
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
-                        fhe_pubkeys.server_key.clone().into_raw_parts();
+                        fhe_pubkeys.server_key.into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
                         Arc::new(new_private_keyset),
@@ -807,7 +839,7 @@ impl<
                     );
                     fhe_key_infos.push(info);
                 }
-                VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                VerifiedFheKeys::Compressed(compressed_keyset) => {
                     // Sign the digest of the stored PublicKey, which is not necessarily the
                     // one derived from the compressed keyset: a compressed keygen from an
                     // existing keyset keeps the old CompactPublicKey.
@@ -857,10 +889,11 @@ impl<
         }
 
         let mut crs_metadatas = Vec::with_capacity(crs_info.len());
-        for (crs, crs_info) in crs_info
+        for ((crs, crs_bytes), crs_info) in crs_info
             .into_iter()
             .zip_eq(verified_previous_epoch.crs_info.iter())
         {
+            verified_public_bytes.push((crs_info.crs_id, PubDataType::CRS, crs_bytes));
             // Sign the digest verified against the stored CRS bytes. Hashing a
             // re-serialization of `crs` would not match them after a version upgrade.
             let crs_meta_data = compute_info_crs_from_digest(
@@ -880,22 +913,58 @@ impl<
             );
         }
 
-        let res = join_all(storage_tasks).await;
-        let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
-        if !error_agg.is_empty() {
-            let storage_err_msg = format!(
-                "Failed to store all reshared keys for new epoch {}: {:?}",
-                new_epoch_id, error_agg
-            );
+        // Without this lock, a concurrent reshare of the same key could find the public material
+        // stored below, keep it as existing, and lose it when this reshare rolls back.
+        let _reshare_storage_guard = reshare_storage_lock.lock().await;
 
+        // Ensure the verified public material is present after all early returns, so they leave
+        // nothing behind and a concurrent rollback cannot invalidate the earlier verification.
+        let pub_storage = crypto_storage.inner.get_public_storage();
+        let (created_public, public_res) = {
+            let mut pub_guard = pub_storage.lock().await;
+            store_verified_public_bytes(&mut *pub_guard, &verified_public_bytes).await
+        };
+        let storage_err_msg = match public_res {
+            Err(e) => Some(format!(
+                "Failed to ensure verified public material for new epoch {new_epoch_id}: {e:?}"
+            )),
+            Ok(()) => {
+                let res = join_all(storage_tasks).await;
+                let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
+                (!error_agg.is_empty()).then(|| {
+                    format!(
+                        "Failed to store all reshared keys for new epoch {}: {:?}",
+                        new_epoch_id, error_agg
+                    )
+                })
+            }
+        };
+        if let Some(storage_err_msg) = storage_err_msg {
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
             let priv_storage = crypto_storage.get_private_storage();
             match Self::purge_epoch_material(&new_epoch_id, &priv_storage).await {
-                Ok(()) => session_maker.remove_epoch(&new_epoch_id).await,
+                Ok(()) => {
+                    // Delete the public material this call created only after all private metadata
+                    // that refers to it is gone. Material that existed before may belong to other
+                    // epochs of the same key, so it is kept.
+                    {
+                        let mut pub_guard = pub_storage.lock().await;
+                        for (data_id, data_type) in &created_public {
+                            if let Err(e) =
+                                pub_guard.delete_data(data_id, &data_type.to_string()).await
+                            {
+                                tracing::error!(
+                                    "Rollback of epoch {new_epoch_id} failed to delete {data_type} of {data_id} restored from verified bytes: {e:?}"
+                                );
+                            }
+                        }
+                    }
+                    session_maker.remove_epoch(&new_epoch_id).await;
+                }
                 Err(e) => tracing::error!(
                     "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
-                 epoch remains registered so that the deletion can be retried."
+                 epoch and its public material remain so that deletion can be retried and the node can restart."
                 ),
             }
             // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
@@ -924,7 +993,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
-        crs_info: Vec<CompactPkeCrs>,
+        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
         session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -962,6 +1031,7 @@ impl<
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
+        let reshare_storage_lock = Arc::clone(&self.reshare_storage_lock);
 
         let task = async move {
             let (mut session_z128, mut session_z64, session_online) =
@@ -1053,6 +1123,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &session_maker,
+                &reshare_storage_lock,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -1077,7 +1148,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
-        crs_info: Vec<CompactPkeCrs>,
+        crs_info: Vec<(CompactPkeCrs, Vec<u8>)>,
         session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -1118,6 +1189,7 @@ impl<
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
+        let reshare_storage_lock = Arc::clone(&self.reshare_storage_lock);
 
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
@@ -1231,6 +1303,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &session_maker,
+                &reshare_storage_lock,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -1878,7 +1951,7 @@ pub(crate) mod tests {
         vault::storage::{
             StorageReader, StorageReaderExt, StorageType,
             file::FileStorage,
-            ram::{self, RamStorage},
+            ram::{self, FailingRamStorage, RamStorage},
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
             tests::TestType,
@@ -2011,6 +2084,7 @@ pub(crate) mod tests {
                 reshare_pubinfo_meta_store: MetaStore::new(10, 10),
                 tracker: Arc::new(TaskTracker::new()),
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
+                reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
                 _reshare: PhantomData,
             }
         }
@@ -2436,6 +2510,21 @@ pub(crate) mod tests {
         );
     }
 
+    /// Key digests that pass [`verify_epoch_info`]: a compressed keyset digest and a public key
+    /// digest. Their values are not checked there.
+    fn test_key_digests() -> Vec<KeyDigest> {
+        vec![
+            KeyDigest {
+                key_type: PubDataType::CompressedXofKeySet.to_string(),
+                digest: vec![1; 32],
+            },
+            KeyDigest {
+                key_type: PubDataType::PublicKey.to_string(),
+                digest: vec![2; 32],
+            },
+        ]
+    }
+
     #[test]
     fn test_verify_epoch_info() {
         let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
@@ -2452,10 +2541,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2477,10 +2563,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                // Empty vec below shouldn't fail verification, although in practice it's an issue
-                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
-                // which may cause inconsistencies down the line.
-                key_digests: vec![],
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2497,7 +2580,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2514,7 +2597,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2531,7 +2614,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2548,7 +2631,7 @@ pub(crate) mod tests {
                 key_id: Some(bad_req_id.clone()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2565,7 +2648,7 @@ pub(crate) mod tests {
                 key_id: None,
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2582,7 +2665,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(bad_req_id.clone()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2599,7 +2682,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -2616,7 +2699,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
@@ -2633,7 +2716,7 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                key_digests: test_key_digests(),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: None,
@@ -2641,6 +2724,63 @@ pub(crate) mod tests {
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Every party checks the key digests, so a request without them is rejected before the
+        // protocol starts: each key needs a public key digest and exactly one of a server key or
+        // compressed keyset digest. Empty and ambiguous digest layouts are rejected.
+        let previous_epoch_with_digests = |key_digests| PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests,
+            }],
+            crs_info: vec![],
+        };
+        let key_digest = |key_type: PubDataType, digest: Vec<u8>| KeyDigest {
+            key_type: key_type.to_string(),
+            digest,
+        };
+        verify_epoch_info(
+            &new_epoch_id,
+            previous_epoch_with_digests(vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ]),
+        )
+        .unwrap();
+        for key_digests in [
+            vec![],
+            vec![key_digest(PubDataType::PublicKey, vec![2; 32])],
+            vec![key_digest(PubDataType::CompressedXofKeySet, vec![1; 32])],
+            vec![
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ],
+            vec![
+                key_digest(PubDataType::ServerKey, vec![3; 32]),
+                key_digest(PubDataType::CompressedXofKeySet, vec![1; 32]),
+                key_digest(PubDataType::PublicKey, vec![2; 32]),
+            ],
+        ] {
+            let err = verify_epoch_info(&new_epoch_id, previous_epoch_with_digests(key_digests))
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+            let msg = err.internal_err().to_string();
+            assert!(msg.contains("digest"), "unexpected error: {msg}");
+        }
     }
 
     #[tokio::test]
@@ -2994,6 +3134,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3008,7 +3149,10 @@ pub(crate) mod tests {
                 ]),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![],
+            )],
             vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
             &dummy_domain(),
             vec![],
@@ -3200,13 +3344,9 @@ pub(crate) mod tests {
             &serialize_with_trailing_bytes(&keyset.public_keys.public_key),
         )
         .await;
-        let crs_digest = store_public_bytes(
-            crypto_storage,
-            &crs_id,
-            PubDataType::CRS,
-            &serialize_with_trailing_bytes(&crs),
-        )
-        .await;
+        let crs_bytes = serialize_with_trailing_bytes(&crs);
+        let crs_digest =
+            store_public_bytes(crypto_storage, &crs_id, PubDataType::CRS, &crs_bytes).await;
         let key_digests = HashMap::from([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
@@ -3221,6 +3361,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3235,10 +3376,13 @@ pub(crate) mod tests {
                     crs_digest: crs_digest.clone(),
                 }],
             ),
-            vec![VerifiedPublicMaterial::Uncompressed(keyset.public_keys)],
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Uncompressed(keyset.public_keys),
+                vec![],
+            )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
-            vec![crs],
+            vec![(crs, crs_bytes)],
         )
         .await
         .unwrap();
@@ -3309,6 +3453,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3320,7 +3465,10 @@ pub(crate) mod tests {
                 key_digests.clone(),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![],
+            )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
             vec![],
@@ -3368,6 +3516,7 @@ pub(crate) mod tests {
         >::store_reshared_keys(
             crypto_storage,
             &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
             &sk,
             new_epoch_id,
             vec![],
@@ -3379,7 +3528,10 @@ pub(crate) mod tests {
                 HashMap::from([(PubDataType::CompressedXofKeySet, vec![1; 32])]),
                 vec![],
             ),
-            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![],
+            )],
             vec![PrivateKeySet::init_dummy(params)],
             &dummy_domain(),
             vec![],
@@ -3401,6 +3553,536 @@ pub(crate) mod tests {
                     &new_epoch_id,
                     &PrivDataType::FheKeyInfo.to_string()
                 )
+                .await
+                .unwrap()
+        );
+    }
+
+    /// A party that joins in the new epoch has no public material of the reshared keys and CRSes,
+    /// and fetches it from its peers. The reshare must store exactly the fetched bytes, so that
+    /// they match the signed digests.
+    #[tokio::test]
+    async fn test_reshare_stores_public_bytes_fetched_from_peers() {
+        let mut rng = AesRng::seed_from_u64(49);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key").unwrap();
+        let preproc_id = derive_request_id("fetched_key_preproc").unwrap();
+        let crs_id = derive_request_id("fetched_crs").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let (keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let crs_config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(crs_config, 256).unwrap();
+
+        // Trailing bytes make sure the bytes are stored as-is and not re-serialized.
+        let compressed_keyset_bytes = serialize_with_trailing_bytes(&compressed_keyset);
+        let public_key_bytes = serialize_with_trailing_bytes(&keyset.public_keys.public_key);
+        let crs_bytes = serialize_with_trailing_bytes(&crs);
+        let key_digests = HashMap::from([
+            (
+                PubDataType::CompressedXofKeySet,
+                hashing::hash_element(&DSEP_PUBDATA_KEY, &compressed_keyset_bytes),
+            ),
+            (
+                PubDataType::PublicKey,
+                hashing::hash_element(&DSEP_PUBDATA_KEY, &public_key_bytes),
+            ),
+        ]);
+        let crs_digest = hashing::hash_element(&DSEP_PUBDATA_CRS, &crs_bytes);
+        let expected = vec![
+            (
+                key_id,
+                PubDataType::CompressedXofKeySet,
+                compressed_keyset_bytes.clone(),
+            ),
+            (key_id, PubDataType::PublicKey, public_key_bytes.clone()),
+            (crs_id, PubDataType::CRS, crs_bytes.clone()),
+        ];
+
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                key_digests,
+                vec![VerifiedCrsInfo { crs_id, crs_digest }],
+            ),
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (PubDataType::CompressedXofKeySet, compressed_keyset_bytes),
+                    (PubDataType::PublicKey, public_key_bytes),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![(crs, crs_bytes)],
+        )
+        .await
+        .unwrap();
+
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            for (data_id, data_type, bytes) in &expected {
+                assert_eq!(
+                    &guard
+                        .load_bytes(data_id, &data_type.to_string())
+                        .await
+                        .unwrap(),
+                    bytes,
+                    "{data_type} of {data_id} must be stored as fetched"
+                );
+            }
+        }
+
+        boot_sanity_check_epoch(crypto_storage, &new_epoch_id)
+            .await
+            .unwrap();
+    }
+
+    /// A failed reshare deletes the public key material and the CRS it stored from peers, but
+    /// keeps the public material that existed before, since that may belong to other epochs of
+    /// the same key.
+    #[tokio::test]
+    async fn test_failed_reshare_deletes_public_bytes_fetched_from_peers() {
+        let mut rng = AesRng::seed_from_u64(50);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_failed").unwrap();
+        let preproc_id = derive_request_id("fetched_key_failed_preproc").unwrap();
+        let crs_id = derive_request_id("fetched_crs_failed").unwrap();
+        let params = crate::consts::TEST_PARAM;
+        let crs_config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(crs_config, 256).unwrap();
+
+        store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            b"public key",
+        )
+        .await;
+
+        // Occupy the slot that the reshare writes its shares to, which makes the reshare fail and
+        // roll the new epoch back.
+        {
+            let private_storage = crypto_storage.get_private_storage();
+            let mut guard = private_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &key_id,
+                &new_epoch_id,
+                &TestType { i: 42 },
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::CompressedXofKeySet, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![VerifiedCrsInfo {
+                    crs_id,
+                    crs_digest: vec![3; 32],
+                }],
+            ),
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (
+                        PubDataType::CompressedXofKeySet,
+                        b"compressed keyset".to_vec(),
+                    ),
+                    (PubDataType::PublicKey, b"public key".to_vec()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![(crs, b"crs".to_vec())],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("[Err(Duplicate)]"),
+            "unexpected error: {err}"
+        );
+
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let guard = public_storage.lock().await;
+        assert!(
+            !guard
+                .data_exists(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                .await
+                .unwrap(),
+            "the compressed keyset stored from peers must be rolled back"
+        );
+        assert!(
+            !guard
+                .data_exists(&crs_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap(),
+            "the CRS stored from peers must be rolled back"
+        );
+        assert_eq!(
+            guard
+                .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap(),
+            b"public key",
+            "the public key that existed before must be kept"
+        );
+    }
+
+    /// If private rollback fails, keep the fetched public material so rollback cannot leave
+    /// private metadata without the public dependencies required at boot.
+    #[tokio::test]
+    async fn test_failed_reshare_keeps_fetched_public_bytes_when_private_rollback_fails() {
+        let mut rng = AesRng::seed_from_u64(53);
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_failed_private_rollback").unwrap();
+        let preproc_id = derive_request_id("fetched_key_failed_private_rollback_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &DEFAULT_EPOCH_ID,
+            base_kms.new_rng().await,
+        );
+
+        let mut private_storage = FailingRamStorage::new(usize::MAX);
+        store_versioned_at_request_and_epoch_id(
+            &mut private_storage,
+            &key_id,
+            &new_epoch_id,
+            &TestType { i: 42 },
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        private_storage.set_fail_epoch_deletes(true);
+
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            RamStorage::new(),
+            private_storage,
+            None,
+            HashMap::new(),
+        );
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let compressed_keyset_bytes = b"compressed keyset".to_vec();
+        let public_key_bytes = b"public key".to_vec();
+        let reshare_storage_lock = tokio::sync::Mutex::new(());
+        let sk = base_kms.sig_key().unwrap();
+
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            &crypto_storage,
+            &session_maker,
+            &reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::CompressedXofKeySet, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (
+                        PubDataType::CompressedXofKeySet,
+                        compressed_keyset_bytes.clone(),
+                    ),
+                    (PubDataType::PublicKey, public_key_bytes.clone()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("[Err(Duplicate)]"),
+            "unexpected error: {err}"
+        );
+
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let guard = public_storage.lock().await;
+        assert_eq!(
+            guard
+                .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                .await
+                .unwrap(),
+            compressed_keyset_bytes
+        );
+        assert_eq!(
+            guard
+                .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap(),
+            public_key_bytes
+        );
+        drop(guard);
+
+        let private_storage = crypto_storage.get_private_storage();
+        let guard = private_storage.lock().await;
+        assert!(
+            guard
+                .data_exists_at_epoch(
+                    &key_id,
+                    &new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap(),
+            "the failed private deletion must leave the metadata behind"
+        );
+    }
+
+    /// If an existing public artifact differs from the bytes fetched from peers, the reshare
+    /// fails before it writes any private material, and deletes the public material it already
+    /// stored from peers.
+    #[tokio::test]
+    async fn test_reshare_rejects_existing_public_bytes_that_differ_from_peers() {
+        let mut rng = AesRng::seed_from_u64(51);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_mismatch").unwrap();
+        let preproc_id = derive_request_id("fetched_key_mismatch_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+
+        store_public_bytes(
+            crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            b"other public key",
+        )
+        .await;
+
+        let (keyset, _compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        let err = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &make_verified_previous_epoch(
+                *DEFAULT_EPOCH_ID,
+                &key_id,
+                &preproc_id,
+                params,
+                HashMap::from([
+                    (PubDataType::ServerKey, vec![1; 32]),
+                    (PubDataType::PublicKey, vec![2; 32]),
+                ]),
+                vec![],
+            ),
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Uncompressed(keyset.public_keys),
+                vec![
+                    (PubDataType::ServerKey, b"server key".to_vec()),
+                    (PubDataType::PublicKey, b"public key".to_vec()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &dummy_domain(),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("differs from the verified bytes"),
+            "unexpected error: {err}"
+        );
+
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists(&key_id, &PubDataType::ServerKey.to_string())
+                    .await
+                    .unwrap(),
+                "the server key stored from peers must be rolled back"
+            );
+            assert_eq!(
+                guard
+                    .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+                    .await
+                    .unwrap(),
+                b"other public key",
+                "the public key that existed before must be kept"
+            );
+        }
+        let private_storage = crypto_storage.get_private_storage();
+        let guard = private_storage.lock().await;
+        assert!(
+            !guard
+                .data_exists_at_epoch(
+                    &key_id,
+                    &new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap(),
+            "no private material may be written"
+        );
+    }
+
+    /// The storage of a reshare waits for [`RealThresholdEpochManager::reshare_storage_lock`],
+    /// so that it cannot interleave with the storage and rollback of a concurrent reshare.
+    #[tokio::test]
+    async fn test_reshare_storage_waits_for_reshare_storage_lock() {
+        let mut rng = AesRng::seed_from_u64(52);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("fetched_key_locked").unwrap();
+        let preproc_id = derive_request_id("fetched_key_locked_preproc").unwrap();
+        let params = crate::consts::TEST_PARAM;
+        let (_keyset, compressed_keyset) =
+            gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+        let verified_previous_epoch = make_verified_previous_epoch(
+            *DEFAULT_EPOCH_ID,
+            &key_id,
+            &preproc_id,
+            params,
+            HashMap::from([
+                (PubDataType::CompressedXofKeySet, vec![1; 32]),
+                (PubDataType::PublicKey, vec![2; 32]),
+            ]),
+            vec![],
+        );
+
+        let domain = dummy_domain();
+
+        let concurrent_reshare_guard = epoch_manager.reshare_storage_lock.lock().await;
+        let mut store = Box::pin(RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &epoch_manager.reshare_storage_lock,
+            &sk,
+            new_epoch_id,
+            vec![],
+            &verified_previous_epoch,
+            vec![VerifiedPublicMaterial::new(
+                VerifiedFheKeys::Compressed(compressed_keyset),
+                vec![
+                    (
+                        PubDataType::CompressedXofKeySet,
+                        b"compressed keyset".to_vec(),
+                    ),
+                    (PubDataType::PublicKey, b"public key".to_vec()),
+                ],
+            )],
+            vec![PrivateKeySet::init_dummy(params)],
+            &domain,
+            vec![],
+        ));
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut store)
+                .await
+                .is_err(),
+            "the reshare must wait while another reshare holds the lock"
+        );
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+                    .await
+                    .unwrap(),
+                "nothing may be stored while another reshare holds the lock"
+            );
+        }
+
+        drop(concurrent_reshare_guard);
+        store.await.unwrap();
+        let public_storage = crypto_storage.inner.get_public_storage();
+        let guard = public_storage.lock().await;
+        assert!(
+            guard
+                .data_exists(&key_id, &PubDataType::CompressedXofKeySet.to_string())
                 .await
                 .unwrap()
         );
