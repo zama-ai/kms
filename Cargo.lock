@@ -4957,6 +4957,8 @@ dependencies = [
  "hex",
  "nsm-nitro-enclave-utils-keygen",
  "p384 0.13.1",
+ "rand 0.9.4",
+ "ring",
  "rustls-pki-types",
  "sealed",
  "serde",

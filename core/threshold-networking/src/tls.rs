@@ -752,6 +752,113 @@ pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
         .collect::<Result<HashMap<MpcIdentity, Pem>, _>>()
 }
 
+/// Generates a mock CA certificate with an embedded attestation document and returns
+/// the certificate PEM along with the PCR values from the attestation document.
+/// This is useful for tests that need certificates with attestation documents.
+#[cfg(feature = "insecure")]
+pub async fn generate_mock_ca_cert_with_attestation(
+    identity: &str,
+) -> anyhow::Result<(Pem, ReleasePCRValues)> {
+    _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+    {
+        use nsm_nitro_enclave_utils::api::nsm::{Request, Response};
+        use nsm_nitro_enclave_utils::driver::Driver;
+        use nsm_nitro_enclave_utils::driver::dev::DevNitro;
+        use nsm_nitro_enclave_utils::pcr::Pcrs;
+        use p384::SecretKey;
+        use p384::pkcs8::EncodePrivateKey;
+        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
+
+        const MOCK_NITRO_SIGNING_KEY_BYTES: &[u8] =
+            include_bytes!("../../service/certs/mock_nitro_signing_key.der");
+
+        fn make_mock_ca_cert() -> rcgen::Certificate {
+            let sk = SecretKey::from_sec1_der(MOCK_NITRO_SIGNING_KEY_BYTES)
+                .expect("mock nitro signing key must be valid");
+            let sk_der = sk.to_pkcs8_der().unwrap();
+            let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+                &tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+                &rcgen::PKCS_ECDSA_P384_SHA384,
+            )
+            .unwrap();
+            let mut ca_cp = rcgen::CertificateParams::new(vec!["mock-nitro".to_string()]).unwrap();
+            ca_cp.is_ca = IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
+            ca_cp.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+            ca_cp.self_signed(&ca_keypair).unwrap()
+        }
+
+        fn mock_attest(nitro: &DevNitro, pk: Vec<u8>) -> Vec<u8> {
+            let request = Request::Attestation {
+                public_key: Some(pk.into()),
+                user_data: None,
+                nonce: None,
+            };
+            let Response::Attestation { document } = nitro.process_request(request) else {
+                panic!("Mock Nitro enclave attestation request failed");
+            };
+            document.to_vec()
+        }
+
+        fn extract_pcr_from_attestation_doc(data: &[u8]) -> anyhow::Result<ReleasePCRValues> {
+            #[cfg(feature = "insecure")]
+            let attestation_doc = parse_attestation_doc_only(data)?;
+            #[cfg(not(feature = "insecure"))]
+            let attestation_doc = validate_and_parse_attestation_doc(data)?;
+            let pcr0 = attestation_doc
+                .pcrs
+                .get(&0)
+                .ok_or_else(|| anyhow!("PCR0 not found"))?;
+            let pcr1 = attestation_doc
+                .pcrs
+                .get(&1)
+                .ok_or_else(|| anyhow!("PCR1 not found"))?;
+            let pcr2 = attestation_doc
+                .pcrs
+                .get(&2)
+                .ok_or_else(|| anyhow!("PCR2 not found"))?;
+            Ok(ReleasePCRValues {
+                pcr0: pcr0.to_vec(),
+                pcr1: pcr1.to_vec(),
+                pcr2: pcr2.to_vec(),
+            })
+        }
+
+        let nitro = DevNitro::builder(
+            SecretKey::from_sec1_der(MOCK_NITRO_SIGNING_KEY_BYTES).unwrap(),
+            make_mock_ca_cert().der().to_vec().into(),
+        )
+        .pcrs(Pcrs::rand())
+        .build();
+        let keypair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let pub_key = keypair.serialize_der();
+        let attestation_doc = mock_attest(&nitro, pub_key);
+        let pcr_values = extract_pcr_from_attestation_doc(&attestation_doc)?;
+        let mut cp = CertificateParams::new(vec![identity.to_string()]).unwrap();
+        cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        let mut dn = rcgen::DistinguishedName::new();
+        dn.push(DnType::CommonName, identity);
+        cp.distinguished_name = dn;
+        cp.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::CrlSign,
+        ];
+        cp.custom_extensions = vec![rcgen::CustomExtension::from_oid_content(
+            &[1, 2, 840, 113549, 1, 7, 2],
+            attestation_doc,
+        )];
+        let cert = cp.self_signed(&keypair).unwrap();
+        let cert_pem_str = cert.pem();
+        Ok::<(_, _), anyhow::Error>((
+            Pem {
+                label: "CERTIFICATE".to_string(),
+                contents: cert_pem_str.into_bytes(),
+            },
+            pcr_values,
+        ))
+    }
+}
+
 #[cfg(all(test, feature = "insecure"))]
 mod tests {
     use super::*;
