@@ -111,7 +111,8 @@ No root signing seed found in storage "..."; this node can only sign under ECDSA
 
 - Centralized and threshold nodes must both do this step.
 - With the Helm chart, a node without an enclave runs `kms-gen-keys` at each pod start. That run generates the seed after the upgrade, so you only do the check in [Check the result](#check-the-result).
-- An enclave node does not generate the seed at boot. At a normal boot, the enclave receives the `kms-server` config, and `kms-gen-keys` rejects that config. The Helm chart sends the `kms-gen-keys` config to the enclave only in the `pre-install` job. Thus you must run `kms-gen-keys` with the `kms-gen-keys` config of the node.
+- With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. In enclave mode, the chart runs this job before each upgrade. Use chart version 1.9.5 or later, and set `kmsGenCertAndKeys.enabled` to `true` for the upgrade. The job keeps the signing key and the CA certificate of the node. Then do the check in [Check the result](#check-the-result).
+- The job needs a free Nitro Enclave slot and hugepages on the host, beside the enclave of the running core. If the host has no free slot, the job pod stays pending, and `helm upgrade` stops at its timeout.
 - A node without Helm must run `kms-gen-keys`.
 
 ### Run kms-gen-keys

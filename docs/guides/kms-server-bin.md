@@ -183,9 +183,10 @@ upgrade without operator action.
 An enclave node does not do step 1 at boot.
 [`init_enclave.sh`](../../docker/core/service/init_enclave.sh) runs
 `kms-gen-keys` with the config that the parent sends. At a normal boot, this is
-the `kms-server` config, which `kms-gen-keys` rejects. The chart sends the
-`kms-gen-keys` config only in the `pre-install` job. Thus an operator of an
-enclave node must do step 1 with the `kms-gen-keys` config of the node.
+the `kms-server` config, which `kms-gen-keys` rejects. In enclave mode, the
+chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
+runs before install and before each upgrade. Set `kmsGenCertAndKeys.enabled`
+to `true` for the upgrade, so that this job does step 1.
 
 ### Moving a cluster onto seed-rooted identities
 
