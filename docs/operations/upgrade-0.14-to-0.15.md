@@ -111,8 +111,11 @@ No root signing seed found in storage "..."; this node can only sign under ECDSA
 
 - Centralized and threshold nodes must both do this step.
 - With the Helm chart, a node without an enclave runs `kms-gen-keys` at each pod start. That run generates the seed after the upgrade, so you only do the check in [Check the result](#check-the-result).
-- With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. In enclave mode, the chart runs this job before each upgrade. Use chart version 1.9.5 or later, and set `kmsGenCertAndKeys.enabled` to `true` for the upgrade. The job keeps the signing key and the CA certificate of the node. Then do the check in [Check the result](#check-the-result).
-- The job needs a free Nitro Enclave slot and hugepages on the host, beside the enclave of the running core. If the host has no free slot, the job pod stays pending, and `helm upgrade` stops at its timeout.
+- With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. In enclave mode, the chart runs this job before each upgrade while `kmsGenCertAndKeys.enabled` is `true`. The job keeps the signing key and the CA certificate of the node. Do these steps:
+  1. Use chart version 1.9.5 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and run `helm upgrade`.
+  2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes, because the job reports success also when the seed generation failed.
+  3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade.
+- The job needs a free Nitro Enclave slot and hugepages on the host, beside the enclave of the running core. If the host has no free slot, the job pod stays pending, and `helm upgrade` stops at its timeout. For this reason, do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade.
 - A node without Helm must run `kms-gen-keys`.
 
 ### Run kms-gen-keys
@@ -142,6 +145,14 @@ Add `show_existing = true` to the `[keygen]` section, and run `kms-gen-keys` aga
 - The output contains a `SigningSeed` line.
 - The output contains one `TypedVerfAddress` line for each signature scheme.
 - The ECDSA address did not change.
+
+On an enclave node, you cannot run `kms-gen-keys` outside the enclave, because the private vault needs the enclave attestation. Do these checks instead:
+
+- Make sure that the startup log of the upgraded core does not contain the warning `No root signing seed found in storage`.
+- Make sure that the public vault contains one object for each signature scheme under the `TypedVerfAddress` data type. For example, for party 1 with the bucket `kms-public` and the prefix `PUB-p1`: `aws s3 ls "s3://kms-public/PUB-p1/TypedVerfAddress/"`.
+- Make sure that the ECDSA address in the `VerfAddress` object did not change.
+
+If the warning is in the log, the seed generation failed. The job deletes itself after it ends, so its logs are not available. Run `helm upgrade` again with `kmsGenCertAndKeys.enabled` set to `true`, and read the logs of the `kms-core-enclave-logger` container of the job pod while the job runs.
 
 ### Seed error
 

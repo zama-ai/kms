@@ -83,9 +83,7 @@ pick at most one per run:
 - `overwrite`: delete any existing signing material at the fixed signing-key
   handle (the private signing key, the root signing seed, and every scheme's
   verification material in public storage) before generating a fresh identity.
-  Required to rotate a key. Without it, a run on a node that already has a
-  `SigningKey` keeps that key and only adds the missing material. **This destroys every post-quantum identity of the
-  node**, since they are derived from the seed and stored nowhere else.
+  Required to rotate a key.
 - `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything. Each per-scheme line names its scheme, and the
   address folders print the stored text, so this is what an operator reads to learn
@@ -185,8 +183,14 @@ An enclave node does not do step 1 at boot.
 `kms-gen-keys` with the config that the parent sends. At a normal boot, this is
 the `kms-server` config, which `kms-gen-keys` rejects. In enclave mode, the
 chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
-runs before install and before each upgrade. Set `kmsGenCertAndKeys.enabled`
-to `true` for the upgrade, so that this job does step 1.
+runs before install, and before each upgrade while `kmsGenCertAndKeys.enabled`
+is `true`. Set `kmsGenCertAndKeys.enabled` to `true` for the upgrade, so that
+this job does step 1. Then set it back to `false`. The job needs a second
+Nitro Enclave slot on the host, so on a host with one slot a later upgrade
+stops at its timeout. The job reports success also when step 1 failed, so step 2
+is mandatory. See
+[Upgrade from v0.14 to v0.15](../operations/upgrade-0.14-to-0.15.md#check-the-result)
+for the step 2 checks on an enclave node.
 
 ### Moving a cluster onto seed-rooted identities
 
