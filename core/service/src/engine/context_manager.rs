@@ -1,13 +1,13 @@
 use crate::anyhow_error_and_log;
-use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
+use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -389,6 +389,10 @@ where
         // restore. Setup and destruction take it before metadata locks and hold it across storage
         // I/O.
         let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
+        // Refuse before any key is generated.
+        self.base_kms
+            .signing_identity()?
+            .ensure_supported(BACKUP_SIGNING_SCHEMES)?;
         // The backup key and the signcryptions below are MLKEM1024-P384, so they need a seed
         // wider than the 128 bits `new_rng` provides.
         let mut rng = self.base_kms.new_rng_256();
@@ -399,7 +403,7 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.signing_identity()?.ecdsa(),
+            self.base_kms.signing_identity()?,
             backup_dec_key,
             &inner_context,
             mpc_context_id,
@@ -603,10 +607,9 @@ pub async fn create_default_centralized_context_in_storage<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
-    sk: &PrivateSigKey,
+    verification_key: &PublicSigKey,
 ) -> anyhow::Result<()> {
     // Create and store the default context for centralized mode testing
-    let verification_key = PublicSigKey::from_sk(sk);
     let context_info = ContextInfo {
         mpc_nodes: vec![NodeInfo {
             mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
@@ -616,7 +619,7 @@ pub async fn create_default_centralized_context_in_storage<
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
             extra_signer_addresses: vec![],
-            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(verification_key),
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -1402,7 +1405,7 @@ where
 /// Generate a recovery request to the backup vault.
 async fn gen_recovery_validation(
     rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
-    sig_key: &PrivateSigKey,
+    signing_identity: Arc<NodeSigningIdentity>,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     mpc_context_id: ContextId,
@@ -1413,7 +1416,7 @@ async fn gen_recovery_validation(
             .values()
             .cloned()
             .collect_vec(),
-        (*sig_key).clone(),
+        signing_identity.clone(),
         custodian_context.threshold as usize,
         // the amount of custodians are defined by the initial context
         custodian_context.custodian_nodes.len(),
@@ -1436,7 +1439,7 @@ async fn gen_recovery_validation(
         ct_map,
         commitments,
         custodian_context.to_owned(),
-        sig_key,
+        &signing_identity,
         mpc_context_id,
     )?;
     tracing::info!(
@@ -1449,7 +1452,10 @@ async fn gen_recovery_validation(
 #[cfg(test)]
 mod tests {
     mod custodian_side_effects;
-    use crate::engine::rng_source::test_rng_source;
+    use crate::{
+        cryptography::{signatures::RootSigningSeed, signing::VerfKeySet},
+        engine::rng_source::test_rng_source,
+    };
     mod lifecycle_side_effects;
 
     use super::*;
@@ -1462,7 +1468,10 @@ mod tests {
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
             encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
-            signatures::{PublicSigKey, gen_sig_keys},
+            signatures::{
+                PrivateSigKey, PublicSigKey, gen_sig_keys,
+                test_support::{seeded_identity, seeded_verf_key_set},
+            },
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
         },
@@ -1503,6 +1512,15 @@ mod tests {
         "Duplicate custodian encryption key found in custodian context";
     const EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY: &str =
         "Duplicate custodian verification key found in custodian context";
+
+    /// Attaches a fixed root seed to `sig_key`. A custodian context setup signs backups under
+    /// every scheme of [`BACKUP_SIGNING_SCHEMES`], and is refused up front without a seed.
+    fn with_root_seed(sig_key: PrivateSigKey) -> NodeSigningIdentity {
+        NodeSigningIdentity::new(
+            sig_key,
+            RootSigningSeed::random(&mut AesRng::seed_from_u64(0)),
+        )
+    }
 
     async fn setup_crypto_storage(
         make_default_context: bool,
@@ -2418,19 +2436,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_custodian_context() {
+        let mut rng = AesRng::seed_from_u64(42);
         // We need the default MPC context to be able to use calls to custodian context APIs
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let identity = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
+        let verification_keys =
+            VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, identity, test_rng_source());
         // Generate custodian keys
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let mut setup_msgs = Vec::new();
-        let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let cur_msg = InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(custodian_index),
@@ -2481,7 +2502,7 @@ mod tests {
                     .await
                     .unwrap();
 
-            assert!(stored_context.validate(&verification_key));
+            stored_context.validate(&verification_keys).unwrap();
             // The vault key the operator generated for this context, and therefore the key every
             // backup ciphertext is encrypted under, must be the composite scheme.
             assert_eq!(
@@ -2651,7 +2672,7 @@ mod tests {
         for role in 1..=3 {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, public_enc_key) = enc.keygen().unwrap();
-            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_messages.push(InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(role),
@@ -2719,7 +2740,9 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        // A seeded identity, not an ECDSA-only one: the operator publishes a key set covering
+        // `BACKUP_SIGNING_SCHEMES`, which an identity with no root seed cannot produce.
+        let server_identity = Arc::new(seeded_identity(&mut rng));
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
@@ -2753,28 +2776,33 @@ mod tests {
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let recovery_material = gen_recovery_validation(
             &mut rng,
-            &server_sig_key,
+            server_identity.clone(),
             backup_dec_key.clone(),
             &internal_context,
             *DEFAULT_MPC_CONTEXT,
         )
         .await
         .unwrap();
+        let server_verf_keys =
+            VerfKeySet::from_identity(&server_identity, BACKUP_SIGNING_SCHEMES).unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
-            server_verf_key.clone(),
+            server_verf_keys.clone(),
             recovery_material.payload.cts,
         )
         .unwrap();
-        // The constructed request must round-trip the operator's verification key.
-        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_key);
+        // The constructed request must round-trip the operator's published key set.
+        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_keys);
         // And the signcryption destined for custodian 1 must validate under that
         // custodian's unsigncryption key, confirming the backup material was sealed correctly.
-        let custodian_id = custodian1.verification_key().verf_key_id();
-        let unsign_key = UnifiedUnsigncryptionKey::new(
+        let custodian_id = custodian1
+            .verification_key_set()
+            .id(BACKUP_SIGNING_SCHEMES)
+            .unwrap();
+        let unsign_key = UnifiedUnsigncryptionKey::new_multi(
             std::sync::Arc::new(custodian1.public_dec_key().clone()),
             custodian1.public_enc_key().clone(),
-            server_verf_key.clone(),
+            server_verf_keys.clone(),
             custodian_id,
         );
         let role_1_ct = internal_rec_req
@@ -2783,7 +2811,11 @@ mod tests {
             .expect("recovery request must contain a ciphertext for custodian role 1");
         assert!(
             unsign_key
-                .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &role_1_ct.signcryption)
+                .unsigncrypt_composite::<crate::backup::operator::BackupMaterial>(
+                    &DSEP_BACKUP_CUSTODIAN,
+                    BACKUP_SIGNING_SCHEMES,
+                    &role_1_ct.signcryption,
+                )
                 .is_ok()
         );
     }
@@ -2796,7 +2828,11 @@ mod tests {
     #[tokio::test]
     async fn test_custodian_context_fails_on_backup_update_failure() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
 
         // Store corrupt data in private storage under ContextInfo type.
         {
@@ -2822,7 +2858,7 @@ mod tests {
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let cur_msg = InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(custodian_index),
@@ -2914,7 +2950,7 @@ mod tests {
             .map(|index| {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (_dec_key, public_enc_key) = enc.keygen().unwrap();
-                let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
+                let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
                 InternalCustodianSetupMessage {
                     header: HEADER.to_string(),
                     custodian_role: Role::indexed_from_one(index),
@@ -2945,7 +2981,11 @@ mod tests {
         use crate::vault::storage::Storage;
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let previous_id = RequestId::from_bytes([6u8; 32]);
         let context_id = RequestId::from_bytes([7u8; 32]);
         // The keychain holds a previous context, so a restore and a reset differ.
@@ -3014,7 +3054,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([9u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -3054,7 +3098,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_survives_a_dropped_request() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([8u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -3114,7 +3162,11 @@ mod tests {
         use crate::vault::storage::{Storage, StorageReader};
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(sig_key),
+            test_rng_source(),
+        );
         let context_id = RequestId::from_bytes([7u8; 32]);
 
         // Make `write_backup_keys` report a duplicate.
@@ -3140,7 +3192,7 @@ mod tests {
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_msgs.push(
                 InternalCustodianSetupMessage {
                     header: HEADER.to_string(),

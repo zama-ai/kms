@@ -137,7 +137,11 @@ The service crate is the main surface area. Key subdirectories under
   and the operator's per-context backup vault key — selected in one place,
   `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
   custodian encryption key, and the operator's own backup key, uses that scheme
-  (`InternalCustodianContext::new` / `validated_nodes`).
+  (`InternalCustodianContext::new` / `validated_nodes`). On the signing side,
+  every signature in the custodian-backup chain is a composite under
+  `backup::BACKUP_SIGNING_SCHEMES` (ECDSA/secp256k1 and ML-DSA-87), and every
+  signature in it must verify. Each party publishes a `VerfKeySet`, and a key
+  set that does not cover these schemes is rejected (`ensure_backup_schemes`).
   User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
   keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
@@ -387,8 +391,9 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique, and unless every
-  custodian encryption key uses `BACKUP_PKE_SCHEME`.
+  encryption key is unique and no two custodians share any verification key, unless every
+  custodian encryption key uses `BACKUP_PKE_SCHEME`, and unless every custodian
+  publishes a verification key for every scheme in `BACKUP_SIGNING_SCHEMES`.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
   custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
   so the phrase does not cap the scheme's security level. A vault written under an
@@ -409,9 +414,12 @@ The `RecoveryValidationMaterial` describing a custodian context — the custodia
 shares of the backup decryption key, plus the commitments and the context itself — lives in the
 **backup vault**, as the one object there that the keychain does not encrypt: it is what recovery
 needs in order to reconstruct that very key, so encrypting it under the key would be circular. Its
-integrity comes from the operator signature it carries, checked at startup once the signing key is
-available, together with a check — applied on every load — that the object is stored under the
-context id its payload names. It sits outside the `<backup_id>/<PrivDataType>/`
+integrity comes from the operator's composite signature under `BACKUP_SIGNING_SCHEMES`, checked at
+startup once the signing key is available, together with a check — applied on every load — that the
+object is stored under the context id its payload names. A node without a root seed cannot derive
+the ML-DSA key, so it fails that startup check as soon as its vault holds any recovery material. The
+material also embeds the operator's backup key set (`operator_verf_keys`), for recovery mode below.
+It sits outside the `<backup_id>/<PrivDataType>/`
 namespace the vault's backup entries use, at `RecoveryMaterial/<context_id>`, so purging a
 context's backups never touches it and vice versa; `vault/storage/mod.rs` holds the accessors.
 
@@ -460,6 +468,21 @@ half-way and can be run again (entries that already exist are skipped), so the o
 intermediate state bootable: keysets never sit under an epoch the node does not know, which the
 [boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
 stays in recovery mode, where the restore can be repeated.
+
+A threshold or centralized node without its signing key boots in **recovery mode**. It skips the
+boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
+from public storage. When public storage no longer holds that key, the node takes its backup key set
+from the `operator_verf_keys` that its recovery material embeds. It refuses to boot if the contexts
+in the vault embed different key sets, or if any of that material is not validly signed under the
+key set it embeds. Recovery always uses the embedded non-ECDSA keys: the node also publishes them in
+public storage, but the gateway does not hold them, so a copy there is no more trustworthy than the
+material. These keys authenticate nothing on their own. A recovery is therefore as
+secure as the keys that the operator and the custodians check by hand. The core-client's
+`custodian-recovery-init` prints them, and it refuses a mismatch with `--expected-operator-key`.
+`kms-custodian decrypt` logs the fingerprint of every key, its address text and digest, as a
+warning. After the restore, the node checks the material again
+with its restored identity before it anchors the context. The node stays in recovery mode until it
+restarts.
 
 Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at

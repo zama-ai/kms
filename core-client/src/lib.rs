@@ -16,6 +16,7 @@ pub use crate::s3_operations::fetch_public_elements;
 use crate::backup::{
     do_custodian_backup_recovery, do_custodian_recovery_init, do_destroy_custodian_context,
     do_get_operator_pub_keys, do_new_custodian_context, do_restore_from_backup,
+    parse_expected_operator_keys, report_operator_keys,
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
@@ -1026,6 +1027,13 @@ pub struct RecoveryInitParameters {
     /// backup vault holds more than one, as it does after a context rotation.
     #[clap(long, short = 'i')]
     pub custodian_context_id: Option<RequestId>,
+    /// A verification key the operator expects the recovery request to carry, as
+    /// `SCHEME=VALUE`, where VALUE is the `0x` text this command prints for that scheme: the
+    /// address for `Ecdsa256k1`, the key digest for the others. Repeat it once per scheme.
+    /// The command fails if any given key does not match; schemes left out must be checked by
+    /// hand against what it prints.
+    #[clap(long = "expected-operator-key", value_name = "SCHEME=VALUE")]
+    pub expected_operator_keys: Vec<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -1815,6 +1823,49 @@ async fn read_kms_addresses_local(
     Ok(kms_addrs)
 }
 
+/// Fetch the verification keys the internal client checks the cores' responses against: the
+/// ECDSA key and address of every core, and its key for every other scheme in `signing_schemes`.
+/// Returns the cores' addresses.
+async fn fetch_verification_keys(
+    command: &CCCommand,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+    signing_schemes: &[SigningSchemeType],
+) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
+    // Always fetch the public verification keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+    tracing::info!("Fetching verification keys. ({command:?})");
+    let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+    let _ = fetch_public_elements(
+        &SIGNING_KEY_ID.to_string(),
+        &public_verf_types,
+        cc_conf,
+        destination_prefix,
+        true, // we always need to download all verification keys
+    )
+    .await?;
+
+    // The client checks the entry of every other requested scheme against the key each
+    // core publishes for that scheme, so those keys are fetched as well. The two objects
+    // above cover ECDSA.
+    for scheme in signing_schemes
+        .iter()
+        .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+    {
+        fetch_public_elements(
+            &signing_material_id(*scheme).to_string(),
+            &[PubDataType::TypedVerfKey],
+            cc_conf,
+            destination_prefix,
+            true,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}"))?;
+    }
+
+    // read the addresses we just fetched from disk
+    read_kms_addresses_local(destination_prefix, cc_conf).await
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -1886,45 +1937,22 @@ pub async fn execute_cmd(
 
     let signing_schemes = SigningSchemeType::parse_requested(&cmd_config.signing_schemes)?;
 
-    if let CCCommand::Encrypt(_) = command {
-        //Don't need to fetch or connect if we just do an encrypt
-    } else if let CCCommand::DoNothing(_) = command {
-        // Don't need to fetch or connect if we just do nothing
-    } else {
-        // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
-        tracing::info!("Fetching verification keys. ({command:?})");
-        let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-        let _ = fetch_public_elements(
-            &SIGNING_KEY_ID.to_string(),
-            &public_verf_types,
-            &cc_conf,
-            destination_prefix,
-            true, // we always need to download all verification keys
-        )
-        .await?;
+    // Encrypting needs nothing from the cores, and neither does a no-op.
+    let needs_cores = !matches!(command, CCCommand::Encrypt(_) | CCCommand::DoNothing(_));
+    // The custodian recovery commands only talk to the cores' backup endpoints, whose responses
+    // are not signed, so they need neither the verification keys nor the client that checks
+    // responses against them. They must also work when the cores' public storage is lost.
+    let needs_verf_keys = !matches!(
+        command,
+        CCCommand::CustodianRecoveryInit(_) | CCCommand::CustodianBackupRecovery(_)
+    );
 
-        // The client checks the entry of every other requested scheme against the key each
-        // core publishes for that scheme, so those keys are fetched as well. The two objects
-        // above cover ECDSA.
-        for scheme in signing_schemes
-            .iter()
-            .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
-        {
-            fetch_public_elements(
-                &signing_material_id(*scheme).to_string(),
-                &[PubDataType::TypedVerfKey],
-                &cc_conf,
-                destination_prefix,
-                true,
-            )
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}")
-            })?;
+    if needs_cores {
+        if needs_verf_keys {
+            addr_vec =
+                fetch_verification_keys(command, &cc_conf, destination_prefix, &signing_schemes)
+                    .await?;
         }
-
-        // read the addresses we just fetched from disk
-        addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
 
         match cc_conf.kms_type {
             KmsType::Centralized => {
@@ -1959,16 +1987,6 @@ pub async fn execute_cmd(
                 pub_storage.insert(
                     1,
                     FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
-                );
-                internal_client = Some(
-                    Client::new_client(
-                        client_storage,
-                        pub_storage,
-                        &client_param,
-                        cc_conf.decryption_mode,
-                    )
-                    .await
-                    .unwrap(),
                 );
                 tracing::info!("Centralized Client setup done.");
             }
@@ -2038,19 +2056,20 @@ pub async fn execute_cmd(
                         .unwrap(),
                     );
                 }
-                internal_client = Some(
-                    Client::new_client(
-                        client_storage,
-                        pub_storage,
-                        &client_param,
-                        cc_conf.decryption_mode,
-                    )
-                    .await
-                    .unwrap(),
-                );
                 tracing::info!("Threshold Client setup done.");
             }
         };
+        if needs_verf_keys {
+            internal_client = Some(
+                Client::new_client(
+                    client_storage,
+                    pub_storage,
+                    &client_param,
+                    cc_conf.decryption_mode,
+                )
+                .await?,
+            );
+        }
     }
     if let Some(client) = internal_client.as_mut() {
         client.set_signing_schemes(&signing_schemes)?;
@@ -2785,23 +2804,29 @@ pub async fn execute_cmd(
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
             custodian_context_id,
+            expected_operator_keys,
         }) => {
             // TODO(#3042) - currently we require backup operations to be done with a single core.
             // This issue streamlines this and requires an update in this section
             if num_cores != 1 {
                 return Err("Custodian recovery init is only supported for a single core".into());
             }
+            // Parsed first, so a malformed argument fails before the core is asked anything.
+            let expected = parse_expected_operator_keys(expected_operator_keys)?;
             let res = do_custodian_recovery_init(
                 &core_endpoints_req,
                 *overwrite_ephemeral_key,
                 custodian_context_id.as_ref().map(|id| (*id).into()),
             )
             .await?;
+            let recovery_request = res
+                .first()
+                .expect("Expected at least one response for custodian recovery init");
+            // The core may have taken these keys from its recovery material rather than from a
+            // trusted source, so they are only as good as this check, or the operator's own.
+            report_operator_keys(recovery_request.operator_verf_key(), &expected)?;
 
-            let serialized_res = base64_serialize(
-                res.first()
-                    .expect("Expected at least one response for custodian recovery init"),
-            )?;
+            let serialized_res = base64_serialize(recovery_request)?;
             tracing::info!("Serialized custodian result");
 
             vec![(None, serialized_res)]

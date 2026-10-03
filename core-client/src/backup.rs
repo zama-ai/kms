@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 
 use aes_prng::AesRng;
 use hashing::hash_element;
@@ -16,6 +17,7 @@ use kms_lib::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::InternalRecoveryRequest,
 };
+use kms_lib::cryptography::signatures::{SigningSchemeType, VerfKeySet};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -222,10 +224,82 @@ pub(crate) async fn do_restore_from_backup(
     Ok(())
 }
 
+/// Parse the `SCHEME=VALUE` arguments naming the operator verification keys a recovery request
+/// must carry. Each scheme may be named once.
+pub(crate) fn parse_expected_operator_keys(
+    raw: &[String],
+) -> anyhow::Result<BTreeMap<SigningSchemeType, String>> {
+    let mut expected = BTreeMap::new();
+    for arg in raw {
+        let (scheme, value) = arg
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("expected SCHEME=VALUE, got {arg:?}"))?;
+        let scheme = SigningSchemeType::from_str(scheme.trim())
+            .map_err(|_| anyhow::anyhow!("unknown signing scheme in {arg:?}"))?;
+        if expected
+            .insert(scheme, normalized_key_text(value))
+            .is_some()
+        {
+            anyhow::bail!("the expected {scheme} operator key is given more than once");
+        }
+    }
+    Ok(expected)
+}
+
+/// The comparable form of a key's `0x` text: lowercase, and `0x` prefixed. An Ethereum address
+/// prints with a mixed-case checksum, which the comparison ignores.
+fn normalized_key_text(value: &str) -> String {
+    let value = value.trim().to_ascii_lowercase();
+    if value.starts_with("0x") {
+        value
+    } else {
+        format!("0x{value}")
+    }
+}
+
+/// Check the operator's verification keys against `expected`, failing on any mismatch, then
+/// print every key so that those not given can be checked by hand.
+///
+/// The core may have taken `keys` from its recovery material rather than from a trusted source,
+/// so whatever is checked here, or by hand, is the security the recovery has. The per-scheme
+/// digests are the ones `kms-custodian` prints, so operator and custodians compare the same
+/// values.
+pub(crate) fn report_operator_keys(
+    keys: &VerfKeySet,
+    expected: &BTreeMap<SigningSchemeType, String>,
+) -> anyhow::Result<()> {
+    for (scheme, value) in expected {
+        let key = keys.get(*scheme).ok_or_else(|| {
+            anyhow::anyhow!("an operator {scheme} key is expected, but the request carries none")
+        })?;
+        let actual = normalized_key_text(&key.address_text());
+        if actual != *value {
+            anyhow::bail!("the operator {scheme} key is {actual}, but {value} is expected");
+        }
+    }
+    for fingerprint in keys.all_fingerprints() {
+        if expected.contains_key(&fingerprint.scheme) {
+            tracing::info!("Operator {fingerprint} is the expected one");
+        } else {
+            tracing::warn!(
+                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE PASSING THE RECOVERY \
+                 REQUEST TO THE CUSTODIANS! Operator {fingerprint}"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DSEP_ATTESTED_BACKUP_PK, check_attested_backup_pk};
+    use super::{normalized_key_text, parse_expected_operator_keys, report_operator_keys};
+    use aes_prng::AesRng;
     use hashing::hash_element;
+    use kms_lib::backup::BACKUP_SIGNING_SCHEMES;
+    use kms_lib::cryptography::signatures::{SigningSchemeType, test_support::seeded_verf_key_set};
+    use rand::SeedableRng;
+    use std::collections::BTreeMap;
 
     /// A key whose digest is pinned by [`REFERENCE_DIGEST`].
     fn reference_public_key() -> Vec<u8> {
@@ -277,5 +351,52 @@ mod tests {
         assert!(
             check_attested_backup_pk(reference_public_key().as_slice(), &attested_digest).is_err()
         );
+    }
+
+    #[test]
+    fn expected_keys_parse_once_per_scheme() {
+        let parsed = parse_expected_operator_keys(&["mldsa87=AB12".to_string()]).unwrap();
+        assert_eq!(parsed[&SigningSchemeType::MlDsa87], "0xab12");
+
+        let twice = ["MlDsa87=0x01".to_string(), "MlDsa87=0x02".to_string()];
+        assert!(parse_expected_operator_keys(&twice).is_err());
+        assert!(parse_expected_operator_keys(&["MlDsa87".to_string()]).is_err());
+        assert!(parse_expected_operator_keys(&["NoSuchScheme=0x01".to_string()]).is_err());
+    }
+
+    #[test]
+    fn operator_keys_must_match_every_expected_key() {
+        let keys = seeded_verf_key_set(&mut AesRng::seed_from_u64(0), BACKUP_SIGNING_SCHEMES);
+        let other = seeded_verf_key_set(&mut AesRng::seed_from_u64(1), BACKUP_SIGNING_SCHEMES);
+        let text = |set: &kms_lib::cryptography::signatures::VerfKeySet, scheme| {
+            set.require(scheme).unwrap().address_text()
+        };
+
+        // Nothing expected: everything is left to the operator.
+        report_operator_keys(&keys, &BTreeMap::new()).unwrap();
+
+        // The checksummed address and the digest match whatever their case.
+        let expected = BTreeMap::from([
+            (
+                SigningSchemeType::Ecdsa256k1,
+                normalized_key_text(&text(&keys, SigningSchemeType::Ecdsa256k1).to_uppercase()),
+            ),
+            (
+                SigningSchemeType::MlDsa87,
+                normalized_key_text(&text(&keys, SigningSchemeType::MlDsa87)),
+            ),
+        ]);
+        report_operator_keys(&keys, &expected).unwrap();
+
+        // One wrong key is enough to fail.
+        let wrong = BTreeMap::from([(
+            SigningSchemeType::MlDsa87,
+            normalized_key_text(&text(&other, SigningSchemeType::MlDsa87)),
+        )]);
+        assert!(report_operator_keys(&keys, &wrong).is_err());
+
+        // So is expecting a key the request does not carry.
+        let absent = BTreeMap::from([(SigningSchemeType::Ed25519, "0x01".to_string())]);
+        assert!(report_operator_keys(&keys, &absent).is_err());
     }
 }

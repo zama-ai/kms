@@ -23,7 +23,10 @@
 //! ```
 //!
 //! Each backend prepends the domain separator, so a component signs
-//! `dsep ‖ preimage`. The parts of the draft map onto this encoding:
+//! ```text
+//! dsep ‖ M'
+//! ```
+//! The parts of the draft map onto this encoding as follows:
 //!
 //! - **[`COMPOSITE_PREFIX`]** marks the bytes as a composite
 //!   preimage, so no component reads as a signature of another construction. The
@@ -36,8 +39,10 @@
 //!   schemes, which the draft fixes per combination, and the usage, which the
 //!   message type states: `CompositeSigncryptionPayload` for a signcryption,
 //!   `KeygenSignedPayload` or `CrsSignedPayload` for a result, and so on.
-//! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
-//!   length prefix the draft puts on ctx is not necessary.
+//! - **ctx** has no counterpart in the preimage. However, the domain separator plays the
+//!   role of an application context, but it sits in front of the Prefix rather
+//!   than after the Label, and it carries no length prefix because a
+//!   [`DomainSep`] is always 8 bytes.
 //! - **Hash(M)** is the message itself. The draft pre-hashes the message and
 //!   assumes that the hash resists collisions. The message keeps the same
 //!   unforgeability argument without that assumption.
@@ -291,6 +296,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::BACKUP_SIGNING_SCHEMES;
     use crate::cryptography::signatures::{SigningSchemeType, gen_sig_keys};
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
@@ -304,16 +310,17 @@ mod tests {
         TestType { i: 4711 }
     }
 
-    fn pair() -> Vec<SigningSchemeType> {
-        vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
-    }
-
-    fn setup(seed: u64) -> (NodeSigningIdentity, VerfKeySet, Vec<SigningSchemeType>) {
+    fn setup(
+        seed: u64,
+    ) -> (
+        NodeSigningIdentity,
+        VerfKeySet,
+        &'static [SigningSchemeType],
+    ) {
         let mut rng = AesRng::seed_from_u64(seed);
         let identity = seeded_identity(&mut rng);
-        let schemes = pair();
-        let keys = VerfKeySet::from_identity(&identity, &schemes).unwrap();
-        (identity, keys, schemes)
+        let keys = VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        (identity, keys, BACKUP_SIGNING_SCHEMES)
     }
 
     /// A signature verifies under the key set that made it, and under no other
@@ -321,12 +328,12 @@ mod tests {
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
-        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
         assert_eq!(entry_schemes(&sig), schemes);
-        verify_composite(&sig, &keys, &schemes, DSEP, &msg()).unwrap();
+        verify_composite(&sig, &keys, schemes, DSEP, &msg()).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(verify_composite(&sig, &other_keys, &schemes, DSEP, &msg()).is_err());
+        assert!(verify_composite(&sig, &other_keys, schemes, DSEP, &msg()).is_err());
     }
 
     /// A policy naming a scheme the sender has no key for is refused rather than
@@ -334,12 +341,12 @@ mod tests {
     #[test]
     fn a_policy_the_keys_cannot_cover_is_rejected() {
         let (identity, keys, schemes) = setup(11);
-        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
 
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
         assert!(matches!(
-            verify_composite(&sig, &ecdsa_only, &schemes, DSEP, &msg()),
+            verify_composite(&sig, &ecdsa_only, schemes, DSEP, &msg()),
             Err(SigningError::NoVerificationKey(SigningSchemeType::MlDsa87))
         ));
         assert!(matches!(
@@ -354,14 +361,14 @@ mod tests {
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
-        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
 
         // Drop the ML-DSA half and relabel the set as ECDSA-only
         let stripped = vec![sig[0].clone()];
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            verify_composite(&stripped, &keys, &schemes, DSEP, &msg()),
+            verify_composite(&stripped, &keys, schemes, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
@@ -384,7 +391,7 @@ mod tests {
     #[test]
     fn a_non_canonical_entry_list_is_rejected() {
         let (identity, keys, schemes) = setup(3);
-        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
 
         let mut reversed = sig.clone();
         reversed.reverse();
@@ -397,7 +404,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_composite(&entries, &keys, &schemes, DSEP, &msg()),
+                    verify_composite(&entries, &keys, schemes, DSEP, &msg()),
                     Err(SigningError::UnexpectedSchemeSet { .. })
                 ),
                 "a {case} entry list was not rejected"
@@ -409,13 +416,13 @@ mod tests {
     #[test]
     fn one_tampered_signature_fails_the_composite() {
         let (identity, keys, schemes) = setup(4);
-        let base = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        let base = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
 
         for index in 0..base.len() {
             let mut tampered = base.clone();
             tampered[index].signature[0] ^= 0x01;
             assert!(
-                verify_composite(&tampered, &keys, &schemes, DSEP, &msg()).is_err(),
+                verify_composite(&tampered, &keys, schemes, DSEP, &msg()).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -424,9 +431,9 @@ mod tests {
     #[test]
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
-        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
-        assert!(verify_composite(&sig, &keys, &schemes, DSEP, &TestType { i: 4712 }).is_err());
-        assert!(verify_composite(&sig, &keys, &schemes, b"OTHERDSP", &msg()).is_err());
+        let sig = sign_composite(&identity, schemes, DSEP, &msg()).unwrap();
+        assert!(verify_composite(&sig, &keys, schemes, DSEP, &TestType { i: 4712 }).is_err());
+        assert!(verify_composite(&sig, &keys, schemes, b"OTHERDSP", &msg()).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -436,7 +443,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(9);
         let identity = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
         assert!(matches!(
-            sign_composite(&identity, &pair(), DSEP, &msg()),
+            sign_composite(&identity, BACKUP_SIGNING_SCHEMES, DSEP, &msg()),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -523,13 +530,13 @@ mod tests {
         let single = vec![SigningSchemeType::Ecdsa256k1];
         assert_ne!(
             scheme_bound_preimage(&single, &msg()).unwrap(),
-            scheme_bound_preimage(&pair(), &msg()).unwrap()
+            scheme_bound_preimage(BACKUP_SIGNING_SCHEMES, &msg()).unwrap()
         );
 
         // The count in front of the tags is what separates a set from a longer
         // one starting with it, so the shorter set's encoding appears nowhere in
         // the longer set's preimage.
-        let pair_preimage = scheme_bound_preimage(&pair(), &msg()).unwrap();
+        let pair_preimage = scheme_bound_preimage(BACKUP_SIGNING_SCHEMES, &msg()).unwrap();
         let wire: Vec<i32> = single.iter().map(|scheme| scheme.as_wire()).collect();
         let single_scheme_bytes = canonical_wire_scheme_bytes(&wire);
         assert!(
@@ -544,8 +551,11 @@ mod tests {
     /// dropping it, so a newer signer's preimage can be rebuilt.
     #[test]
     fn wire_preimage_matches_the_typed_one_and_binds_unknown_schemes() {
-        let expected = scheme_bound_preimage(&pair(), &msg()).unwrap();
-        let mut wire: Vec<i32> = pair().iter().map(|scheme| scheme.as_wire()).collect();
+        let expected = scheme_bound_preimage(BACKUP_SIGNING_SCHEMES, &msg()).unwrap();
+        let mut wire: Vec<i32> = BACKUP_SIGNING_SCHEMES
+            .iter()
+            .map(|scheme| scheme.as_wire())
+            .collect();
         wire.reverse();
         wire.push(wire[0]);
         assert_eq!(wire_scheme_bound_preimage(&wire, &msg()).unwrap(), expected);
@@ -577,12 +587,15 @@ mod tests {
             SigningSchemeType::Ecdsa256k1,
             SigningSchemeType::MlDsa87,
         ];
-        assert_eq!(canonical_schemes(&reordered).unwrap(), pair());
+        assert_eq!(
+            canonical_schemes(&reordered).unwrap(),
+            BACKUP_SIGNING_SCHEMES
+        );
 
         // So callers may pass any order and still agree on the signed bytes.
         assert_eq!(
             scheme_bound_preimage(&reordered, &msg()).unwrap(),
-            scheme_bound_preimage(&pair(), &msg()).unwrap()
+            scheme_bound_preimage(BACKUP_SIGNING_SCHEMES, &msg()).unwrap()
         );
 
         assert!(matches!(

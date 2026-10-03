@@ -20,7 +20,7 @@ use kms_lib::{
         signatures::NodeSigningIdentity,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        backup_operator::boot_base_kms, centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
         migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
         threshold::service::new_real_threshold_kms,
@@ -32,10 +32,7 @@ use kms_lib::{
         keychain::{
             Keychain, RootKeyMeasurements, awskms::build_aws_kms_client, make_keychain_proxy,
         },
-        storage::{
-            StorageReader, StorageType, crypto_material::get_core_signing_identity, make_storage,
-            read_text_at_request_id, s3::build_s3_client,
-        },
+        storage::{StorageType, make_storage, read_text_at_request_id, s3::build_s3_client},
     },
 };
 use observability::health::register_process_health;
@@ -599,27 +596,15 @@ async fn main_exec() -> anyhow::Result<()> {
     let rng_source = Arc::new(RngSource::new(security_module.clone())?);
 
     // load key
-    let (base_kms, able_to_use_tls) = match get_core_signing_identity(&private_vault).await {
-        Ok(sk) => (
-            BaseKmsStruct::new(kms_type, sk, Arc::clone(&rng_source)),
-            true,
-        ),
-        Err(e) => {
-            tracing::warn!("Error loading signing key: {e:?}");
-            tracing::warn!(
-                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done and TLS must not be available!\n
-                Make sure to use a configuration file without TLS configured and\n
-                make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
-            );
-            let verf_key = public_storage
-                .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
-                .await?;
-            (
-                BaseKmsStruct::new_no_signing_key(kms_type, verf_key, rng_source),
-                false,
-            )
-        }
-    };
+    let base_kms = boot_base_kms(
+        kms_type,
+        &private_vault,
+        &public_storage,
+        backup_vault.as_ref(),
+        rng_source,
+    )
+    .await?;
+    let able_to_use_tls = base_kms.signing_identity().is_ok();
 
     // compute corresponding public key and derive address from private sig key
     let pk_bytes = base_kms.verf_key().to_uncompressed_bytes();
@@ -690,17 +675,18 @@ async fn main_exec() -> anyhow::Result<()> {
                 SoftwareVersion::current()?
             );
             // create the default context if it does not exist
-            let identity = (*base_kms.signing_identity()?).clone();
             let service_config = core_config.service.clone();
-            create_default_centralized_context_in_storage(&mut private_vault, identity.ecdsa())
+            create_default_centralized_context_in_storage(&mut private_vault, &base_kms.verf_key())
                 .await?;
-            let (kms, (health, health_service)) = RealCentralizedKms::new(
+            // A node without its signing key boots in recovery mode, as a threshold node does,
+            // so that it can recover its keys from the custodians.
+            let (kms, (health, health_service)) = RealCentralizedKms::new_from_base_kms(
                 core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
-                identity,
+                base_kms,
             )
             .await?;
             register_process_health(health.clone())?;

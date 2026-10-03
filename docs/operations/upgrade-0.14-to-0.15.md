@@ -1,6 +1,9 @@
-# Upgrade from v0.14 to v0.15: epoch-data migration
+# Upgrade from v0.14 to v0.15
 
-A threshold party that upgrades from v0.14.x to v0.15.x must supply a migration config. Without it, the v0.15 core does not start.
+An upgrade from v0.14.x to v0.15.x has two tasks:
+
+- A threshold party must supply an epoch-data migration config. Without it, the v0.15 core does not start. The sections from [Who needs the migration config](#who-needs-the-migration-config) to [Error messages](#error-messages) describe this task.
+- Each node must generate a root signing seed. Without it, the node signs only under ECDSA. See [Generate the root signing seed](#generate-the-root-signing-seed).
 
 ## Who needs the migration config
 
@@ -93,3 +96,66 @@ The core stops at startup with one of these errors if the migration config is mi
 | `Default context ID ... should be part of the migration config` | The config does not contain the default context. Add it. |
 | `Default epoch ID ... should be part of the migration config for default context ID ...` | The default context does not list the default epoch. Add it. |
 | `Duplicate epoch ID ... found in migration config` or `Duplicate context ID ... found in migration config` | An ID occurs more than one time. Remove the duplicate. |
+
+## Generate the root signing seed
+
+v0.15 adds post-quantum signature schemes. The node derives the signing keys of these schemes from a root signing seed. The seed is stored in private storage, under the `SigningSeed` data type. A v0.14 node has only the ECDSA signing key, so each node must generate a seed one time.
+
+A node without a seed starts, but it signs only under ECDSA. A request for a different scheme fails. At startup, the core logs this warning:
+
+```text
+No root signing seed found in storage "..."; this node can only sign under ECDSA. Run kms-gen-keys to generate one.
+```
+
+### Who must do this step
+
+- Centralized and threshold nodes must both do this step.
+- With the Helm chart, a node without an enclave runs `kms-gen-keys` at each pod start. That run generates the seed after the upgrade, so you only do the check in [Check the result](#check-the-result).
+- With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. In enclave mode, the chart runs this job before each upgrade while `kmsGenCertAndKeys.enabled` is `true`. The job keeps the signing key and the CA certificate of the node. Do these steps:
+  1. Use chart version 1.9.5 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and run `helm upgrade`.
+  2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes, because the job reports success also when the seed generation failed.
+  3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade.
+- The job needs a free Nitro Enclave slot and hugepages on the host, beside the enclave of the running core. If the host has no free slot, the job pod stays pending, and `helm upgrade` stops at its timeout. For this reason, do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade.
+- A node without Helm must run `kms-gen-keys`.
+
+### Run kms-gen-keys
+
+Run `kms-gen-keys` with the `kms-gen-keys` config that you used to install the node. The config must point to the public and private vaults of the node.
+
+```bash
+kms-gen-keys --config-file kms-gen-keys.toml
+```
+
+The run keeps the ECDSA signing key of the node, so the registered ECDSA address does not change. The run adds the seed and the verification material of each scheme to the vaults. Expect these log messages:
+
+- `Signing keys already exist, skipping generation`. This message is about the ECDSA key.
+- `Generated a root signing seed under the handle ...`.
+
+Do not set these options in the `[keygen]` section:
+
+- `overwrite`: this option deletes the ECDSA signing key and generates a new identity. The node then has an ECDSA address that nobody registered.
+- `repopulate`: this option requires an existing seed, so it fails on a v0.14 node.
+
+A second run is safe, because the run uses the stored seed again.
+
+### Check the result
+
+Add `show_existing = true` to the `[keygen]` section, and run `kms-gen-keys` again. Make sure that:
+
+- The output contains a `SigningSeed` line.
+- The output contains one `TypedVerfAddress` line for each signature scheme.
+- The ECDSA address did not change.
+
+On an enclave node, you cannot run `kms-gen-keys` outside the enclave, because the private vault needs the enclave attestation. Do these checks instead:
+
+- Make sure that the startup log of the upgraded core does not contain the warning `No root signing seed found in storage`.
+- Make sure that the public vault contains one object for each signature scheme under the `TypedVerfAddress` data type. For example, for party 1 with the bucket `kms-public` and the prefix `PUB-p1`: `aws s3 ls "s3://kms-public/PUB-p1/TypedVerfAddress/"`.
+- Make sure that the ECDSA address in the `VerfAddress` object did not change.
+
+If the warning is in the log, the seed generation failed. The job deletes itself after it ends, so its logs are not available. Run `helm upgrade` again with `kmsGenCertAndKeys.enabled` set to `true`, and read the logs of the `kms-core-enclave-logger` container of the job pod while the job runs.
+
+### Seed error
+
+If `kms-gen-keys` stops with `public storage already holds non-ECDSA verification material, but the SigningSeed object ... is missing`, public storage holds post-quantum verification material but private storage has no seed. This occurs, for example, when you restore private storage from an old backup. Restore the seed from the backup vault. Do not generate a new seed, because a new seed changes each published post-quantum identity.
+
+For more information about `kms-gen-keys`, see [KMS Core Service Binaries](../guides/kms-server-bin.md#kms-key-generation).

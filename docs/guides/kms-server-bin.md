@@ -31,6 +31,50 @@ subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
 
+Omit the `[threshold]` section to generate centralized signing material. The
+centralized mode does not generate a CA certificate.
+
+### `[threshold]` options
+
+The `[threshold]` section accepts only the fields below. The tool rejects any
+other field.
+The tool needs a TLS subject on every threshold run, also when a CA certificate
+exists. Still, the tool only generates a CA certificate when public storage has 
+no `CACert` object, so a run on an existing party does not change its certificate,
+in which case any values can be used for the `[threshold]` parameters.
+
+The required parameters are as follows:
+
+- `my_id`: the one-indexed party id. This field is required.
+- `tls_subject`: the subject of the self-signed CA certificate. The CA
+  certificate issues the mTLS certificates of the party, and the tool signs it
+  with the ECDSA signing key of the party.
+- `tls_wildcard`: generate a wildcard subject. Defaults to `false`.
+- `peers`: a peer list with the same `[[threshold.peers]]` format as the
+  `kms-server` config. The tool uses it only when `tls_subject` is not set.
+
+Example with a peer list instead of `tls_subject`:
+
+```toml
+[threshold]
+my_id = 1
+
+[[threshold.peers]]
+party_id = 1
+address = "127.0.0.1"
+mpc_identity = "kms-core-1"
+port = 50001
+```
+
+### Local test config
+
+To test the tool locally, in threshold mode, the configuration file `../../core/service/config/local_keygen.toml` 
+can be used:
+
+```bash
+cargo run --bin kms-gen-keys -- --config-file ../../core/service/config/local_keygen.toml
+```
+
 ### `[keygen]` options
 
 All three flags default to `false` and are mutually exclusive —
@@ -39,9 +83,7 @@ pick at most one per run:
 - `overwrite`: delete any existing signing material at the fixed signing-key
   handle (the private signing key, the root signing seed, and every scheme's
   verification material in public storage) before generating a fresh identity.
-  Required to rotate a key; without it, generation fails if storage already holds
-  material for that handle. **This destroys every post-quantum identity of the
-  node**, since they are derived from the seed and stored nowhere else.
+  Required to rotate a key.
 - `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything. Each per-scheme line names its scheme, and the
   address folders print the stored text, so this is what an operator reads to learn
@@ -114,6 +156,41 @@ release: new readers should take the ECDSA entry from `TypedVerfKey` /
 `TypedVerfAddress` instead.
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
+
+### Upgrading an existing node
+
+A node from a release without the root signing seed has only the ECDSA
+`SigningKey`. Do these steps once per node to add the seed:
+
+1. Run `kms-gen-keys` with the original config of the node. Do not set
+   `overwrite` or `repopulate`. The run keeps the ECDSA key, generates the seed,
+   and writes the missing verification material. The log shows `Signing keys
+   already exist, skipping generation` for the ECDSA key, and `Generated a root
+   signing seed` for the seed.
+2. Run `kms-gen-keys` with `[keygen] show_existing = true`. Make sure that the
+   output has a `SigningSeed` line and one `TypedVerfAddress` line per scheme.
+   Make sure that the ECDSA address did not change.
+3. Start the node once. Then make sure that the seed is in the backup vault.
+
+`repopulate` does not work for this upgrade, because it requires an existing seed.
+A second run of step 1 is safe, because the run uses the stored seed again.
+In the `kms-core` Helm chart, a node without an enclave runs `kms-gen-keys` in
+an init container at each pod start. On those nodes, step 1 runs after the
+upgrade without operator action.
+
+An enclave node does not do step 1 at boot.
+[`init_enclave.sh`](../../docker/core/service/init_enclave.sh) runs
+`kms-gen-keys` with the config that the parent sends. At a normal boot, this is
+the `kms-server` config, which `kms-gen-keys` rejects. In enclave mode, the
+chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
+runs before install, and before each upgrade while `kmsGenCertAndKeys.enabled`
+is `true`. Set `kmsGenCertAndKeys.enabled` to `true` for the upgrade, so that
+this job does step 1. Then set it back to `false`. The job needs a second
+Nitro Enclave slot on the host, so on a host with one slot a later upgrade
+stops at its timeout. The job reports success also when step 1 failed, so step 2
+is mandatory. See
+[Upgrade from v0.14 to v0.15](../operations/upgrade-0.14-to-0.15.md#check-the-result)
+for the step 2 checks on an enclave node.
 
 ### Moving a cluster onto seed-rooted identities
 
