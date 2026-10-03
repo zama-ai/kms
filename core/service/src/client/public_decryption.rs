@@ -6,7 +6,7 @@ use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
-use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::alloy_to_protobuf_domain;
 use kms_grpc::{EpochId, RequestId};
 
 impl Client {
@@ -47,26 +47,16 @@ impl Client {
     }
 
     /// Validates the aggregated decryption response `agg_resp` against the
-    /// original `DecryptionRequest` `request`, and returns the decrypted
-    /// plaintext if valid and at least `min_agree_count` agree on the result.
-    ///
-    /// __NOTE__: If the original request is not provided, we can __not__ check
-    /// that the response correctly contains the digest of the request.
+    /// original `request`, and returns the decrypted plaintext if valid and at
+    /// least `min_agree_count` agree on the result.
     ///
     /// # Arguments
     ///
     /// All arguments except `agg_resp` are **trusted** (client-side state):
     ///
     /// * `request` — The original public decryption request constructed by this
-    ///   client. Used to verify that the server responses match the request
-    ///   (digest, ciphertext handles, domain).
-    ///
-    ///   Passing `None` skips the request-level checks, and with them the EIP-712
-    ///   domain, so neither `external_signature` nor the ECDSA entry of
-    ///   `signatures` can be checked. A response is then authenticated by the
-    ///   deprecated internal `signature`, which covers the serialized payload and
-    ///   needs no domain. That is enough for a caller that only wants to inspect a
-    ///   result.
+    ///   client. The responses are verified against its EIP-712 domain, ciphertext
+    ///   handles, extra data and signing schemes, and bound to it.
     /// * `min_agree_count` — Minimum number of server responses that must agree
     ///   on the same plaintext for the result to be accepted.
     ///
@@ -76,30 +66,14 @@ impl Client {
     ///   (signatures, digest matching, majority agreement) before use.
     pub fn process_decryption_resp(
         &self,
-        request: Option<PublicDecryptionRequest>,
+        request: &PublicDecryptionRequest,
         min_agree_count: u32,
         agg_resp: &[PublicDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let eip712_domain = match &request {
-            Some(req) => Some(optional_protobuf_to_alloy_domain(req.domain.as_ref())?),
-            None => None,
-        };
-        let ext_handles_bytes: Vec<Vec<u8>> = match &request {
-            Some(req) => req
-                .ciphertexts
-                .iter()
-                .map(|c| c.external_handle.clone())
-                .collect(),
-            None => vec![],
-        };
-        let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
         let trusted_ctx = PublicDecTrustedValidationContext::new(
             self.get_server_pks()?,
             &self.scheme_verf_keys,
-            eip712_domain.as_ref(),
-            &ext_handles_bytes,
-            extra_data,
-            request.as_ref(),
+            request,
         )?;
 
         // Partition the untrusted responses and enforce the majority threshold. Partitioning is

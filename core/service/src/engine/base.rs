@@ -511,7 +511,7 @@ where
         identity,
         schemes,
         dsep,
-        eip712_hash.as_slice(),
+        &eip712_hash,
         payload,
     )?;
     Ok((external_signature, signatures))
@@ -1832,8 +1832,7 @@ pub(crate) mod tests {
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{
-        Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
-        unified_verify,
+        Signature, SigningSchemeType, composite::scheme_bound_preimage, unified_verify,
     };
     use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
     use crate::{
@@ -1902,10 +1901,12 @@ pub(crate) mod tests {
     /// - the deprecated internal `signature` is the raw signature over the payload,
     /// - `external_signature` is the EIP-712 signature the fhevm contracts verify,
     /// - the ECDSA entry of `signatures` is byte-identical to `external_signature`,
-    /// - every other scheme signs the raw payload.
+    /// - every other scheme signs the scheme-bound preimage of the payload and the
+    ///   extra data.
     ///
     /// The split is deliberate — EIP-712 is an EVM/secp256k1 construction, so
-    /// post-quantum schemes are not bound to it.
+    /// post-quantum schemes are not bound to it. The `composite` module tests the
+    /// generic properties of the scheme-bound preimage.
     /// TODO(0.16): remove the deprecated fields and unify the ECDSA entry of `signatures` with `external_signature`.
     #[test]
     fn decryption_scheme_signatures_round_trip() {
@@ -1922,6 +1923,8 @@ pub(crate) mod tests {
             request_id: Some(RequestId::new_random(&mut rng).into()),
         };
         let payload_bytes = bc2wrap::serialize(&payload).unwrap();
+        let payload_signed = super::public_dec_payload(&payload_bytes, extra_data);
+        let other_extra = super::public_dec_payload(&payload_bytes, b"other extra");
         let sol_type =
             compute_public_decryption_message(&handles, &payload.plaintexts, extra_data).unwrap();
 
@@ -1932,8 +1935,10 @@ pub(crate) mod tests {
             &domain,
         )
         .unwrap();
+        let legacy = internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, sk.ecdsa()).unwrap();
 
         // Several choices of schemes, including a classic + post-quantum composite.
+        // Each choice is in canonical order, which is the order of the entries.
         let choices: Vec<Vec<SigningSchemeType>> = vec![
             vec![SigningSchemeType::Ecdsa256k1],
             vec![SigningSchemeType::Ed25519],
@@ -1956,97 +1961,51 @@ pub(crate) mod tests {
                 &domain,
             )
             .unwrap();
-            assert_eq!(sigs.signatures.len(), schemes.len());
             // The payload is carried through untouched, so what was signed is what is returned.
             assert_eq!(sigs.payload, payload);
             assert_eq!(sigs.extra_data, extra_data);
 
             // The deprecated internal field is the raw signature over the payload.
-            let legacy =
-                internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, sk.ecdsa()).unwrap();
             assert_eq!(sigs.signature, legacy.as_bytes());
 
-            // Populated for every choice of schemes, the ed25519-only one included.
-            assert!(
-                !sigs.external_signature.is_empty(),
-                "external_signature must stay populated until 0.16"
-            );
+            // `external_signature` is populated for every choice of schemes, the
+            // ed25519-only one included, and recovers to the signer on-chain.
             assert_eq!(sigs.external_signature, expected);
-
-            // `external_signature` recovers to the signer on-chain.
             let recovered =
                 recover_address_from_ext_signature(&sol_type, &domain, &sigs.external_signature)
                     .unwrap();
             assert_eq!(recovered, sk.verf_key().address());
 
-            // Entries come back ordered by scheme, whatever order was asked for.
-            let ordered = canonical_schemes(&schemes).unwrap();
-            assert_eq!(
-                sigs.signatures.len(),
-                ordered.len(),
-                "expected one entry per requested scheme"
-            );
-            for (scheme, scheme_sig) in ordered.iter().zip(&sigs.signatures) {
-                // The wire tag matches the scheme, in canonical order.
-                assert_eq!(
-                    SigningSchemeType::try_from(scheme_sig.scheme).unwrap(),
-                    *scheme
-                );
+            // One entry per requested scheme, each with the wire tag of its scheme.
+            let entry_schemes: Vec<_> = sigs
+                .signatures
+                .iter()
+                .map(|entry| SigningSchemeType::try_from(entry.scheme).unwrap())
+                .collect();
+            assert_eq!(entry_schemes, schemes);
 
-                if *scheme == SigningSchemeType::Ecdsa256k1 {
+            let signed = scheme_bound_preimage(&schemes, &payload_signed).unwrap();
+            let signed_other_extra = scheme_bound_preimage(&schemes, &other_extra).unwrap();
+            for (scheme, entry) in entry_schemes.into_iter().zip(&sigs.signatures) {
+                if scheme == SigningSchemeType::Ecdsa256k1 {
                     // The ECDSA entry is the on-chain-verifiable EIP-712
                     // signature, not a raw signature over the payload.
-                    assert_eq!(scheme_sig.signature, sigs.external_signature);
-                    assert_ne!(scheme_sig.signature, sigs.signature);
-                } else {
-                    // Every other scheme signs the versioned payload — the response
-                    // bytes together with the extra data — inside a preimage naming
-                    // the scheme set, so the entry commits to the set it was
-                    // produced under.
-                    let payload_signed = super::public_dec_payload(&payload_bytes, extra_data);
-                    let signed = scheme_bound_preimage(&ordered, &payload_signed).unwrap();
-                    let vk = sk.unified_verifying_key(*scheme).unwrap();
-                    let sig = Signature::new(*scheme, scheme_sig.signature.clone());
-                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
-                        .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
-
-                    // The payload on its own is specifically not what was signed.
-                    let mut bare = Vec::new();
-                    safe_serialize(&payload_signed, &mut bare, SAFE_SER_SIZE_LIMIT).unwrap();
-                    assert!(
-                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &bare, &sig, &vk).is_err(),
-                        "{scheme:?} signature must be bound to the scheme set"
-                    );
-
-                    // Nor is the same payload under any other scheme set, which is
-                    // what stops an entry being lifted out of a larger response.
-                    for other_set in [
-                        vec![*scheme],
-                        vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa44],
-                    ] {
-                        if other_set == ordered {
-                            continue;
-                        }
-                        let rebound = scheme_bound_preimage(&other_set, &payload_signed).unwrap();
-                        assert!(
-                            unified_verify(&DSEP_PUBLIC_DECRYPTION, &rebound, &sig, &vk).is_err(),
-                            "{scheme:?} signature verified under {other_set:?}"
-                        );
-                    }
-
-                    // The extra data is part of what that entry covers.
-                    let other_extra = super::public_dec_payload(&payload_bytes, b"other extra");
-                    let other = scheme_bound_preimage(&ordered, &other_extra).unwrap();
-                    assert!(
-                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &other, &sig, &vk).is_err(),
-                        "{scheme:?} signature did not cover the extra data"
-                    );
-
-                    // A tampered message must fail.
-                    assert!(
-                        unified_verify(&DSEP_PUBLIC_DECRYPTION, b"tampered", &sig, &vk).is_err()
-                    );
+                    assert_eq!(entry.signature, sigs.external_signature);
+                    assert_ne!(entry.signature, sigs.signature);
+                    continue;
                 }
+                // Every other scheme signs the versioned payload — the response
+                // bytes together with the extra data — inside a preimage naming
+                // the scheme set.
+                let vk = sk.unified_verifying_key(scheme).unwrap();
+                let sig = Signature::new(scheme, entry.signature.clone());
+                unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
+                    .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
+                assert!(
+                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed_other_extra, &sig, &vk)
+                        .is_err(),
+                    "{scheme:?} signature did not cover the extra data"
+                );
             }
         }
     }
@@ -2054,7 +2013,8 @@ pub(crate) mod tests {
     /// `external_signature` is always the EIP-712 signature, independent of the
     /// requested schemes, while `signatures` holds exactly the schemes requested:
     /// ECDSA carries the EIP-712 signature verbatim and every other scheme signs
-    /// the serialized CRS payload — the same split decryption uses.
+    /// the scheme-bound preimage of the CRS payload — the same split decryption
+    /// uses.
     #[test]
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
@@ -2073,7 +2033,6 @@ pub(crate) mod tests {
             extra_data.clone(),
         );
         let expected_external = compute_eip712_signature(sk.ecdsa(), &sol_type, &domain).unwrap();
-        let eip712_hash = sol_type.eip712_signing_hash(&domain);
         let payload = super::CrsSignedPayload {
             crs_id,
             max_num_bits: max_num_bits as u32,
@@ -2101,13 +2060,6 @@ pub(crate) mod tests {
             })
         };
 
-        // Requesting no scheme is refused rather than answered with an empty
-        // list.
-        assert!(
-            signatures_for(&[]).is_err(),
-            "an empty scheme set must be refused"
-        );
-
         // Requesting a classic + two post-quantum schemes: `signatures` reflects
         // exactly the request.
         let schemes = [
@@ -2118,6 +2070,7 @@ pub(crate) mod tests {
         let (external_signature, sigs) = signatures_for(&schemes).unwrap();
         assert_eq!(external_signature, expected_external);
         assert_eq!(sigs.len(), schemes.len());
+        let signed_payload = scheme_bound_preimage(&schemes, &payload).unwrap();
 
         for stored in &sigs {
             match stored.scheme {
@@ -2133,24 +2086,14 @@ pub(crate) mod tests {
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_CRS, &signed_payload, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} CRS signature should verify: {e}"));
-                    // Specifically not the EIP-712 hash any more...
-                    assert!(
-                        unified_verify(&DSEP_PUBDATA_CRS, eip712_hash.as_slice(), &sig, &vk)
-                            .is_err(),
-                        "{scheme:?} must sign the payload, not the EIP-712 hash"
-                    );
-                    assert!(
-                        unified_verify(&DSEP_PUBDATA_CRS, b"tampered", &sig, &vk).is_err(),
-                        "{scheme:?} verified a tampered payload"
-                    );
                 }
             }
         }
     }
 
     /// The keygen counterpart of [`crs_result_signatures_multi_scheme`]: the
-    /// non-ECDSA entries sign the serialized keygen payload, whose `key_digests`
-    /// is what distinguishes the keygen shapes.
+    /// non-ECDSA entries sign the scheme-bound preimage of the keygen payload,
+    /// whose `key_digests` is what distinguishes the keygen shapes.
     #[test]
     fn keygen_result_signatures_sign_the_payload() {
         let mut rng = AesRng::seed_from_u64(0x4E67);
@@ -2192,6 +2135,7 @@ pub(crate) mod tests {
         );
 
         assert_eq!(inner.signatures.len(), schemes.len());
+        let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
         for stored in &inner.signatures {
             match stored.scheme {
                 SigningSchemeType::Ecdsa256k1 => {
@@ -2204,13 +2148,6 @@ pub(crate) mod tests {
                     unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {
                         panic!("{scheme:?} keygen signature should verify: {e}")
                     });
-                    // The scheme set in the preimage is load-bearing
-                    let mut bare = Vec::new();
-                    safe_serialize(&expected_payload, &mut bare, SAFE_SER_SIZE_LIMIT).unwrap();
-                    assert!(
-                        unified_verify(&DSEP_PUBDATA_KEY, &bare, &sig, &vk).is_err(),
-                        "{scheme:?} keygen signature must be bound to the scheme set"
-                    );
                 }
             }
         }

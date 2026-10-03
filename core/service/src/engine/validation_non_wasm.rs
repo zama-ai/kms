@@ -53,20 +53,20 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     /// client built without storage access, such as the browser, supplies an
     /// empty map and can then only check ECDSA.
     scheme_verf_keys: &'a SchemeVerfKeys,
-    eip712_domain: Option<&'a Eip712Domain>,
-    ext_handles_bytes: &'a [Vec<u8>],
-    extra_data: Option<&'a [u8]>,
-    request: Option<&'a PublicDecryptionRequest>,
+    /// The request this client sent. The responses are bound to it, and verified
+    /// against its domain, ciphertext handles, extra data and signing schemes.
+    request: &'a PublicDecryptionRequest,
+    /// The EIP-712 domain of `request`.
+    eip712_domain: Eip712Domain,
+    /// The external handles of the ciphertexts of `request`.
+    ext_handles_bytes: Vec<Vec<u8>>,
 }
 
 impl<'a> PublicDecTrustedValidationContext<'a> {
     pub fn new(
         server_pks: &'a HashMap<u32, PublicSigKey>,
         scheme_verf_keys: &'a SchemeVerfKeys,
-        eip712_domain: Option<&'a Eip712Domain>,
-        ext_handles_bytes: &'a [Vec<u8>],
-        extra_data: Option<&'a [u8]>,
-        request: Option<&'a PublicDecryptionRequest>,
+        request: &'a PublicDecryptionRequest,
     ) -> anyhow::Result<Self> {
         // Sanity check uniqueness of server public keys. This is a trusted context, so if the server keys are not unique, it is a configuration error.
         let unique_keys: HashSet<&PublicSigKey> = server_pks.values().collect();
@@ -74,13 +74,18 @@ impl<'a> PublicDecTrustedValidationContext<'a> {
             anyhow::bail!("Duplicate server public keys found in trusted validation context");
         }
 
+        let eip712_domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
+        let ext_handles_bytes = request
+            .ciphertexts
+            .iter()
+            .map(|ct| ct.external_handle.clone())
+            .collect();
         Ok(Self {
             server_pks,
             scheme_verf_keys,
+            request,
             eip712_domain,
             ext_handles_bytes,
-            extra_data,
-            request,
         })
     }
 }
@@ -97,8 +102,6 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID: &str =
     "Request ID is not set in public decryption response";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE: &str =
     "Plaintext type mismatch in public decryption response";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST: &str =
-    "Public decryption request is None while validating public decryption responses";
 
 const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
 
@@ -475,29 +478,19 @@ fn check_public_decrypt_signatures(
     signatures: &[TypedSignature],
     response_extra_data: &[u8],
 ) -> anyhow::Result<()> {
-    let requested = match trusted_ctx.request {
-        Some(request) => SigningSchemeType::resolve_requested(&request.signing_schemes)?,
-        None => vec![SigningSchemeType::Ecdsa256k1],
-    };
+    let requested = SigningSchemeType::resolve_requested(&trusted_ctx.request.signing_schemes)?;
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     let response_bytes = bc2wrap::serialize(&response)?;
     let payload = public_dec_payload(&response_bytes, response_extra_data);
 
-    // Built only when a domain is available: without one no ECDSA signature of this
-    // response can be checked, and the message would be of no use.
-    let eip712_hash = match trusted_ctx.eip712_domain {
-        Some(domain) => Some(
-            compute_public_decryption_message(
-                trusted_ctx.ext_handles_bytes,
-                &response.plaintexts,
-                response_extra_data,
-            )?
-            .eip712_signing_hash(domain),
-        ),
-        None => None,
-    };
+    let eip712_hash = compute_public_decryption_message(
+        &trusted_ctx.ext_handles_bytes,
+        &response.plaintexts,
+        response_extra_data,
+    )?
+    .eip712_signing_hash(&trusted_ctx.eip712_domain);
 
     verify_response_signatures(
         &ResponseSignatures {
@@ -544,10 +537,7 @@ pub(crate) struct PublicDecryptionInvariants {
 impl PublicDecryptionInvariants {
     /// Sanity-check the invariants against the trusted context.
     fn sanity_check(&self, trusted_ctx: &PublicDecTrustedValidationContext) -> anyhow::Result<()> {
-        let Some(req) = trusted_ctx.request else {
-            tracing::warn!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST);
-            return Ok(());
-        };
+        let req = trusted_ctx.request;
 
         // The consensus plaintext count must match the number of ciphertexts the client asked to
         // decrypt. This is a property of the (majority-backed) consensus, so a mismatch is a genuine
@@ -675,9 +665,7 @@ fn authenticate_public_decrypt_response(
         tracing::warn!("A request ID must be present!");
         return Err(PublicRejectReason::MissingRequestId);
     }
-    if let Some(expected_extra_data) = trusted_ctx.extra_data
-        && cur_resp.extra_data != expected_extra_data
-    {
+    if cur_resp.extra_data != trusted_ctx.request.extra_data {
         tracing::warn!("Extra data mismatch in public decryption!");
         return Err(PublicRejectReason::ExtraDataMismatch);
     }
@@ -755,13 +743,12 @@ fn authenticate_public_decrypt_response(
 ///    get to vote at all.
 /// 3. Discard every authenticated payload that does not match the consensus invariants.
 ///
-/// In addition, if the original request is provided (via `trusted_ctx.request`)
-/// the response matches the original request
+/// In addition, the agreed result has to match the original request (`trusted_ctx.request`).
 ///
 /// Infallible w.r.t. adversarial per-response content: any malformed/inconsistent response is
 /// placed in `rejected`, never propagated. Returns `Err` ONLY when the honest invariant set cannot
 /// be established at all: no responses, no configured servers, no pivot with ≥ `t + 1` agreement,
-/// or — when a request is provided — the agreed result does not match the client's own request.
+/// or the agreed result does not match the client's own request.
 /// With ≥ `2t + 1` honest responses present, none of those `Err` cases can be triggered by ≤ `t`
 /// adversaries.
 ///
@@ -1216,8 +1203,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{
-                NodeSigningIdentity, PrivateSigKey, PublicSigKey, compute_eip712_signature,
-                gen_sig_keys, internal_sign,
+                NodeSigningIdentity, PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign,
             },
             signing::SigningSchemeType,
         },
@@ -1240,9 +1226,9 @@ mod tests {
     use super::{
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
         ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        PublicDecTrustedValidationContext, TypedSignature, compute_public_decryption_message,
-        unpack_public_decrypt_req, unpack_user_decrypt_req, verify_max_num_bits,
-        verify_public_decrypt_signatures, verify_user_decrypt_eip712,
+        PublicDecTrustedValidationContext, TypedSignature, unpack_public_decrypt_req,
+        unpack_user_decrypt_req, verify_max_num_bits, verify_public_decrypt_signatures,
+        verify_user_decrypt_eip712,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.
@@ -1293,6 +1279,31 @@ mod tests {
     /// does before calling `verify_public_decrypt_signature`.
     fn vk_of(payload: &PublicDecryptionResponsePayload) -> PublicSigKey {
         bc2wrap::deserialize_slice(&payload.verification_key).unwrap()
+    }
+
+    /// A request under `domain` for one `Uint8` ciphertext per handle in `handles`,
+    /// asking for `signing_schemes`. An empty `signing_schemes` means ECDSA.
+    fn public_decrypt_request(
+        domain: &Eip712Domain,
+        handles: &[Vec<u8>],
+        extra_data: &[u8],
+        signing_schemes: Vec<i32>,
+    ) -> PublicDecryptionRequest {
+        PublicDecryptionRequest {
+            signing_schemes,
+            ciphertexts: handles
+                .iter()
+                .map(|handle| TypedCiphertext {
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
+                    external_handle: handle.clone(),
+                    ciphertext_format: 1,
+                    ..Default::default()
+                })
+                .collect(),
+            domain: Some(alloy_to_protobuf_domain(domain).unwrap()),
+            extra_data: extra_data.to_vec(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1693,121 +1704,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_public_decrypt_meta_response() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
-        let (vk1, sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
-
-        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
-
-        let request_id = Some(
-            derive_request_id("test_validate_public_decrypt_meta_response")
-                .unwrap()
-                .into(),
-        );
-        let pivot = PublicDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-            plaintexts: vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
-            }],
-            request_id: request_id.clone(),
-        };
-
-        // `verify_public_decrypt_signatures` checks *authenticity* only (every entry of the
-        // response's `signatures` list); agreement with the consensus invariants is checked
-        // separately in the match pass of `partition_public_decrypt_responses` (exercised by
-        // `test_validate_public_decrypt_responses`).
-        let domain = dummy_domain();
-        let server_pks = pks.clone();
-        let scheme_verf_keys = HashMap::new();
-        let ctx = PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &scheme_verf_keys,
-            Some(&domain),
-            &[],
-            None,
-            None,
-        )
-        .unwrap();
-        // The ECDSA entry is the recoverable EIP-712 signature over the handles, the plaintexts
-        // and the extra data.
-        let ecdsa_entry = |sk: &PrivateSigKey, payload: &PublicDecryptionResponsePayload| {
-            let message = compute_public_decryption_message(&[], &payload.plaintexts, &[]).unwrap();
-            kms_grpc::rpc_types::ecdsa_signatures(
-                compute_eip712_signature(sk, &message, &domain).unwrap(),
-            )
-        };
-        let verify = |payload: &PublicDecryptionResponsePayload, sigs: &[TypedSignature]| {
-            verify_public_decrypt_signatures(&ctx, payload, 1, &vk_of(payload), &[], &[], sigs, &[])
-        };
-
-        // an empty list and no internal field either, so nothing can be authenticated
-        assert!(!verify(&pivot, &[]));
-
-        // signed with the wrong private key
-        assert!(!verify(&pivot, &ecdsa_entry(&sk1, &pivot)));
-
-        // a malformed signature
-        assert!(!verify(
-            &pivot,
-            &kms_grpc::rpc_types::ecdsa_signatures(vec![0u8; 65])
-        ));
-
-        // signing the wrong value: the plaintexts differ, and the EIP-712 message covers them.
-        //
-        // NOTE: `request_id` is deliberately not part of this message — see
-        // `PublicDecryptVerification`. The request-id linkage of a response is established by
-        // `PublicDecryptionInvariants::sanity_check` against the client's own request, not by
-        // this signature.
-        {
-            let other_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![2],
-                    fhe_type: tfhe::FheTypes::Uint8 as i32,
-                }],
-                request_id: request_id.clone(),
-            };
-            assert!(!verify(&pivot, &ecdsa_entry(&sk0, &other_value)));
-        }
-
-        // a response whose key did not sign it: the payload carries a fresh key, but the
-        // signature is by `sk0`, so the recovered address is not the one the payload claims
-        {
-            let (vk, _sk) = gen_sig_keys(&mut rng);
-            let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&vk).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: tfhe::FheTypes::Uint8 as i32,
-                }],
-                request_id,
-            };
-            assert!(!verify(&bad_value, &ecdsa_entry(&sk0, &bad_value)));
-        }
-
-        // an entry of some other scheme does not stand in for the ECDSA one this
-        // context asks for, whether or not it could have been checked
-        assert!(!verify(
-            &pivot,
-            &[TypedSignature {
-                scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-                signature: vec![0u8; 64],
-            }]
-        ));
-
-        // happy path
-        assert!(verify(&pivot, &ecdsa_entry(&sk0, &pivot)));
-    }
-
-    #[test]
     fn test_validate_public_decrypt_responses() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
@@ -1836,14 +1732,13 @@ mod tests {
             fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
         }];
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data_0),
-            request: None,
-            scheme_verf_keys: &HashMap::new(),
+        let request = PublicDecryptionRequest {
+            request_id: request_id.clone(),
+            ..public_decrypt_request(&alloy_domain, &ext_handles_bytes, &extra_data_0, vec![])
         };
+        let scheme_verf_keys = HashMap::new();
+        let trusted_ctx =
+            PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &request).unwrap();
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
         let resp0 = signed_public_decrypt_response(
@@ -2059,14 +1954,9 @@ mod tests {
             &alloy_domain,
         );
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data),
-            request: Some(&request),
-            scheme_verf_keys: &HashMap::new(),
-        };
+        let scheme_verf_keys = HashMap::new();
+        let trusted_ctx =
+            PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &request).unwrap();
 
         // invalid aggregate response, e.g., when there are none
         {
@@ -2112,28 +2002,15 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let bad_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: Some(&alloy_domain),
-                ext_handles_bytes: &ext_handles_bytes,
-                extra_data: Some(&extra_data),
-                request: Some(&bad_request),
-                scheme_verf_keys: &HashMap::new(),
-            };
+            let bad_ctx =
+                PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &bad_request)
+                    .unwrap();
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE)
             );
-        }
-
-        // bad external signature
-        {
-            let mut bad_resp = resp1.clone();
-            bad_resp.external_signature[0] ^= 1;
-            let agg_resp = vec![resp0.clone(), bad_resp];
-            validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp).unwrap();
         }
 
         // request ID
@@ -2163,34 +2040,15 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let bad_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: Some(&alloy_domain),
-                ext_handles_bytes: &ext_handles_bytes,
-                extra_data: Some(&extra_data),
-                request: Some(&bad_request),
-                scheme_verf_keys: &HashMap::new(),
-            };
+            let bad_ctx =
+                PublicDecTrustedValidationContext::new(&pks, &scheme_verf_keys, &bad_request)
+                    .unwrap();
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK)
             );
-        }
-
-        // request is empty, which should pass
-        {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let none_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-                scheme_verf_keys: &HashMap::new(),
-            };
-            validate_public_decrypt_responses(&none_ctx, 2, &agg_resp).unwrap();
         }
 
         // happy path
@@ -2246,114 +2104,99 @@ mod tests {
 
         let server_pks = HashMap::from([(1u32, vk_of(&pivot))]);
         let scheme_verf_keys = HashMap::new();
-        let ctx = |domain| {
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &scheme_verf_keys,
-                domain,
-                &ext_handles_bytes,
-                None,
-                None,
-            )
-            .unwrap()
-        };
-        let verify = |ctx: &PublicDecTrustedValidationContext, sigs: &[TypedSignature]| {
+        let request =
+            public_decrypt_request(&alloy_domain, &ext_handles_bytes, &extra_data, vec![]);
+        let ctx = PublicDecTrustedValidationContext::new(&server_pks, &scheme_verf_keys, &request)
+            .unwrap();
+        let verify = |internal: &[u8], external: &[u8], list: &[TypedSignature]| {
             verify_public_decrypt_signatures(
-                ctx,
+                &ctx,
                 &pivot,
                 1,
                 &vk_of(&pivot),
-                &[],
-                &[],
-                sigs,
+                internal,
+                external,
+                list,
                 &extra_data,
             )
         };
 
         // an empty list, with no internal field to fall back on
-        assert!(!verify(&ctx(Some(&alloy_domain)), &[]));
+        assert!(!verify(&[], &[], &[]));
 
         // a tampered ECDSA signature recovers to another address
-        assert!(!verify(&ctx(Some(&alloy_domain)), &tampered));
-
-        // without a domain the EIP-712 message cannot be rebuilt, so the only entry
-        // there is gets passed over and the requested ECDSA is left unverified
-        assert!(!verify(&ctx(None), &signatures));
+        assert!(!verify(&[], &[], &tampered));
 
         // happy path
-        assert!(verify(&ctx(Some(&alloy_domain)), &signatures));
+        assert!(verify(&[], &[], &signatures));
 
-        // The deprecated internal fields authenticate the same response. The raw ECDSA
-        // signature needs no domain.
-        let domainless = ctx(None);
-        assert!(verify_public_decrypt_signatures(
-            &domainless,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &signed.signature,
-            &[],
-            &[],
-            &extra_data,
-        ));
-        // `external_signature` does the same, but only with a domain to rebuild the
-        // EIP-712 message from.
-        let with_domain = ctx(Some(&alloy_domain));
-        assert!(verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &[],
-            &signed.external_signature,
-            &[],
-            &extra_data,
-        ));
+        // the EIP-712 message covers the plaintexts, so an entry signed over other ones fails
+        let other_value = PublicDecryptionResponsePayload {
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![2],
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
+            }],
+            ..pivot.clone()
+        };
+        let other_signatures = sign_ecdsa_public_decrypt_result(
+            &sk0,
+            other_value,
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        )
+        .signatures;
+        assert!(!verify(&[], &[], &other_signatures));
+
+        // a response whose key did not sign it: the payload carries a fresh key, but the
+        // signature is by `sk0`, so the recovered address is not the one the payload claims
+        let (fresh_vk, _) = gen_sig_keys(&mut rng);
+        let bad_value = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&fresh_vk).unwrap(),
+            ..pivot.clone()
+        };
+        let bad_signatures = sign_ecdsa_public_decrypt_result(
+            &sk0,
+            bad_value.clone(),
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        )
+        .signatures;
         assert!(!verify_public_decrypt_signatures(
-            &domainless,
-            &pivot,
+            &ctx,
+            &bad_value,
             1,
-            &vk_of(&pivot),
+            &fresh_vk,
             &[],
-            &signed.external_signature,
             &[],
+            &bad_signatures,
             &extra_data,
         ));
-        // With a domain the internal signature does not stand in for the EIP-712 forms:
-        // it covers the payload alone, not the handles or the extra data the EIP-712
-        // message binds, so the requested ECDSA is left unverified.
-        assert!(!verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &signed.signature,
-            &[],
-            &[],
-            &extra_data,
-        ));
-        // A corrupt internal signature is a rejection, not something the list can
-        // paper over.
+
+        // A node from before the list is authenticated by `external_signature`.
+        assert!(verify(&[], &signed.external_signature, &[]));
+
+        // The internal signature does not stand in for the EIP-712 forms: it covers
+        // the payload alone, not the handles or the extra data the EIP-712 message
+        // binds, so it only confirms the party and the requested ECDSA is left
+        // unverified.
+        assert!(!verify(&signed.signature, &[], &[]));
+
+        // For a node from before the list, a corrupt internal signature is a rejection
+        // even beside a valid `external_signature`...
         let mut bad_internal = signed.signature.clone();
         bad_internal[0] ^= 1;
-        assert!(!verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &bad_internal,
-            &[],
-            &signatures,
-            &extra_data,
-        ));
+        assert!(!verify(&bad_internal, &signed.external_signature, &[]));
+        // ...but once the list carries ECDSA, the deprecated fields are not checked.
+        assert!(verify(&bad_internal, &[], &signatures));
     }
 
-    /// The EIP-712 domain is a precondition of the ECDSA entry alone, so a
-    /// request that asked only for a post-quantum scheme is verified without one,
-    /// while a request that also asked for ECDSA needs both the domain and the
-    /// ECDSA entry.
+    /// A request that asked only for a post-quantum scheme is satisfied by that entry
+    /// of the list, a request that also asked for ECDSA needs the ECDSA entry too, and
+    /// the list may be a superset of what was asked for.
     #[test]
-    fn test_public_decrypt_signatures_without_an_eip712_domain() {
+    fn test_public_decrypt_signatures_per_scheme() {
         use crate::cryptography::signatures::RootSigningSeed;
 
         let mut rng = AesRng::seed_from_u64(77);
@@ -2383,7 +2226,7 @@ mod tests {
             &identity,
             &[scheme],
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
@@ -2391,26 +2234,17 @@ mod tests {
         .map(TypedSignature::from)
         .collect();
 
+        let domain = dummy_domain();
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
             1u32,
             VerfKeySet::from_identity(&identity, &[scheme]).unwrap(),
         )]);
-        let request_for = |schemes: Vec<i32>| PublicDecryptionRequest {
-            signing_schemes: schemes,
-            ..Default::default()
-        };
-        // No domain in either context: what differs is only what was asked for.
+        let request_for =
+            |schemes: Vec<i32>| public_decrypt_request(&domain, &[], &extra_data, schemes);
+        // What differs between the contexts is only what was asked for.
         let ctx_for = |request| {
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &scheme_verf_keys,
-                None,
-                &[],
-                None,
-                request,
-            )
-            .unwrap()
+            PublicDecTrustedValidationContext::new(&server_pks, &scheme_verf_keys, request).unwrap()
         };
         // This response carries no deprecated internal field, so the post-quantum
         // entry of `signatures` is the only thing that can authenticate it.
@@ -2428,9 +2262,9 @@ mod tests {
         };
 
         let pq_only = request_for(vec![kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32]);
-        let pq_ctx = ctx_for(Some(&pq_only));
+        let pq_ctx = ctx_for(&pq_only);
 
-        // No domain, yet the post-quantum entry the request asked for verifies.
+        // The post-quantum entry the request asked for verifies on its own.
         assert!(verify(&pq_ctx, &extra_data));
 
         // The extra data is part of what that entry covers.
@@ -2442,14 +2276,14 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         ]);
-        let composite_ctx = ctx_for(Some(&composite));
+        let composite_ctx = ctx_for(&composite);
         assert!(!verify(&composite_ctx, &extra_data));
 
-        // Neither is an absent request, which names nothing and so means ECDSA:
-        // the domain that entry needs is missing, and the list has no ECDSA entry
-        // to check in any case.
-        let no_request_ctx = ctx_for(None);
-        assert!(!verify(&no_request_ctx, &extra_data));
+        // Neither is a request that names no scheme, which means ECDSA, for which
+        // the list has no entry.
+        let no_scheme = request_for(vec![]);
+        let no_scheme_ctx = ctx_for(&no_scheme);
+        assert!(!verify(&no_scheme_ctx, &extra_data));
 
         // A response signed under a superset of the request is accepted: the
         // post-quantum entry is checked against the set the response presents,
@@ -2459,7 +2293,7 @@ mod tests {
             &identity,
             &superset,
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
@@ -2481,50 +2315,13 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
         ]);
-        let superset_ctx = PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &superset_keys,
-            None,
-            &[],
-            None,
-            Some(&superset_request),
-        )
-        .unwrap();
+        let superset_ctx =
+            PublicDecTrustedValidationContext::new(&server_pks, &superset_keys, &superset_request)
+                .unwrap();
         assert!(verify_list(&superset_ctx, &superset_signatures));
 
-        // Dropping the unrequested entry changes the presented set, which the
-        // requested entry is bound to, so what is left no longer verifies.
-        let stripped: Vec<_> = superset_signatures
-            .iter()
-            .filter(|typed| typed.scheme == scheme.as_wire())
-            .cloned()
-            .collect();
-        assert!(!verify_list(&pq_ctx, &stripped));
-
-        // Appending an entry the server did not sign changes the presented set in
-        // the same way, so it breaks a response that was otherwise complete.
-        let mut with_junk = signatures.clone();
-        with_junk.push(TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
-            signature: vec![0u8; 64],
-        });
-        assert!(!verify_list(&pq_ctx, &with_junk));
-        let junk_only = vec![with_junk.pop().unwrap()];
-        assert!(!verify_list(&pq_ctx, &junk_only));
-
-        // An entry of a scheme this release does not know is bound into the preimage
-        // like any other, so appending one the server did not sign is rejected too.
-        let mut with_unknown = signatures.clone();
-        with_unknown.push(TypedSignature {
-            scheme: i32::MAX,
-            signature: vec![0u8; 64],
-        });
-        assert!(!verify_list(&pq_ctx, &with_unknown));
-
         // A newer node that signs under a scheme this release does not know binds
-        // that scheme into the preimage of its other entries. Its response verifies
-        // here on the requested entry, wherever the unknown entry sits in the list,
-        // and the unknown entry itself is not checked.
+        // that scheme into the preimage of its other entries.
         let unknown_scheme = i32::MAX;
         let newer_preimage =
             wire_scheme_bound_preimage(&[scheme.as_wire(), unknown_scheme], &signed).unwrap();
@@ -2539,42 +2336,103 @@ mod tests {
             scheme: unknown_scheme,
             signature: vec![0u8; 64],
         };
-        let newer = vec![newer_entry.clone(), unknown_entry.clone()];
-        assert!(verify_list(&pq_ctx, &newer));
-        let newer_reordered = vec![unknown_entry, newer_entry.clone()];
-        assert!(verify_list(&pq_ctx, &newer_reordered));
+        let unsigned_ed25519 = TypedSignature {
+            scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            signature: vec![0u8; 64],
+        };
+        let stripped: Vec<_> = superset_signatures
+            .iter()
+            .filter(|typed| typed.scheme == scheme.as_wire())
+            .cloned()
+            .collect();
 
-        // Dropping the unknown entry changes the presented set, so the requested
-        // entry no longer verifies.
-        assert!(!verify_list(&pq_ctx, &[newer_entry]));
+        // The requested entry is bound to the set of entries the response
+        // presents, so an added or a dropped entry, known or unknown, breaks it.
+        // An entry nobody asked for is not checked, so the response of the newer
+        // node verifies wherever its unknown entry sits.
+        for (case, list, accepted) in [
+            (
+                "newer node, unknown entry last",
+                vec![newer_entry.clone(), unknown_entry.clone()],
+                true,
+            ),
+            (
+                "newer node, unknown entry first",
+                vec![unknown_entry.clone(), newer_entry.clone()],
+                true,
+            ),
+            (
+                "newer node without its unknown entry",
+                vec![newer_entry],
+                false,
+            ),
+            ("superset without its unrequested entry", stripped, false),
+            (
+                "an unsigned known entry appended",
+                [signatures.clone(), vec![unsigned_ed25519]].concat(),
+                false,
+            ),
+            (
+                "an unsigned unknown entry appended",
+                [signatures.clone(), vec![unknown_entry.clone()]].concat(),
+                false,
+            ),
+            ("only an unrequested entry", vec![unknown_entry], false),
+        ] {
+            assert_eq!(verify_list(&pq_ctx, &list), accepted, "{case}");
+        }
     }
 
     #[test]
     fn test_validate_new_mpc_epoch_request() {
-        // When previous_epoch is set but domain is None, optional_protobuf_to_alloy_domain
-        // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
+        let epoch_id = derive_request_id("test_validate_new_mpc_epoch_request").unwrap();
+        // Every case but the first carries a valid epoch ID, so that each can only be
+        // rejected for the reason it names.
+        let resharing_req = || NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            epoch_id: Some(epoch_id.into()),
+            previous_epoch: Some(PreviousEpochInfo::default()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            ..Default::default()
+        };
+
+        // A request without an epoch ID is rejected.
         {
             let req = NewMpcEpochRequest {
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-                previous_epoch: Some(PreviousEpochInfo::default()),
-                domain: None,
-                ..Default::default()
+                epoch_id: None,
+                ..resharing_req()
             };
             let err = validate_new_mpc_epoch_request(req)
-                .expect_err("request without domain must be rejected");
+                .expect_err("request without epoch ID must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
-        // Happy path
+        // A resharing request has to carry the EIP-712 domain its results are signed under.
         {
             let req = NewMpcEpochRequest {
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-                previous_epoch: Some(PreviousEpochInfo::default()),
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-                ..Default::default()
+                domain: None,
+                ..resharing_req()
             };
             let err = validate_new_mpc_epoch_request(req)
-                .expect_err("request without domain must be rejected");
+                .expect_err("resharing request without domain must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        // A resharing request with a domain is accepted, and keeps that domain.
+        {
+            let verified = validate_new_mpc_epoch_request(resharing_req()).unwrap();
+            let resharing = verified
+                .resharing
+                .expect("a request with a previous epoch is a resharing");
+            assert_eq!(resharing.signing_domain, dummy_domain());
+        }
+        // Without a previous epoch nothing is reshared, so no domain is needed.
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: None,
+                domain: None,
+                ..resharing_req()
+            };
+            let verified = validate_new_mpc_epoch_request(req).unwrap();
+            assert!(verified.resharing.is_none());
         }
     }
 
@@ -2719,22 +2577,14 @@ mod tests {
         let (vk0, _sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let server_pks = HashMap::from([(1, vk0.clone()), (2, vk1.clone())]);
+        let request = public_decrypt_request(&dummy_domain(), &[], &[], vec![]);
 
-        PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), None, &[], None, None)
-            .unwrap();
+        PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), &request).unwrap();
 
         // Error if the server_pks has duplicate keys
         let server_pks = HashMap::from([(1, vk1.clone()), (2, vk1)]);
         assert!(
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &HashMap::new(),
-                None,
-                &[],
-                None,
-                None
-            )
-            .is_err()
+            PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), &request).is_err()
         );
     }
 

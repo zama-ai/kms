@@ -62,6 +62,8 @@ use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
+#[cfg(feature = "non-wasm")]
+use alloy_primitives::B256;
 use hashing::DomainSep;
 use serde::Serialize;
 use std::io::Write;
@@ -79,6 +81,12 @@ pub const COMPOSITE_PREFIX: &[u8; 32] = b"ZamaKmsCompositeSignature2026_v1";
 pub fn canonical_schemes(
     schemes: &[SigningSchemeType],
 ) -> Result<Vec<SigningSchemeType>, SigningError> {
+    canonical(schemes)
+}
+
+/// [`canonical_schemes`] for schemes given either typed or by their wire
+/// discriminants, which sort in the same order.
+fn canonical<S: Ord + Copy>(schemes: &[S]) -> Result<Vec<S>, SigningError> {
     let mut canonical = schemes.to_vec();
     canonical.sort_unstable();
     canonical.dedup();
@@ -147,13 +155,7 @@ pub fn wire_scheme_bound_preimage<T>(
 where
     T: Serialize + Versionize + Named,
 {
-    let mut canonical = schemes.to_vec();
-    canonical.sort_unstable();
-    canonical.dedup();
-    if canonical.is_empty() {
-        return Err(SigningError::EmptySchemeSet);
-    }
-    let scheme_bytes = canonical_wire_scheme_bytes(&canonical);
+    let scheme_bytes = canonical_wire_scheme_bytes(&canonical(schemes)?);
     let mut out = ZeroizingWriter::new();
     let framed = |e: std::io::Error| SigningError::Serialization(e.to_string());
     out.write_all(COMPOSITE_PREFIX).map_err(framed)?;
@@ -164,7 +166,7 @@ where
 }
 
 /// The schemes `entries` were made under, in the order they are stored.
-pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType> {
+fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType> {
     entries.iter().map(|entry| entry.scheme).collect()
 }
 
@@ -195,13 +197,28 @@ where
         .collect()
 }
 
+/// Verify each of `entries` against its key in `keys`, over `preimage`.
+pub fn verify_scheme_bound_entries<'a>(
+    entries: impl IntoIterator<Item = (SigningSchemeType, &'a [u8])>,
+    keys: &VerfKeySet,
+    dsep: &DomainSep,
+    preimage: &[u8],
+) -> Result<(), SigningError> {
+    for (scheme, signature) in entries {
+        let key = keys.require(scheme)?;
+        let signature = Signature::new(scheme, signature.to_vec());
+        unified_verify(dsep, preimage, &signature, key)?;
+    }
+    Ok(())
+}
+
 /// Check every signature in `entries` against `keys`, having first checked that
 /// they were made under exactly the schemes in `schemes`, given in any order.
 ///
 /// `schemes` is the verifier's policy; `keys` is every key the sender publishes
-/// and must hold one for each of `schemes`. Every signature must verify. `entries` is untrusted: it may come straight
-/// from storage or from the network, so its shape is checked here rather than
-/// assumed.
+/// and must hold one for each of `schemes`. Every signature must verify.
+/// `entries` is untrusted: it may come straight from storage or from the
+/// network, so its shape is checked here rather than assumed.
 pub fn verify_composite<T>(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
@@ -224,11 +241,14 @@ where
         });
     }
     let preimage = scheme_bound_preimage(&schemes, payload)?;
-    for entry in entries {
-        let signature = Signature::new(entry.scheme, entry.signature.clone());
-        unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
-    }
-    Ok(())
+    verify_scheme_bound_entries(
+        entries
+            .iter()
+            .map(|entry| (entry.scheme, entry.signature.as_slice())),
+        keys,
+        dsep,
+        &preimage,
+    )
 }
 
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
@@ -255,7 +275,7 @@ pub fn sign_result_entries<T>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
-    eip712_hash: &[u8],
+    eip712_hash: &B256,
     payload: &T,
 ) -> Result<Vec<StoredTypedSignature>, SigningError>
 where
@@ -270,14 +290,11 @@ where
         .map(|&scheme| {
             let signature = match scheme {
                 SigningSchemeType::Ecdsa256k1 => {
-                    let hash = alloy_primitives::B256::try_from(eip712_hash).map_err(|_| {
-                        SigningError::Sign(format!(
-                            "EIP-712 signing hash must be 32 bytes, got {}",
-                            eip712_hash.len()
-                        ))
-                    })?;
-                    crate::cryptography::signing::ecdsa::eip712_sign_hash(identity.ecdsa(), &hash)
-                        .map_err(|e| SigningError::Sign(e.to_string()))?
+                    crate::cryptography::signing::ecdsa::eip712_sign_hash(
+                        identity.ecdsa(),
+                        eip712_hash,
+                    )
+                    .map_err(|e| SigningError::Sign(e.to_string()))?
                 }
                 _ => identity
                     .unified_sign_with(scheme, dsep, &signed)?
@@ -447,18 +464,22 @@ mod tests {
     fn result_entries_split_ecdsa_from_the_rest() {
         let mut rng = AesRng::seed_from_u64(20);
         let identity = seeded_identity(&mut rng);
-        let schemes = [
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::Ed25519,
+        let requested = [
             SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ed25519,
         ];
-        let eip712_hash = [0x11u8; 32];
+        let eip712_hash = B256::repeat_byte(0x11);
         let payload = msg();
-        let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
+        let bound = scheme_bound_preimage(&requested, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
-        assert_eq!(entries.len(), 3);
+            sign_result_entries(&identity, &requested, DSEP, &eip712_hash, &payload).unwrap();
+        assert_eq!(
+            entry_schemes(&entries),
+            canonical_schemes(&requested).unwrap()
+        );
 
         for entry in &entries {
             if entry.scheme == SigningSchemeType::Ecdsa256k1 {
@@ -477,31 +498,8 @@ mod tests {
             tfhe::safe_serialization::safe_serialize(&payload, &mut bare, SAFE_SER_SIZE_LIMIT)
                 .unwrap();
             assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
-            assert!(unified_verify(DSEP, &eip712_hash, &sig, &vk).is_err());
+            assert!(unified_verify(DSEP, eip712_hash.as_slice(), &sig, &vk).is_err());
         }
-    }
-
-    /// Result entries use the same ordering convention as [`sign_composite`]:
-    /// by scheme, duplicate-free, whatever order the request arrived in.
-    #[test]
-    fn result_entries_are_ordered_by_scheme() {
-        let mut rng = AesRng::seed_from_u64(21);
-        let identity = seeded_identity(&mut rng);
-        let requested = [
-            SigningSchemeType::MlDsa65,
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::MlDsa65,
-            SigningSchemeType::Ed25519,
-        ];
-        let canonical = canonical_schemes(&requested).unwrap();
-
-        let entries =
-            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg()).unwrap();
-
-        assert_eq!(
-            entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
-            canonical
-        );
     }
 
     /// An empty set is a caller mistake, not a request for no signatures: a
@@ -511,7 +509,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
         assert!(matches!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg()),
+            sign_result_entries(&identity, &[], DSEP, &B256::ZERO, &msg()),
             Err(SigningError::EmptySchemeSet)
         ));
     }

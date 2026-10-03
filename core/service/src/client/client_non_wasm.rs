@@ -155,7 +155,7 @@ impl Client {
                 dsep,
                 internal_bytes: &[],
                 payload,
-                eip712_hash: Some(sol_type.eip712_signing_hash(domain)),
+                eip712_hash: sol_type.eip712_signing_hash(domain),
             },
             &self.signing_schemes,
             &ExpectedSigner::Discover {
@@ -274,7 +274,7 @@ mod tests {
         payload: &CrsSignedPayload,
     ) -> Vec<TypedSignature> {
         let eip712_hash = sol_type().eip712_signing_hash(&dummy_domain());
-        sign_result_entries(identity, schemes, DSEP, eip712_hash.as_slice(), payload)
+        sign_result_entries(identity, schemes, DSEP, &eip712_hash, payload)
             .unwrap()
             .iter()
             .map(TypedSignature::from)
@@ -326,25 +326,6 @@ mod tests {
         );
     }
 
-    /// The rolling-upgrade case: a node from a release before `signatures` answers with
-    /// an empty list and the legacy ECDSA signature alone, and that still authenticates
-    /// the result for a client asking only for ECDSA.
-    #[test]
-    fn an_empty_list_falls_back_to_the_legacy_signature() {
-        let identity = seeded_identity(12);
-        let client = client_for(&identity, &[]);
-
-        let (party_id, address) = verify_with_legacy(
-            &client,
-            &[],
-            &legacy_external_signature(&identity),
-            &payload(),
-        )
-        .unwrap();
-        assert_eq!(party_id, PARTY);
-        assert_eq!(address, identity.verf_key().address());
-    }
-
     /// The fallback counts for ECDSA only. An old node cannot produce a post-quantum
     /// signature, so a request that named one is not satisfied by its legacy signature —
     /// otherwise any server could drop a requested scheme and still be accepted.
@@ -371,81 +352,28 @@ mod tests {
         );
     }
 
-    /// The fallback is a real signature check, not a waiver for an empty list.
+    /// Each non-ECDSA entry verifies for, and is attributed to, the party that signed it,
+    /// and covers the payload it was signed over and nothing else.
     #[test]
-    fn the_legacy_fallback_rejects_a_signature_of_another_party() {
-        let identity = seeded_identity(14);
-        let client = client_for(&identity, &[]);
-        let stranger = legacy_external_signature(&seeded_identity(15));
-
-        assert!(verify_with_legacy(&client, &[], &stranger, &payload()).is_err());
-        assert!(verify_with_legacy(&client, &[], &[0u8; 65], &payload()).is_err());
-    }
-
-    /// The legacy signature is checked *alongside* the list, not instead of it. A result
-    /// whose list verifies but whose deprecated field does not is still rejected: the two
-    /// are independent statements about the same result, and they have to agree.
-    #[test]
-    fn a_bad_legacy_signature_is_rejected_even_when_the_list_verifies() {
-        let identity = seeded_identity(16);
-        let client = client_for(&identity, &[]);
-        let signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
-
-        // Both copies present and agreeing is the honest case.
-        let (party_id, _address) = verify_with_legacy(
-            &client,
-            &signatures,
-            &legacy_external_signature(&identity),
-            &payload(),
-        )
-        .unwrap();
-        assert_eq!(party_id, PARTY);
-
-        // A garbage legacy signature is a rejection, and so is one of another party.
-        assert!(verify_with_legacy(&client, &signatures, &[0xAA; 65], &payload()).is_err());
-        assert!(
-            verify_with_legacy(
-                &client,
-                &signatures,
-                &legacy_external_signature(&seeded_identity(17)),
-                &payload(),
-            )
-            .is_err()
-        );
-    }
-
-    /// A MlDsa65 signature is attributed to the correct signing party, provided
-    /// MlDsa65 is what the client asked for.
-    #[test]
-    fn a_result_without_an_ecdsa_entry_is_attributed() {
+    fn each_non_ecdsa_entry_is_attributed_and_bound_to_its_payload() {
         let identity = seeded_identity(3);
-        let client = client_requesting(&identity, true, &[SigningSchemeType::MlDsa65]);
-        let signatures = signatures_for(&identity, &[SigningSchemeType::MlDsa65], &payload());
-
-        let (party_id, _address) = verify(&client, &signatures, &payload()).unwrap();
-        assert_eq!(party_id, PARTY);
-    }
-
-    /// Each entry covers the payload it was signed over, and nothing else.
-    #[test]
-    fn a_tampered_payload_is_rejected() {
-        let identity = seeded_identity(4);
 
         for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            // Ask for exactly the scheme under test, so the rejection can only come
-            // from the signature check and not from a scheme left unverified.
+            // Ask for exactly the scheme under test, so a rejection can only come from
+            // the signature check and not from a scheme left unverified.
             let client = client_requesting(&identity, true, &[scheme]);
             let signatures = signatures_for(&identity, &[scheme], &payload());
+            assert_eq!(
+                verify(&client, &signatures, &payload()).unwrap().0,
+                PARTY,
+                "{scheme}"
+            );
+            let tampered = CrsSignedPayload {
+                crs_digest: vec![8u8; 32],
+                ..payload()
+            };
             assert!(
-                verify(
-                    &client,
-                    &signatures,
-                    &CrsSignedPayload {
-                        crs_digest: vec![8u8; 32],
-                        ..payload()
-                    }
-                )
-                .is_err(),
+                verify(&client, &signatures, &tampered).is_err(),
                 "the {scheme} entry verified a payload it does not cover"
             );
         }
@@ -478,44 +406,6 @@ mod tests {
         assert_eq!(client.signing_schemes(), &composite);
     }
 
-    /// An entry of a scheme this release does not know is passed over, so a newer node
-    /// can add a scheme without breaking a verifier still on this release.
-    #[test]
-    fn an_entry_of_an_unknown_scheme_is_skipped() {
-        let identity = seeded_identity(20);
-        let client = client_for(&identity, &[]);
-        let mut signatures =
-            signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
-        signatures.push(TypedSignature {
-            scheme: i32::MAX,
-            signature: vec![0xEE; 64],
-        });
-
-        assert_eq!(
-            verify(&client, &signatures, &payload()).unwrap(),
-            (PARTY, identity.verf_key().address())
-        );
-        // On its own the unknown entry authenticates nothing.
-        assert!(verify(&client, &signatures[1..], &payload()).is_err());
-    }
-
-    /// Another party's signatures are not accepted as this party's.
-    #[test]
-    fn another_partys_signatures_are_rejected() {
-        let identity = seeded_identity(5);
-        let client = client_for(&identity, &[]);
-        let signatures = signatures_for(
-            &seeded_identity(6),
-            &[SigningSchemeType::Ecdsa256k1],
-            &payload(),
-        );
-
-        let err = verify(&client, &signatures, &payload())
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("belongs to no known party"), "{err}");
-    }
-
     /// A signature that cannot be checked for want of a key must not pass for one
     /// that was checked.
     #[test]
@@ -536,8 +426,8 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("party 1 signed under Ed25519")
-                && err.contains("no Ed25519 verification key is known"),
+            err.contains("party 1")
+                && err.contains("no party published a Ed25519 verification key"),
             "the error does not name the missing key: {err}"
         );
     }
@@ -608,7 +498,9 @@ mod tests {
         }
     }
 
-    /// ECDSA signatures must parse and authenticate the expected signer and message.
+    /// ECDSA signatures must parse and authenticate the expected signer and message, both
+    /// as the list entry and, for a node from before the list, as the legacy field. A
+    /// legacy field beside a valid list entry is not checked at all.
     #[test]
     fn invalid_ecdsa_signatures_are_rejected() {
         let identity = seeded_identity(18);
@@ -626,20 +518,19 @@ mod tests {
             ),
             ("wrong message", wrong_message),
         ];
+        let list = |signature: Vec<u8>| {
+            vec![TypedSignature {
+                scheme: SigningSchemeType::Ecdsa256k1.as_wire(),
+                signature,
+            }]
+        };
 
         for legacy in [false, true] {
             let check = |signature: Vec<u8>| {
                 if legacy {
                     verify_with_legacy(&client, &[], &signature, &payload())
                 } else {
-                    verify(
-                        &client,
-                        &[TypedSignature {
-                            scheme: SigningSchemeType::Ecdsa256k1.as_wire(),
-                            signature,
-                        }],
-                        &payload(),
-                    )
+                    verify(&client, &list(signature), &payload())
                 }
             };
             assert_eq!(
@@ -649,6 +540,22 @@ mod tests {
             for (case, signature) in &invalid {
                 assert!(check(signature.clone()).is_err(), "{case}, legacy={legacy}");
             }
+        }
+
+        // Another party's entry is attributed to no known party.
+        let err = verify(&client, &list(invalid[2].1.clone()), &payload())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("belongs to no known party"), "{err}");
+
+        for (case, signature) in &invalid {
+            assert_eq!(
+                verify_with_legacy(&client, &list(valid.clone()), signature, &payload())
+                    .unwrap()
+                    .0,
+                PARTY,
+                "a bad {case} legacy field beside a valid list entry"
+            );
         }
     }
 }
