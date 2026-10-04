@@ -6,6 +6,40 @@ use test_utils_service::persistent_traces;
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_INIT: &str = "kms-init";
+const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
+
+#[cfg(test)]
+mod version_flag_test {
+    use super::*;
+    use kms_lib::backup::KMS_CUSTODIAN;
+
+    #[test]
+    #[integration_test]
+    fn version() {
+        for bin in [
+            KMS_SERVER,
+            KMS_GEN_KEYS,
+            KMS_INIT,
+            KMS_GEN_TLS_CERTS,
+            KMS_CUSTODIAN,
+        ] {
+            let output = Command::cargo_bin(bin)
+                .unwrap()
+                .arg("--version")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "{bin} --version failed: {output:?}"
+            );
+            assert!(
+                stdout.contains(env!("CARGO_PKG_VERSION")),
+                "{bin} --version printed {stdout:?}"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod kms_init_binary_test {
@@ -629,9 +663,9 @@ mod kms_custodian_binary_tests {
     use assert_cmd::Command;
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
-        backup::BACKUP_PKE_SCHEME,
         backup::{
-            KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC,
+            BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
+            SEED_PHRASE_DESC,
             custodian::{
                 InternalCustodianContext, InternalCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
@@ -642,13 +676,15 @@ mod kms_custodian_binary_tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-            signatures::gen_sig_keys,
+            signatures::{VerfKeySet, test_support::seeded_identity},
         },
-        engine::base::derive_request_id,
-        engine::utils::{base64_deserialize, base64_serialize},
+        engine::{
+            base::derive_request_id,
+            utils::{base64_deserialize, base64_serialize},
+        },
     };
     use rand::SeedableRng;
-    use std::{collections::BTreeMap, thread};
+    use std::{collections::BTreeMap, sync::Arc, thread};
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
@@ -795,7 +831,7 @@ mod kms_custodian_binary_tests {
                 cur_res,
                 bc2wrap::serialize(&backup_dec_key).unwrap(),
                 "Decryption did not match expected data for operator {}",
-                operator.verification_key().address(),
+                operator.verification_key().ecdsa().unwrap().address(),
             );
         }
     }
@@ -847,13 +883,13 @@ mod kms_custodian_binary_tests {
         let amount_custodians = setup_msgs.len();
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_identity = Arc::new(seeded_identity(&mut rng));
 
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new_for_sharing(
             setup_msgs.clone(),
-            signing_key.clone(),
+            signing_identity.clone(),
             threshold,
             setup_msgs.len(),
         )
@@ -885,7 +921,7 @@ mod kms_custodian_binary_tests {
             ct_map.clone(),
             commitments.clone(),
             custodian_context,
-            &signing_key,
+            &signing_identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
@@ -897,7 +933,7 @@ mod kms_custodian_binary_tests {
         }
         let recovery_request = InternalRecoveryRequest::new(
             ephemeral_pub_key.clone(),
-            verification_key.clone(),
+            VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES).unwrap(),
             ciphertexts,
         )
         .unwrap();

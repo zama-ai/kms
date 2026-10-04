@@ -16,6 +16,7 @@ pub use crate::s3_operations::fetch_public_elements;
 use crate::backup::{
     do_custodian_backup_recovery, do_custodian_recovery_init, do_destroy_custodian_context,
     do_get_operator_pub_keys, do_new_custodian_context, do_restore_from_backup,
+    parse_expected_operator_keys, report_operator_keys,
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
@@ -1026,6 +1027,13 @@ pub struct RecoveryInitParameters {
     /// backup vault holds more than one, as it does after a context rotation.
     #[clap(long, short = 'i')]
     pub custodian_context_id: Option<RequestId>,
+    /// A verification key the operator expects the recovery request to carry, as
+    /// `SCHEME=VALUE`, where VALUE is the `0x` text this command prints for that scheme: the
+    /// address for `Ecdsa256k1`, the key digest for the others. Repeat it once per scheme.
+    /// The command fails if any given key does not match; schemes left out must be checked by
+    /// hand against what it prints.
+    #[clap(long = "expected-operator-key", value_name = "SCHEME=VALUE")]
+    pub expected_operator_keys: Vec<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -1039,7 +1047,8 @@ pub struct RecoveryParameters {
 
 #[derive(Debug, Clone)]
 pub enum DigestKeySet {
-    CompressedKeySet(String),
+    /// The first string is the compressed keyset digest, the second string is the public key digest.
+    CompressedKeySet(String, String),
     /// The first string is the server key digest, the second string is the public key digest.
     NonCompressedKeySet(String, String),
 }
@@ -1053,7 +1062,7 @@ pub struct PreviousKeyInfo {
     pub preproc_id: RequestId,
 
     /// The hex-encoded digest(s) of the public part(s) of the key being reshared.
-    /// For compressed keysets, this is a single digest of the compressed keyset.
+    /// For compressed keysets, this includes the digest of the compressed keyset and the digest of the public key.
     /// For non-compressed keysets, this includes the digest of the server key and the digest of the public key.
     pub key_digest: DigestKeySet,
 }
@@ -1098,7 +1107,7 @@ pub struct NewEpochParameters {
     /// Format is:
     ///
     /// For compressed keyset
-    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
     ///
     /// For non-compressed keyset
     /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
@@ -1206,6 +1215,7 @@ pub enum CCCommand {
 }
 
 #[derive(Debug, Parser, Validate)]
+#[clap(version)]
 pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
@@ -1571,8 +1581,8 @@ impl FromStr for PreviousKeyInfo {
                     if xof_key_digest.is_some() {
                         return Err("Duplicate xof_key_digest field".to_string());
                     }
-                    if server_key_digest.is_some() || public_key_digest.is_some() {
-                        return Err("xof_key_digest field is mutually exclusive with server_key_digest and public_key_digest fields".to_string());
+                    if server_key_digest.is_some() {
+                        return Err("xof_key_digest field is mutually exclusive with server_key_digest field".to_string());
                     }
                     xof_key_digest = Some(value.to_string());
                 }
@@ -1589,25 +1599,24 @@ impl FromStr for PreviousKeyInfo {
                     if public_key_digest.is_some() {
                         return Err("Duplicate public_key_digest field".to_string());
                     }
-                    if xof_key_digest.is_some() {
-                        return Err("public_key_digest field is mutually exclusive with xof_key_digest field".to_string());
-                    }
                     public_key_digest = Some(value.to_string());
                 }
                 _ => return Err(format!("[PreviousKeyInfo] Unknown field: {}", key)),
             }
         }
 
-        if server_key_digest.is_some() != public_key_digest.is_some() {
-            return Err(
-                "If server_key_digest or public_key_digest is provided, both must be provided   "
-                    .to_owned(),
-            );
-        }
-
         let key_digest = if let Some(xof_digest) = xof_key_digest {
-            DigestKeySet::CompressedKeySet(xof_digest)
+            DigestKeySet::CompressedKeySet(
+                xof_digest,
+                public_key_digest.ok_or("Missing public_key_digest")?,
+            )
         } else {
+            if server_key_digest.is_some() != public_key_digest.is_some() {
+                return Err(
+                    "If server_key_digest or public_key_digest is provided, both must be provided   "
+                        .to_owned(),
+                );
+            }
             DigestKeySet::NonCompressedKeySet(
                 server_key_digest.ok_or("Missing server_key_digest")?,
                 public_key_digest.ok_or("Missing public_key_digest")?,
@@ -1814,6 +1823,49 @@ async fn read_kms_addresses_local(
     Ok(kms_addrs)
 }
 
+/// Fetch the verification keys the internal client checks the cores' responses against: the
+/// ECDSA key and address of every core, and its key for every other scheme in `signing_schemes`.
+/// Returns the cores' addresses.
+async fn fetch_verification_keys(
+    command: &CCCommand,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+    signing_schemes: &[SigningSchemeType],
+) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
+    // Always fetch the public verification keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+    tracing::info!("Fetching verification keys. ({command:?})");
+    let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+    let _ = fetch_public_elements(
+        &SIGNING_KEY_ID.to_string(),
+        &public_verf_types,
+        cc_conf,
+        destination_prefix,
+        true, // we always need to download all verification keys
+    )
+    .await?;
+
+    // The client checks the entry of every other requested scheme against the key each
+    // core publishes for that scheme, so those keys are fetched as well. The two objects
+    // above cover ECDSA.
+    for scheme in signing_schemes
+        .iter()
+        .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+    {
+        fetch_public_elements(
+            &signing_material_id(*scheme).to_string(),
+            &[PubDataType::TypedVerfKey],
+            cc_conf,
+            destination_prefix,
+            true,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}"))?;
+    }
+
+    // read the addresses we just fetched from disk
+    read_kms_addresses_local(destination_prefix, cc_conf).await
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -1885,45 +1937,22 @@ pub async fn execute_cmd(
 
     let signing_schemes = SigningSchemeType::parse_requested(&cmd_config.signing_schemes)?;
 
-    if let CCCommand::Encrypt(_) = command {
-        //Don't need to fetch or connect if we just do an encrypt
-    } else if let CCCommand::DoNothing(_) = command {
-        // Don't need to fetch or connect if we just do nothing
-    } else {
-        // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
-        tracing::info!("Fetching verification keys. ({command:?})");
-        let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-        let _ = fetch_public_elements(
-            &SIGNING_KEY_ID.to_string(),
-            &public_verf_types,
-            &cc_conf,
-            destination_prefix,
-            true, // we always need to download all verification keys
-        )
-        .await?;
+    // Encrypting needs nothing from the cores, and neither does a no-op.
+    let needs_cores = !matches!(command, CCCommand::Encrypt(_) | CCCommand::DoNothing(_));
+    // The custodian recovery commands only talk to the cores' backup endpoints, whose responses
+    // are not signed, so they need neither the verification keys nor the client that checks
+    // responses against them. They must also work when the cores' public storage is lost.
+    let needs_verf_keys = !matches!(
+        command,
+        CCCommand::CustodianRecoveryInit(_) | CCCommand::CustodianBackupRecovery(_)
+    );
 
-        // The client checks the entry of every other requested scheme against the key each
-        // core publishes for that scheme, so those keys are fetched as well. The two objects
-        // above cover ECDSA.
-        for scheme in signing_schemes
-            .iter()
-            .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
-        {
-            fetch_public_elements(
-                &signing_material_id(*scheme).to_string(),
-                &[PubDataType::TypedVerfKey],
-                &cc_conf,
-                destination_prefix,
-                true,
-            )
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}")
-            })?;
+    if needs_cores {
+        if needs_verf_keys {
+            addr_vec =
+                fetch_verification_keys(command, &cc_conf, destination_prefix, &signing_schemes)
+                    .await?;
         }
-
-        // read the addresses we just fetched from disk
-        addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
 
         match cc_conf.kms_type {
             KmsType::Centralized => {
@@ -1958,16 +1987,6 @@ pub async fn execute_cmd(
                 pub_storage.insert(
                     1,
                     FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
-                );
-                internal_client = Some(
-                    Client::new_client(
-                        client_storage,
-                        pub_storage,
-                        &client_param,
-                        cc_conf.decryption_mode,
-                    )
-                    .await
-                    .unwrap(),
                 );
                 tracing::info!("Centralized Client setup done.");
             }
@@ -2037,19 +2056,20 @@ pub async fn execute_cmd(
                         .unwrap(),
                     );
                 }
-                internal_client = Some(
-                    Client::new_client(
-                        client_storage,
-                        pub_storage,
-                        &client_param,
-                        cc_conf.decryption_mode,
-                    )
-                    .await
-                    .unwrap(),
-                );
                 tracing::info!("Threshold Client setup done.");
             }
         };
+        if needs_verf_keys {
+            internal_client = Some(
+                Client::new_client(
+                    client_storage,
+                    pub_storage,
+                    &client_param,
+                    cc_conf.decryption_mode,
+                )
+                .await?,
+            );
+        }
     }
     if let Some(client) = internal_client.as_mut() {
         client.set_signing_schemes(&signing_schemes)?;
@@ -2120,6 +2140,7 @@ pub async fn execute_cmd(
             // (a handle identifies a specific ciphertext/plaintext, so they must differ).
             let fhe_type = ptxt.fhe_type;
             let ciphertext_format: i32 = ct_format.into();
+            let ciphertext = bytes::Bytes::from(ciphertext);
             let ct_batch: Vec<TypedCiphertext> =
                 integration_test_handles(cipher_args.get_batch_size())
                     .into_iter()
@@ -2232,7 +2253,7 @@ pub async fn execute_cmd(
 
             let ct_batch = vec![
                 TypedCiphertext {
-                    ciphertext,
+                    ciphertext: ciphertext.into(),
                     fhe_type: ptxt.fhe_type,
                     external_handle: dummy_handle(),
                     ciphertext_format: ct_format.into(),
@@ -2783,23 +2804,29 @@ pub async fn execute_cmd(
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
             custodian_context_id,
+            expected_operator_keys,
         }) => {
             // TODO(#3042) - currently we require backup operations to be done with a single core.
             // This issue streamlines this and requires an update in this section
             if num_cores != 1 {
                 return Err("Custodian recovery init is only supported for a single core".into());
             }
+            // Parsed first, so a malformed argument fails before the core is asked anything.
+            let expected = parse_expected_operator_keys(expected_operator_keys)?;
             let res = do_custodian_recovery_init(
                 &core_endpoints_req,
                 *overwrite_ephemeral_key,
                 custodian_context_id.as_ref().map(|id| (*id).into()),
             )
             .await?;
+            let recovery_request = res
+                .first()
+                .expect("Expected at least one response for custodian recovery init");
+            // The core may have taken these keys from its recovery material rather than from a
+            // trusted source, so they are only as good as this check, or the operator's own.
+            report_operator_keys(recovery_request.operator_verf_key(), &expected)?;
 
-            let serialized_res = base64_serialize(
-                res.first()
-                    .expect("Expected at least one response for custodian recovery init"),
-            )?;
+            let serialized_res = base64_serialize(recovery_request)?;
             tracing::info!("Serialized custodian result");
 
             vec![(None, serialized_res)]
@@ -3049,6 +3076,13 @@ mod tests {
     use tempfile::tempdir;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
+
+    #[test]
+    fn version_flag_prints_package_version() {
+        let err = CmdConfig::try_parse_from(["kms-core-client", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(env!("CARGO_PKG_VERSION")));
+    }
 
     #[test]
     fn test_parse_hex() {
@@ -3517,7 +3551,7 @@ mod tests {
         let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         // Test the FromStr impl of PreviousEpochParameters
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
         );
         let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
 
@@ -3526,10 +3560,11 @@ mod tests {
         assert_eq!(parsed.previous_keys.len(), 2);
         for key_info in parsed.previous_keys {
             match key_info.key_digest {
-                DigestKeySet::CompressedKeySet(compressed) => {
+                DigestKeySet::CompressedKeySet(compressed, pubkey) => {
                     assert_eq!(key_info.key_id.to_string(), id5);
                     assert_eq!(key_info.preproc_id.to_string(), id6);
-                    assert_eq!(compressed, "abc456")
+                    assert_eq!(compressed, "abc456");
+                    assert_eq!(pubkey, "def456");
                 }
                 DigestKeySet::NonCompressedKeySet(serverkey, pubkey) => {
                     assert_eq!(key_info.key_id.to_string(), id3);
@@ -3550,37 +3585,43 @@ mod tests {
 
         // Missing context_id should fail
         let input_string = format!(
-            "epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing epoch_id should fail
         let input_string = format!(
-            "context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing public key digest for non-compressed key set should fail
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing key_id in previous keys should fail
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing preproc_id in previous keys should fail
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Mixing compressed and non-compressed key sets should fail
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456,public_key_digest=def456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing public key digest for compressed key set should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
@@ -3592,37 +3633,37 @@ mod tests {
 
         // Wrong ids test
         let input_string = format!(
-            "context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456,public_key_digest=def456]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456,public_key_digest=def456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
     }

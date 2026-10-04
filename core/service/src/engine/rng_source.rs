@@ -314,7 +314,7 @@ mod tests {
         let networking = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
-        let sessions = SessionMaker::new_uninitialized(networking, None, base.rng_source());
+        let sessions = SessionMaker::new(networking, None, base.rng_source());
         let mut before_refresh = AesRng::seed_from_u64(42);
         sessions.reseed_rng().unwrap();
         assert_ne!(

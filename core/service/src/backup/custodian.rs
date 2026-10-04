@@ -1,14 +1,15 @@
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
+use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, ensure_backup_schemes};
+use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
 use crate::cryptography::{
-    encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::PrivateSigKey,
+    encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
 };
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
@@ -16,7 +17,8 @@ use kms_grpc::kms::v1::{
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{Versionize, named::Named, safe_serialization::safe_deserialize};
@@ -35,6 +37,10 @@ const ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEYS: &str =
     "Duplicate custodian encryption key found in custodian context";
 const ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS: &str =
     "Duplicate custodian verification key found in custodian context";
+const ERR_WEAK_CUSTODIAN_ENCRYPTION_KEY: &str =
+    "Custodian encryption key does not use the backup encryption scheme";
+const ERR_WEAK_BACKUP_ENCRYPTION_KEY: &str =
+    "Backup encryption key does not use the backup encryption scheme";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalCustodianRecoveryOutputVersions {
@@ -71,7 +77,6 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
                 backup_output.pke_type.try_into()?,
-                backup_output.signing_type.try_into()?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
@@ -86,7 +91,6 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
-                signing_type: value.signcryption.signing_type as i32,
             }),
             custodian_role: value.custodian_role.one_based() as u64,
         })
@@ -106,7 +110,7 @@ pub struct CustodianSetupMessagePayload {
     pub random_value: [u8; 32],
     pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey,
-    pub verification_key: PublicSigKey,
+    pub verification_key: VerfKeySet,
 }
 
 impl Named for CustodianSetupMessagePayload {
@@ -133,7 +137,7 @@ pub struct InternalCustodianSetupMessage {
     pub random_value: [u8; 32],
     pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey, // The public encrypt key of the custodian
-    pub public_verf_key: PublicSigKey,       // The custodian's verification key
+    pub public_verf_key: VerfKeySet,         // The custodian's published verification keys
 }
 
 impl Named for InternalCustodianSetupMessage {
@@ -148,7 +152,7 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
         let mut buf = std::io::Cursor::new(value.payload);
         let payload: CustodianSetupMessagePayload =
             safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))?;
-        Ok(InternalCustodianSetupMessage {
+        let message = InternalCustodianSetupMessage {
             header: payload.header,
             name: value.name,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
@@ -156,7 +160,11 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
             timestamp: payload.timestamp,
             public_enc_key: payload.public_enc_key,
             public_verf_key: payload.verification_key,
-        })
+        };
+        // A peer's key set crosses a boundary here, so it is checked rather than trusted.
+        ensure_backup_schemes(&message.public_verf_key)
+            .map_err(|e| anyhow::anyhow!("custodian role {}: {e}", message.custodian_role))?;
+        Ok(message)
     }
 }
 
@@ -275,6 +283,22 @@ impl InternalCustodianContext {
         }
 
         let nodes = node_map.values().collect::<Vec<_>>();
+        for node in &nodes {
+            ensure_backup_schemes(&node.public_verf_key)
+                .map_err(|e| anyhow::anyhow!("custodian role {}: {e}", node.custodian_role))?;
+            // Reject a custodian whose encryption key is weaker than the scheme
+            // this path is built around, rather than encrypting its share of the
+            // backup key under it anyway.
+            let scheme = node.public_enc_key.encryption_scheme_type();
+            if scheme != BACKUP_PKE_SCHEME {
+                return Err(anyhow::anyhow!(
+                    "{}: role {} published a {scheme} key, but {BACKUP_PKE_SCHEME} is required",
+                    ERR_WEAK_CUSTODIAN_ENCRYPTION_KEY,
+                    node.custodian_role,
+                ));
+            }
+        }
+
         for (index, node) in nodes.iter().enumerate() {
             for previous_node in &nodes[..index] {
                 if previous_node.public_enc_key == node.public_enc_key {
@@ -285,13 +309,19 @@ impl InternalCustodianContext {
                         node.custodian_role
                     ));
                 }
-                if previous_node.public_verf_key == node.public_verf_key {
-                    return Err(anyhow::anyhow!(
-                        "{}: roles {} and {}",
-                        ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
-                        previous_node.custodian_role,
-                        node.custodian_role
-                    ));
+                // Two custodians must not share *any* verification keys
+                let mut test_set: HashSet<_> =
+                    node.public_verf_key.iter().map(|(_, key)| key).collect();
+                for (scheme, cur_key) in previous_node.public_verf_key.iter() {
+                    if !test_set.insert(cur_key) {
+                        return Err(anyhow::anyhow!(
+                            "{}: roles {} and {} share their {scheme} key {}",
+                            ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
+                            previous_node.custodian_role,
+                            node.custodian_role,
+                            cur_key.address_text()
+                        ));
+                    }
                 }
             }
         }
@@ -303,6 +333,12 @@ impl InternalCustodianContext {
         custodian_context: CustodianContext,
         backup_enc_key: UnifiedPublicEncKey,
     ) -> anyhow::Result<Self> {
+        let backup_scheme = backup_enc_key.encryption_scheme_type();
+        if backup_scheme != BACKUP_PKE_SCHEME {
+            return Err(anyhow::anyhow!(
+                "{ERR_WEAK_BACKUP_ENCRYPTION_KEY}: got {backup_scheme}, but {BACKUP_PKE_SCHEME} is required",
+            ));
+        }
         let node_map = Self::validated_nodes(&custodian_context)?;
         let context_id: RequestId = parse_optional_grpc_request_id(
             &custodian_context.custodian_context_id,
@@ -317,36 +353,41 @@ impl InternalCustodianContext {
     }
 }
 
+#[derive(Debug)]
 pub struct Custodian {
     role: Role,
-    signing_key: PrivateSigKey,
+    signing_identity: NodeSigningIdentity,
+    verification_keys: VerfKeySet,
     enc_key: UnifiedPublicEncKey,
     dec_key: UnifiedPrivateEncKey,
 }
 
-/// The custodian is the entity can sign and decrypt messages,
+/// The custodian is the entity that signs and decrypts messages,
 /// which are usually secret shares that are needed for recovery.
 /// Since the secrets should be kept safe for a long time, the
 /// public key encryption scheme is post quantum: MLKEM1024-P384, the composite of ML-KEM-1024 and
-/// P-384 (see [`crate::backup::BACKUP_PKE_SCHEME`]). Both keys are derived from the custodian's
-/// BIP-39 seed phrase by [`crate::backup::seed_phrase::custodian_from_seed_phrase`].
-///
-/// The signing key is stored on AWS KMS
-///
-/// For decryption, there are two keys, the RSA OAEP decryption
-/// is stored on AWS KMS, the post-quantum decryption key is stored on
-/// AWS Secret Manager because post quantum algorithms are not
-/// supported on AWS KMS at the moment.
+/// P-384 (see [`crate::backup::BACKUP_PKE_SCHEME`]), and the custodian signs under every scheme in
+/// [`crate::backup::BACKUP_SIGNING_SCHEMES`]. Its encryption key pair and its signing identity are
+/// both derived from the custodian's BIP-39 seed phrase by
+/// [`crate::backup::seed_phrase::custodian_from_seed_phrase`].
 impl Custodian {
+    /// A custodian for `role` that signs with `signing_identity`.
     pub fn new(
         role: Role,
-        signing_key: PrivateSigKey,
+        signing_identity: NodeSigningIdentity,
         enc_key: UnifiedPublicEncKey,
         dec_key: UnifiedPrivateEncKey,
     ) -> Result<Self, BackupError> {
+        let verification_keys =
+            VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES).map_err(|e| {
+                BackupError::SetupError(format!(
+                    "custodian role {role} cannot publish the backup signing schemes: {e}"
+                ))
+            })?;
         Ok(Self {
             role,
-            signing_key,
+            signing_identity,
+            verification_keys,
             enc_key,
             dec_key,
         })
@@ -359,7 +400,7 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        operator_verification_key: &PublicSigKey,
+        operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         self.verify_reencrypt_inner(
@@ -374,79 +415,92 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        operator_verification_key: &PublicSigKey,
+        operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        tracing::debug!(
-            "Verifying and re-encrypting backup for operator: {}",
-            operator_verification_key.address(),
-        );
-        let custodian_id = self.verification_key().verf_key_id();
-        let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
-            &self.dec_key,
-            &self.enc_key,
-            operator_verification_key,
-            &custodian_id,
+        let operator_id = operator_verification_key
+            .id(BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
+            })?;
+        for fingerprint in operator_verification_key.all_fingerprints() {
+            tracing::info!("Verifying and re-encrypting backup for operator {fingerprint}");
+        }
+        let custodian_id = self
+            .verification_key_set()
+            .id(BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
+            })?;
+        let unsigncrypt_key = UnifiedUnsigncryptionKey::new_multi(
+            Arc::new(self.dec_key.clone()),
+            self.enc_key.clone(),
+            operator_verification_key.clone(),
+            custodian_id,
         );
 
         // BackupMaterial contains secret shares which should be zeroized when dropped
         // so we put it behind a Zeroizing.
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsigncrypt_key
-                .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
+                .unsigncrypt_composite(
+                    &DSEP_BACKUP_CUSTODIAN,
+                    BACKUP_SIGNING_SCHEMES,
+                    &backup.signcryption,
+                )
                 .map_err(|e| {
                     tracing::warn!(
-                        "Unsigncryption failed for operator {}: {e}",
-                        operator_verification_key.address(),
+                        "Unsigncryption failed for operator id {}: {e}",
+                        hex::encode(&operator_id)
                     );
                     BackupError::CustodianRecoveryError
                 })?,
         );
-        tracing::debug!(
-            "Decrypted ciphertext for operator: {}",
-            operator_verification_key.address()
-        );
         if !backup_material.backup_id.is_valid() {
             tracing::error!(
-                "Invalid backup_id {} in the decrypted backup material for operator with address: {}",
+                "Invalid backup_id {} in the decrypted backup material for operator with id: {}",
                 backup_material.backup_id,
-                operator_verification_key.address()
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
         if !backup_material.mpc_context_id.is_valid() {
             tracing::error!(
-                "Invalid MPC context ID {} in the decrypted backup material for operator with address: {}",
+                "Invalid MPC context ID {} in the decrypted backup material for operator with id: {}",
                 backup_material.mpc_context_id,
-                operator_verification_key.address()
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
         // check the decrypted result
         if let Err(e) = backup_material.check_expected_metadata(
-            &self.signing_key.verf_key(),
+            self.verification_key_set(),
             self.role,
-            &operator_verification_key.verf_key_id(),
+            &operator_id,
         ) {
             tracing::error!(
-                "Backup material did not match expected metadata ({e:?}) for operator: {}",
-                operator_verification_key.address()
+                "Backup material did not match expected metadata ({e:?}) for operator id: {}",
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
 
         // re-encrypted share and sign it
-        let operator_verf_id = operator_verification_key.verf_key_id();
         let signcrypt_key = UnifiedSigncryptionKey::new(
-            &self.signing_key,
-            operator_ephem_enc_key,
-            &operator_verf_id,
+            Arc::new(self.signing_identity.clone()),
+            operator_ephem_enc_key.clone(),
+            operator_id.clone(),
         );
-        let signcryption =
-            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &*backup_material)?;
+        // Sealed under every scheme in `BACKUP_SIGNING_SCHEMES`
+        let signcryption = signcrypt_key.signcrypt_composite(
+            rng,
+            &DSEP_BACKUP_MATERIAL,
+            BACKUP_SIGNING_SCHEMES,
+            &*backup_material,
+        )?;
         tracing::debug!(
-            "Signed re-encrypted share for operator: {}",
-            operator_verification_key.address()
+            "Signed re-encrypted share for operator id: {}",
+            hex::encode(&operator_id)
         );
         Ok(InternalCustodianRecoveryOutput {
             signcryption,
@@ -479,7 +533,7 @@ impl Custodian {
             random_value,
             timestamp,
             public_enc_key: self.enc_key.clone(),
-            public_verf_key: self.verification_key().clone(),
+            public_verf_key: self.verification_key_set().clone(),
             name: custodian_name,
         }
     }
@@ -492,8 +546,9 @@ impl Custodian {
         &self.enc_key
     }
 
-    pub fn verification_key(&self) -> PublicSigKey {
-        self.signing_key.verf_key()
+    /// The keys this custodian publishes, one per scheme in [`BACKUP_SIGNING_SCHEMES`].
+    pub fn verification_key_set(&self) -> &VerfKeySet {
+        &self.verification_keys
     }
 
     pub fn role(&self) -> Role {
@@ -505,9 +560,10 @@ impl Custodian {
 mod tests {
     use super::*;
     use crate::backup::BACKUP_PKE_SCHEME;
+    use crate::cryptography::signing::SigningSchemeType;
     use crate::cryptography::{
-        encryption::{Encryption, PkeScheme},
-        signatures::gen_sig_keys,
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
+        signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -584,7 +640,7 @@ mod tests {
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let (_, payload_pk) = enc.keygen().unwrap();
-        let (payload_verf_key, _) = gen_sig_keys(&mut rng);
+        let payload_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [0u8; 32],
@@ -638,7 +694,7 @@ mod tests {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
-            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_messages.push(InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(role),
@@ -681,6 +737,198 @@ mod tests {
             assert!(error.to_string().contains(expected_error));
             assert!(error.to_string().contains("roles 1 and 2"));
         }
+    }
+
+    /// A custodian that publishes a key weaker than [`BACKUP_PKE_SCHEME`] is
+    /// refused at context creation.
+    #[test]
+    fn custodian_encryption_key_below_the_backup_scheme_should_fail() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (_, backup_pk) = {
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+            enc.keygen().unwrap()
+        };
+
+        let mut setup_messages = Vec::new();
+        for role in 1..=3 {
+            // Role 2 publishes an ML-KEM-512 key; the others are correct, so the
+            // context fails on that role alone rather than on its overall shape.
+            let scheme = if role == 2 {
+                PkeSchemeType::MlKem512
+            } else {
+                BACKUP_PKE_SCHEME
+            };
+            let (_, public_enc_key) = {
+                let mut enc = Encryption::new(scheme, &mut rng);
+                enc.keygen().unwrap()
+            };
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+            setup_messages.push(InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(role),
+                name: format!("Custodian-{role}"),
+                random_value: [role as u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key,
+                public_verf_key,
+            });
+        }
+
+        let context = CustodianContext {
+            custodian_nodes: setup_messages
+                .into_iter()
+                .map(|message| message.try_into().unwrap())
+                .collect(),
+            custodian_context_id: None,
+            threshold: 1,
+        };
+
+        let error = InternalCustodianContext::new(context, backup_pk)
+            .expect_err("a custodian key below the backup scheme must be rejected");
+        let error = error.to_string();
+        assert!(
+            error.contains(ERR_WEAK_CUSTODIAN_ENCRYPTION_KEY),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("role 2"),
+            "the error does not name the role: {error}"
+        );
+    }
+
+    /// A custodian that publishes fewer schemes than [`BACKUP_SIGNING_SCHEMES`] is refused at
+    /// context creation, rather than having its weaker signatures accepted later.
+    /// A custodian with a superset of [`BACKUP_SIGNING_SCHEMES`] is however accepted to ensure
+    /// backwards compatibility with future releases expanding [`BACKUP_SIGNING_SCHEMES`].
+    #[test]
+    fn a_custodian_key_set_must_cover_the_backup_schemes() {
+        let cases: [(&str, &[SigningSchemeType], bool); 3] = [
+            ("fewer", &[SigningSchemeType::Ecdsa256k1], false),
+            (
+                "exact",
+                &[SigningSchemeType::MlDsa87, SigningSchemeType::Ecdsa256k1],
+                true,
+            ),
+            (
+                "more",
+                &[
+                    SigningSchemeType::Ecdsa256k1,
+                    SigningSchemeType::Ed25519,
+                    SigningSchemeType::MlDsa87,
+                ],
+                true,
+            ),
+        ];
+
+        for (case, role_two_schemes, should_be_accepted) in cases {
+            let mut rng = AesRng::seed_from_u64(44);
+            let (_, backup_pk) = {
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+                enc.keygen().unwrap()
+            };
+
+            let mut setup_messages = Vec::new();
+            for role in 1..=3 {
+                let (_, public_enc_key) = {
+                    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+                    enc.keygen().unwrap()
+                };
+                // Only role 2 deviates, so a rejection is attributable to that role rather than
+                // to the overall shape of the context.
+                let schemes: &[SigningSchemeType] = if role == 2 {
+                    role_two_schemes
+                } else {
+                    BACKUP_SIGNING_SCHEMES
+                };
+                setup_messages.push(InternalCustodianSetupMessage {
+                    header: HEADER.to_string(),
+                    custodian_role: Role::indexed_from_one(role),
+                    name: format!("Custodian-{role}"),
+                    random_value: [role as u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key,
+                    public_verf_key: seeded_verf_key_set(&mut rng, schemes),
+                });
+            }
+
+            let context = CustodianContext {
+                custodian_nodes: setup_messages
+                    .into_iter()
+                    .map(|message| message.try_into().unwrap())
+                    .collect(),
+                // The accepted cases get past node validation, so they need a valid ID.
+                custodian_context_id: Some(RequestId::from_bytes([44; 32]).into()),
+                threshold: 1,
+            };
+
+            match (
+                should_be_accepted,
+                InternalCustodianContext::new(context, backup_pk),
+            ) {
+                (true, Ok(_)) => {}
+                (true, Err(error)) => {
+                    panic!(
+                        "{case}: a key set covering the backup schemes must be accepted: {error}"
+                    )
+                }
+                (false, Ok(_)) => {
+                    panic!("{case}: a key set below the backup schemes must be rejected")
+                }
+                (false, Err(error)) => {
+                    let error = error.to_string();
+                    assert!(
+                        error.contains("custodian role 2"),
+                        "{case}: the error does not name the role: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A custodian whose identity holds no root seed cannot publish
+    /// [`BACKUP_SIGNING_SCHEMES`], so it cannot be constructed at all.
+    #[test]
+    fn a_seedless_custodian_cannot_be_constructed() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let (dec_key, enc_key) = {
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+            enc.keygen().unwrap()
+        };
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let seedless = NodeSigningIdentity::ecdsa_only(sig_key);
+
+        let error = Custodian::new(Role::indexed_from_one(1), seedless, enc_key, dec_key)
+            .expect_err("a seedless custodian cannot publish the backup signing schemes");
+        assert!(
+            matches!(error, BackupError::SetupError(_)),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The operator's own backup key is checked too, so a future change that
+    /// threaded a weaker key through cannot produce a vault that looks healthy.
+    #[test]
+    fn backup_encryption_key_below_the_backup_scheme_should_fail() {
+        let mut rng = AesRng::seed_from_u64(43);
+        let (_, weak_backup_pk) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
+
+        // The node list is irrelevant here: the backup key is checked before
+        // the nodes are, so this fails on the key rather than on the shape.
+        let context = CustodianContext {
+            custodian_nodes: vec![],
+            custodian_context_id: None,
+            threshold: 1,
+        };
+
+        let error = InternalCustodianContext::new(context, weak_backup_pk)
+            .expect_err("a backup key below the backup scheme must be rejected");
+        assert!(
+            error.to_string().contains(ERR_WEAK_BACKUP_ENCRYPTION_KEY),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

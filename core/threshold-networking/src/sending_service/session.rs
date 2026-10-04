@@ -6,10 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::ArcSendValueRequest;
 use crate::clock::{AtomicDuration, AtomicInstant};
+use crate::ggen::SendValueRequest;
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
+use bytes::Bytes;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use observability::metrics::{self, NetworkDebugEvent};
@@ -32,7 +33,7 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`](super::SendingService)
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -100,7 +101,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
+    async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()> {
         // Take the round-counter *read* guard for the duration of the send. This
         // is a read guard, not an exclusive lock: concurrent `send`/`receive`
         // calls (also readers) proceed in parallel, while `increase_round_counter`
@@ -115,14 +116,14 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round_counter: round_counter as u64,
         };
 
-        let tag = Arc::new(
+        let tag = Bytes::from(
             bc2wrap::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
         self.num_byte_sent
             .fetch_add(tag.len() + value.len(), Ordering::Relaxed);
-        let request = ArcSendValueRequest::new(tag, value);
+        let request = SendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
@@ -138,7 +139,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         // Take the round-counter *read* guard for the whole receive. This is a
         // read guard, not an exclusive lock: other readers (`send`/`receive`) run
         // concurrently, while `increase_round_counter` (the sole writer) *waits*
@@ -368,7 +369,7 @@ impl NetworkSession {
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
-        sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         receiving_channels: MessageQueueStore,
         completed_parties: Arc<DashSet<RoleKind>>,
         network_mode: NetworkMode,
@@ -458,6 +459,7 @@ impl NetworkSession {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use dashmap::{DashMap, DashSet};
     use tokio::sync::Mutex;
     use tokio::sync::mpsc::channel;
@@ -481,6 +483,41 @@ mod tests {
     use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
     use threshold_types::session_id::SessionId;
 
+    /// Starts the networking server of `networking` on `ip_addr:port`. Returns the shutdown
+    /// trigger and the server task.
+    async fn spawn_server(
+        networking: &GrpcNetworkingManager,
+        ip_addr: IpAddr,
+        port: u16,
+    ) -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
+        let networking_server = networking.new_server(TlsExtensionGetter::default());
+        let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
+        let core_router = tonic::transport::Server::builder()
+            .timeout(Duration::from_secs(300))
+            .layer(core_grpc_layer)
+            .add_service(networking_server);
+
+        let core_future = core_router.serve_with_shutdown(
+            format!("{ip_addr}:{port}").parse().unwrap(),
+            async move {
+                let _ = server_terminate_rx.await;
+            },
+        );
+
+        (
+            server_terminate_tx,
+            tokio::spawn(async move {
+                tracing::info!("Starting server on port {port}");
+                core_future.await.unwrap();
+                tracing::info!("Server on port {port} shut down");
+            }),
+        )
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_network_stack() {
         let ip_addr = "127.0.0.1".parse().unwrap();
@@ -498,40 +535,6 @@ mod tests {
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
-        // Helper function to create and run a server
-        async fn create_server(
-            networking: &GrpcNetworkingManager,
-            ip_addr: IpAddr,
-            port: u16,
-        ) -> (
-            tokio::sync::oneshot::Sender<()>,
-            tokio::task::JoinHandle<()>,
-        ) {
-            let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
-            let networking_server = networking.new_server(TlsExtensionGetter::default());
-            let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
-            let core_router = tonic::transport::Server::builder()
-                .timeout(Duration::from_secs(300))
-                .layer(core_grpc_layer)
-                .add_service(networking_server);
-
-            let core_future = core_router.serve_with_shutdown(
-                format!("{ip_addr}:{port}").parse().unwrap(),
-                async move {
-                    let _ = server_terminate_rx.await;
-                },
-            );
-
-            (
-                server_terminate_tx,
-                tokio::spawn(async move {
-                    tracing::info!("Starting server on port {port}");
-                    core_future.await.unwrap();
-                    tracing::info!("Server on port {port} shut down");
-                }),
-            )
-        }
-
         // Create channels for coordination
         let (terminate_sender_1, mut terminate_receiver_1) = tokio::sync::mpsc::channel::<()>(100);
 
@@ -547,14 +550,11 @@ mod tests {
                     .unwrap();
 
                 let msg = vec![1u8; 10];
-                let arc_msg = Arc::new(msg.clone());
+                let msg = Bytes::from(msg.clone());
 
                 // First send
                 tracing::info!("Sending ONCE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for signal to send second message
                 terminate_receiver_1.recv().await.unwrap();
@@ -562,10 +562,7 @@ mod tests {
 
                 // Second send
                 tracing::info!("Sending TWICE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for final termination signal
                 terminate_receiver_1.recv().await.unwrap();
@@ -589,7 +586,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, ip_addr, id_2.port()).await;
+                    spawn_server(&networking, ip_addr, id_2.port()).await;
 
                 tracing::info!("Trying to receive");
                 let msg = network_session.receive(&role_1).await.unwrap();
@@ -631,7 +628,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, ip_addr, id_2.port()).await;
+                    spawn_server(&networking, ip_addr, id_2.port()).await;
 
                 // Increase round counter to receive second message
                 network_session.increase_round_counter().await;
@@ -668,6 +665,276 @@ mod tests {
             .unwrap();
         assert_eq!(role, role_1);
         assert_eq!(msg, vec![1u8; 10]);
+    }
+
+    /// Runs one session between party 1 and party 2, in which each party sends one message to the
+    /// other. Party 1 creates its session and sends first, so its message can reach party 2 before
+    /// party 2 creates the session, as between a running party and a party that just restarted.
+    /// Panics if a party gets no message within `timeout`.
+    async fn exchange_in_new_session(
+        networking_1: &GrpcNetworkingManager,
+        networking_2: &GrpcNetworkingManager,
+        sid: SessionId,
+        role_assignment: &RoleAssignment<Role>,
+        timeout: Duration,
+    ) {
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let msg_1 = Bytes::from(vec![1u8; 10]);
+        let msg_2 = Bytes::from(vec![2u8; 10]);
+
+        let session_1 = networking_1
+            .make_network_session(sid, role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        session_1.send(msg_1.clone(), &role_2).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let session_2 = networking_2
+            .make_network_session(sid, role_assignment, role_2, NetworkMode::Sync)
+            .await
+            .unwrap();
+        session_2.send(msg_2.clone(), &role_1).await.unwrap();
+
+        let received_by_2 = tokio::time::timeout(timeout, session_2.receive(&role_1))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("party 2 got no message from party 1 in session {sid:?} within {timeout:?}")
+            })
+            .unwrap();
+        let received_by_1 = tokio::time::timeout(timeout, session_1.receive(&role_2))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("party 1 got no message from party 2 in session {sid:?} within {timeout:?}")
+            })
+            .unwrap();
+        assert_eq!(received_by_2, *msg_1);
+        assert_eq!(received_by_1, *msg_2);
+    }
+
+    /// A party that restarts at the same address must get the messages of a peer that kept
+    /// running, in a session that starts after the restart. The running peer keeps its manager,
+    /// and with it the cached channel and the state from the session before the restart.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_running_party_reaches_restarted_party() {
+        let timeout = Duration::from_secs(30);
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(
+            Role::indexed_from_one(1),
+            Identity::new(format!("{ip_addr}"), port_1, None),
+        );
+        role_assignment.insert(
+            Role::indexed_from_one(2),
+            Identity::new(format!("{ip_addr}"), port_2, None),
+        );
+
+        // Party 1 runs for the whole test.
+        let networking_1 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_1, server_1) = spawn_server(&networking_1, ip_addr, port_1).await;
+
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(1),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        // Restart party 2 at the same address: stop its server and replace its manager.
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        drop(networking_2);
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(2),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        stop_1.send(()).unwrap();
+        server_1.await.unwrap();
+    }
+
+    /// A TCP proxy in front of the server of a party. [`FreezingProxy::restart_behind`] sends new
+    /// connections to a new backend and freezes the existing ones: they stay open but forward
+    /// nothing more. The kernel of the proxy still acknowledges all data, like a peer whose TCP
+    /// stack is alive but whose server no longer answers. Thus only the HTTP/2 keepalive detects a
+    /// frozen connection. A pod that disappears stops acknowledging instead, and the kernel of the
+    /// sender gives up on that connection after about 15 minutes.
+    struct FreezingProxy {
+        backend: Arc<std::sync::Mutex<std::net::SocketAddr>>,
+        generation: Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    impl FreezingProxy {
+        fn start(listener: tokio::net::TcpListener, backend: std::net::SocketAddr) -> Self {
+            let backend = Arc::new(std::sync::Mutex::new(backend));
+            let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            tokio::spawn({
+                let backend = Arc::clone(&backend);
+                let generation = Arc::clone(&generation);
+                async move {
+                    while let Ok((inbound, _)) = listener.accept().await {
+                        let target = *backend.lock().unwrap();
+                        let connection_generation =
+                            generation.load(std::sync::atomic::Ordering::SeqCst);
+                        let generation = Arc::clone(&generation);
+                        tokio::spawn(async move {
+                            let Ok(outbound) = tokio::net::TcpStream::connect(target).await else {
+                                return;
+                            };
+                            let (inbound_read, inbound_write) = inbound.into_split();
+                            let (outbound_read, outbound_write) = outbound.into_split();
+                            tokio::join!(
+                                forward_until_frozen(
+                                    inbound_read,
+                                    outbound_write,
+                                    Arc::clone(&generation),
+                                    connection_generation,
+                                ),
+                                forward_until_frozen(
+                                    outbound_read,
+                                    inbound_write,
+                                    generation,
+                                    connection_generation,
+                                ),
+                            );
+                        });
+                    }
+                }
+            });
+            Self {
+                backend,
+                generation,
+            }
+        }
+
+        fn restart_behind(&self, backend: std::net::SocketAddr) {
+            *self.backend.lock().unwrap() = backend;
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Copies bytes from `from` to `to` while the proxy generation is `connection_generation`.
+    /// After a restart it keeps both halves open without forwarding, on every path, so that
+    /// neither end sees the connection close.
+    async fn forward_until_frozen(
+        mut from: tokio::net::tcp::OwnedReadHalf,
+        mut to: tokio::net::tcp::OwnedWriteHalf,
+        generation: Arc<std::sync::atomic::AtomicU64>,
+        connection_generation: u64,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let frozen =
+            || generation.load(std::sync::atomic::Ordering::SeqCst) != connection_generation;
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let read = from.read(&mut buffer).await;
+            if frozen() {
+                std::future::pending::<()>().await;
+            }
+            let Ok(n) = read else { return };
+            if n == 0 || to.write_all(&buffer[..n]).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Like [`test_running_party_reaches_restarted_party`], but the old connection to party 2
+    /// does not close when party 2 restarts. Party 1 reaches party 2 through a
+    /// [`FreezingProxy`], which leaves that connection open without forwarding anything. Party 1
+    /// must detect the dead connection with its HTTP/2 keepalive and connect again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_running_party_reaches_restarted_party_behind_frozen_connection() {
+        let timeout = Duration::from_secs(20);
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut listeners = get_listeners_random_free_ports(&ip_addr, 4).await.unwrap();
+        let (proxy_listener, proxy_port) = listeners.remove(0);
+        let port_1 = listeners[0].1;
+        let backend_port_2 = listeners[1].1;
+        let restarted_backend_port_2 = listeners[2].1;
+        drop(listeners);
+
+        // Party 2 is known under the proxy address, so party 1 always connects through it.
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(
+            Role::indexed_from_one(1),
+            Identity::new(format!("{ip_addr}"), port_1, None),
+        );
+        role_assignment.insert(
+            Role::indexed_from_one(2),
+            Identity::new(format!("{ip_addr}"), proxy_port, None),
+        );
+        let proxy = FreezingProxy::start(
+            proxy_listener,
+            std::net::SocketAddr::new(ip_addr, backend_port_2),
+        );
+
+        // Party 1 detects the frozen connection by its keepalive. The short values keep the test
+        // well within `timeout`.
+        let keepalive = CoreToCoreNetworkConfig {
+            keepalive_interval_secs: Some(1),
+            keepalive_timeout_secs: Some(2),
+            ..Default::default()
+        };
+        let networking_1 = GrpcNetworkingManager::new(None, keepalive).unwrap();
+        let (stop_1, server_1) = spawn_server(&networking_1, ip_addr, port_1).await;
+
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, backend_port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(1),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        // Restart party 2 behind a new backend. The proxy freezes the existing connection before
+        // the old server stops, so party 1 never sees that connection close.
+        proxy.restart_behind(std::net::SocketAddr::new(ip_addr, restarted_backend_port_2));
+        stop_2.send(()).unwrap();
+        // A graceful shutdown would wait for the frozen connection, which never closes.
+        server_2.abort();
+        drop(networking_2);
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) =
+            spawn_server(&networking_2, ip_addr, restarted_backend_port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(2),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        stop_1.send(()).unwrap();
+        server_1.await.unwrap();
     }
 
     #[tokio::test()]
@@ -758,7 +1025,7 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 0,
-                    value: expected_clone,
+                    value: expected_clone.into(),
                 })
                 .await
                 .unwrap();
@@ -771,7 +1038,7 @@ mod tests {
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
-                .send(Arc::new(vec![1, 2, 3]), &Role::indexed_from_one(3))
+                .send(Bytes::from_static(&[1, 2, 3]), &Role::indexed_from_one(3))
                 .await
                 .unwrap_err();
             assert!(e.to_string().contains("Missing local channel for"));
@@ -790,19 +1057,19 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 3,
-                    value: vec![],
+                    value: vec![].into(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 4,
-                    value: vec![],
+                    value: vec![].into(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 5,
-                    value: expected_clone,
+                    value: expected_clone.into(),
                 })
                 .await
                 .unwrap();
@@ -915,13 +1182,13 @@ mod tests {
         // current-round packet.
         tx_2.send(NetworkRoundValue {
             round_counter: 5,
-            value: future_payload.clone(),
+            value: future_payload.clone().into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -961,7 +1228,7 @@ mod tests {
         for r in 1..=flood {
             tx_2.send(NetworkRoundValue {
                 round_counter: r,
-                value: vec![r as u8],
+                value: vec![r as u8].into(),
             })
             .await
             .unwrap();
@@ -971,7 +1238,7 @@ mod tests {
         let current_payload = vec![42u8; 8];
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -1014,20 +1281,20 @@ mod tests {
             // (yet inside the default window of 16, so this pins the config path).
             tx_2.send(NetworkRoundValue {
                 round_counter: 2,
-                value: vec![2],
+                value: vec![2].into(),
             })
             .await
             .unwrap();
             tx_2.send(NetworkRoundValue {
                 round_counter: 5,
-                value: vec![5],
+                value: vec![5].into(),
             })
             .await
             .unwrap();
             let current = vec![0u8; 4];
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: current.clone(),
+                value: current.clone().into(),
             })
             .await
             .unwrap();
@@ -1065,7 +1332,7 @@ mod tests {
             for r in 1..=5 {
                 tx_2.send(NetworkRoundValue {
                     round_counter: r,
-                    value: vec![r as u8],
+                    value: vec![r as u8].into(),
                 })
                 .await
                 .unwrap();
@@ -1073,7 +1340,7 @@ mod tests {
             let current = vec![9u8; 4];
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: current.clone(),
+                value: current.clone().into(),
             })
             .await
             .unwrap();
@@ -1227,13 +1494,13 @@ mod tests {
         let current = vec![2u8; 4];
         tx_2.send(NetworkRoundValue {
             round_counter: advance - 1,
-            value: stale,
+            value: stale.into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: advance,
-            value: current.clone(),
+            value: current.clone().into(),
         })
         .await
         .unwrap();
@@ -1257,20 +1524,20 @@ mod tests {
         // Two packets for the same future round 2, plus the current-round packet.
         tx_2.send(NetworkRoundValue {
             round_counter: 2,
-            value: first.clone(),
+            value: first.clone().into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: 2,
-            value: second.clone(),
+            value: second.clone().into(),
         })
         .await
         .unwrap();
         let current_payload = vec![9u8; 4];
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -1363,7 +1630,7 @@ mod tests {
                     .make_network_session(sid, &role_assignment, role, NetworkMode::Sync)
                     .await
                     .unwrap();
-                let msg = Arc::new(expected_message.get(&role).unwrap().clone());
+                let msg = Bytes::from(expected_message.get(&role).unwrap().clone());
                 for other in others.keys() {
                     network_session.send(msg.clone(), other).await.unwrap();
                 }
@@ -1418,6 +1685,8 @@ mod tests {
             max_opened_inactive_sessions_per_party: Some(2000),
             max_future_rounds: Some(16),
             max_buffered_future_msgs: Some(32),
+            keepalive_interval_secs: Some(15),
+            keepalive_timeout_secs: Some(30),
         }
     }
 
@@ -1513,7 +1782,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(1500)).await;
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: expected_clone,
+                value: expected_clone.into(),
             })
             .await
             .unwrap();

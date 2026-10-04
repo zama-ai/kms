@@ -135,9 +135,14 @@ The service crate is the main surface area. Key subdirectories under
   chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
   keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
   and the operator's per-context backup vault key — selected in one place,
-  `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
-  scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
-  custodian context works. User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
+  custodian encryption key, and the operator's own backup key, uses that scheme
+  (`InternalCustodianContext::new` / `validated_nodes`). On the signing side,
+  every signature in the custodian-backup chain is a composite under
+  `backup::BACKUP_SIGNING_SCHEMES` (ECDSA/secp256k1 and ML-DSA-87), and every
+  signature in it must verify. Each party publishes a `VerfKeySet`, and a key
+  set that does not cover these schemes is rejected (`ensure_backup_schemes`).
+  User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
   keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
@@ -267,31 +272,51 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   variants.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
-  refreshes secret shares as part of epoch creation; the outcome is fetched
-  via `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
+  refreshes secret shares as part of epoch creation; the outcome is fetched via
+  `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
+  Each party also rejects a key unless it has a non-empty public-key digest and exactly one
+  non-empty server-key or compressed-keyset digest before role dispatch.
+  The resharing session matches the parties of the two contexts by MPC identity.
+  A party with the same MPC identity in both contexts is a `Both` party, and the
+  session connects to it at its set 2 URL. The URL is not compared. The request
+  fails if the contexts give one MPC identity two different signer addresses, or
+  one signer address two different MPC identities. A party without a listed
+  signer address matches by MPC identity alone. A node that changes its signing
+  key is a new party: it needs a new MPC identity, and it runs as a separate
+  core during the reshare.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
-  request, whereas a pure set 2 party (a node joining the new context) never held
-  the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
-  sub-protocol is skipped and the reshared private keyset keeps that field
-  absent. Which of these optional shares to reshare is decided from the input
-  keyset, and every party must agree. A storage failure during
-  resharing rolls the new epoch back on the party that fails. That party attempts
-  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
-  Public data remains because an epoch change does not affect it. If cleanup
-  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
-  snapshot of the context's registered epochs and erases their secret shares
-  before it forgets the context and removes its TLS trust-root references. A trust
-  root remains if another live context uses it. This order leaves no usable key
-  shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
-  lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
-  shared leases for its target context and epoch. A reshare also holds shared
-  leases for its source context and epoch through all PRSS, resharing, and persistence work.
+  request, whereas a pure set 2 party (a node joining the new context) never
+  held the key and logs a warning instead. When resharing legacy key material
+  that has no dedicated OPRF/transciphering secret-key share, the
+  OPRF/transciphering sub-protocol is skipped and the reshared private keyset
+  keeps that field absent. Which of these optional shares to reshare is decided
+  from the input keyset, and every party must agree. A storage failure during
+  resharing rolls the new epoch back on the party that fails. That party deletes
+  the key shares and the CRS metadata that its own resharing wrote under the new
+  epoch. The party deletes the epoch data and forgets the epoch only once the
+  epoch holds no key share and no CRS metadata. The `VerifiedCrsMaterial`
+  constructor checks the expected digest and deserializes the CRS from the same
+  bytes. A reshare retains the exact public bytes that it verifies, and restores
+  missing material during its locked storage phase. A failed reshare deletes only
+  public material that its storage phase created. It deletes that material only
+  after private cleanup succeeds. One lock serializes all reshare storage and
+  rollback on a party. Public material that existed before the storage phase
+  remains unchanged. A failed private deletion keeps the epoch and its public
+  material so cleanup can be retried. `DestroyMpcEpoch` erases a whole epoch
+  instead, and covers the material of every request. `DestroyMpcContext` takes
+  a stable snapshot of the context's registered epochs and erases their secret
+  shares before it forgets the context and removes its TLS trust-root references.
+
+  A trust root remains if another live context uses it. This order leaves no
+  usable key shares after the party set retires. The kms-connector is the source
+  of truth for which epochs belong to a context. In-memory lifecycle leases
+  serialize creation against destruction. `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing, and persistence work.
+  A reshare also holds shared leases for its source context and epoch.
   `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
@@ -299,6 +324,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   has settled. MPC context updates serialize the existence check with storage and
   cache or session updates. A failed deletion keeps the in-memory context if its
   persistent entry remains, which permits a retry before or after restart.
+
+  The TLS verifier stores one trust root per context and MPC identity. Different
+  trust roots for one identity coexist while their contexts remain active. Each
+  root is evaluated with only its context's PCR allowlist, and a handshake
+  succeeds when one complete root and PCR check succeeds. The verifier rejects
+  registration for an active context ID instead of replacing its trust roots or
+  PCR values. Removing a context removes its roots, while another context's copy
+  of the same root remains trusted.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -358,13 +391,17 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique.
+  encryption key is unique and no two custodians share any verification key, unless every
+  custodian encryption key uses `BACKUP_PKE_SCHEME`, and unless every custodian
+  publishes a verification key for every scheme in `BACKUP_SIGNING_SCHEMES`.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
   custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
   so the phrase does not cap the scheme's security level. A vault written under an
   older ML-KEM-512 context is not readable by a node holding a composite key, but
   each ciphertext carries its own `pke_type`, so a vault spanning both schemes
-  decrypts as long as the matching key is installed.
+  decrypts as long as the matching key is installed. That remains true for
+  material already written; what is refused is *creating* a new context under a
+  weaker scheme.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
@@ -377,9 +414,12 @@ The `RecoveryValidationMaterial` describing a custodian context — the custodia
 shares of the backup decryption key, plus the commitments and the context itself — lives in the
 **backup vault**, as the one object there that the keychain does not encrypt: it is what recovery
 needs in order to reconstruct that very key, so encrypting it under the key would be circular. Its
-integrity comes from the operator signature it carries, checked at startup once the signing key is
-available, together with a check — applied on every load — that the object is stored under the
-context id its payload names. It sits outside the `<backup_id>/<PrivDataType>/`
+integrity comes from the operator's composite signature under `BACKUP_SIGNING_SCHEMES`, checked at
+startup once the signing key is available, together with a check — applied on every load — that the
+object is stored under the context id its payload names. A node without a root seed cannot derive
+the ML-DSA key, so it fails that startup check as soon as its vault holds any recovery material. The
+material also embeds the operator's backup key set (`operator_verf_keys`), for recovery mode below.
+It sits outside the `<backup_id>/<PrivDataType>/`
 namespace the vault's backup entries use, at `RecoveryMaterial/<context_id>`, so purging a
 context's backups never touches it and vice versa; `vault/storage/mod.rs` holds the accessors.
 
@@ -429,6 +469,21 @@ intermediate state bootable: keysets never sit under an epoch the node does not 
 [boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
 stays in recovery mode, where the restore can be repeated.
 
+A threshold or centralized node without its signing key boots in **recovery mode**. It skips the
+boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
+from public storage. When public storage no longer holds that key, the node takes its backup key set
+from the `operator_verf_keys` that its recovery material embeds. It refuses to boot if the contexts
+in the vault embed different key sets, or if any of that material is not validly signed under the
+key set it embeds. Recovery always uses the embedded non-ECDSA keys: the node also publishes them in
+public storage, but the gateway does not hold them, so a copy there is no more trustworthy than the
+material. These keys authenticate nothing on their own. A recovery is therefore as
+secure as the keys that the operator and the custodians check by hand. The core-client's
+`custodian-recovery-init` prints them, and it refuses a mismatch with `--expected-operator-key`.
+`kms-custodian decrypt` logs the fingerprint of every key, its address text and digest, as a
+warning. After the restore, the node checks the material again
+with its restored identity before it anchors the context. The node stays in recovery mode until it
+restarts.
+
 Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](../core/service/src/client/tests/centralized/custodian_backup_tests.rs)
@@ -449,8 +504,11 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 
 The public half has no epoch. The private half has an epoch and contains one party's material.
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
-accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
-public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+accepts one-sided writes. Resharing normally writes only the private half for the new epoch. A
+party without the public half fetches its raw bytes from a peer and verifies the request digest.
+The party stores those exact bytes before it writes private metadata. An existing public entry
+must match the verified bytes. A `ContextInfo` write stores one request-scoped private entry with
+no public half.
 
 Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
 and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys
@@ -538,7 +596,7 @@ What it verifies, and how failures are treated:
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
-| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
+| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload prefixed by the schemes the stored entries name | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
@@ -583,10 +641,9 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
 signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
-entries of the other schemes sign the serialized result payload (`keygen_payload_bytes`,
-`crs_payload_bytes`) instead, which needs no domain, so they are checked for every current
-entry. A node that cannot derive a scheme's key, because it holds no root seed, fails boot on
-such an entry rather than passing it over.
+entries of the other schemes sign the serialized result payload inside a composite preimage, 
+which binds the canonical scheme set and payload type. A node that cannot derive a scheme's key,
+because it holds no root seed, fails boot on such an entry rather than passing it over.
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all
 (`write_decompression_key` persists no private data), so a published decompression key cannot be
@@ -675,6 +732,11 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   and mock enclave support. It forwards `threshold-networking/insecure`, which permits
   plaintext transport and mock attestation.
 
+The [performance suite](../ci/perf-testing/PERF_TEST_README.md) measures public and user
+decryption through both sync and async endpoints. The scenario configuration selects each
+operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
+Python analyzer report the ladders separately.
+
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.
 
@@ -695,9 +757,7 @@ exact commands.
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
-- **Kubernetes** — a Helm chart is provided at
-  [charts/kms-core/](../charts/kms-core/) for both centralized and threshold
-  deployments, including Nitro Enclaves when configured.
+- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for both centralized and threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
 
 ## Further reading
 

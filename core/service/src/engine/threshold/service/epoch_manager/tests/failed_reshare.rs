@@ -10,7 +10,11 @@ use crate::vault::storage::test_support::{
 /// This is a regression test for a bug found during a devnet deployment on 0.14.x. It covers
 /// both successful rollback and failed rollback. A failed rollback must retain the durable
 /// epoch marker and in-memory epoch registration so cleanup can be retried.
-async fn run_failed_reshare_storage_test(fail_rollback: bool) {
+///
+/// `foreign_material` puts a key share of another request under the new epoch, which a key
+/// generation can do from the moment the PRSS setup registers that epoch. The rollback must keep
+/// that share, the epoch marker it needs, and the epoch registration.
+async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: bool) {
     let mut rng = AesRng::seed_from_u64(45);
     let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
@@ -26,6 +30,13 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
     let preproc_id = derive_request_id("reshared_key_preproc").unwrap();
     let crs_id = derive_request_id("reshared_crs").unwrap();
     let unrelated_id = derive_request_id("unrelated_material").unwrap();
+    let concurrent_key_id = derive_request_id("concurrent_keygen_key").unwrap();
+
+    let params = crate::consts::TEST_PARAM;
+    let config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+        .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+        .build();
+    let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 
     let epoch_data = dummy_epoch_data(*DEFAULT_MPC_CONTEXT);
     epoch_manager
@@ -50,14 +61,9 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
             .await
             .unwrap();
         }
-        store_versioned_at_request_id(
-            &mut (*guard),
-            &crs_id,
-            &TestType { i: 8 },
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap();
+        store_versioned_at_request_id(&mut (*guard), &crs_id, &crs, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         for public_type in [PubDataType::PublicKey, PubDataType::CRS] {
             store_versioned_at_request_id(
                 &mut (*guard),
@@ -97,6 +103,17 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
         )
         .await
         .unwrap();
+        if foreign_material {
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &concurrent_key_id,
+                &new_epoch_id,
+                &TestType { i: 14 },
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        }
         store_versioned_at_request_id(
             &mut (*guard),
             &keeper_epoch_id.into(),
@@ -130,11 +147,29 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
         None,
         PrivDataType::EpochData.to_string(),
     );
+    let concurrent_fhe_key_info = StorageEntry::new(
+        concurrent_key_id,
+        Some(new_epoch_id),
+        PrivDataType::FheKeyInfo.to_string(),
+    );
 
     let public_before;
+    let (compressed_keyset_bytes, public_key_bytes, crs_bytes);
     {
         let public_storage = crypto_storage.inner.get_public_storage();
         let mut guard = public_storage.lock().await;
+        compressed_keyset_bytes = guard
+            .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .unwrap();
+        public_key_bytes = guard
+            .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        crs_bytes = guard
+            .load_bytes(&crs_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         guard.clear_events();
         public_before = guard.state();
     }
@@ -152,22 +187,22 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
 
     let (_keyset, compressed_keyset) =
         gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-    let params = crate::consts::TEST_PARAM;
-    let config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
-        .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
-        .build();
-    let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+    let crs_digest = hashing::hash_element(&DSEP_PUBDATA_CRS, &crs_bytes);
 
-    let mut previous_epoch = make_verified_previous_epoch(
+    let previous_epoch = make_verified_previous_epoch(
         keeper_epoch_id,
         &key_id,
         &preproc_id,
         crate::consts::TEST_PARAM,
+        HashMap::from([
+            (PubDataType::CompressedXofKeySet, vec![1; 32]),
+            (PubDataType::PublicKey, vec![2; 32]),
+        ]),
+        vec![VerifiedCrsInfo {
+            crs_id,
+            crs_digest: crs_digest.clone(),
+        }],
     );
-    previous_epoch.crs_info.push(VerifiedCrsInfo {
-        crs_id,
-        crs_digest: vec![],
-    });
 
     let sk = epoch_manager.base_kms.signing_identity().unwrap();
     let res = RealThresholdEpochManager::<
@@ -178,15 +213,20 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
     >::store_reshared_keys(
         &crypto_storage,
         &epoch_manager.session_maker,
+        &epoch_manager.reshare_storage_lock,
         &sk,
         &[SigningSchemeType::Ecdsa256k1],
         new_epoch_id,
         vec![],
         &previous_epoch,
-        vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+        vec![VerifiedPublicMaterial::new_compressed(
+            compressed_keyset,
+            compressed_keyset_bytes,
+            public_key_bytes,
+        )],
         vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
         &dummy_domain(),
-        vec![crs],
+        vec![VerifiedCrsMaterial::new(crs_bytes, &crs_digest).unwrap()],
     )
     .await;
     assert!(
@@ -235,6 +275,23 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
             state_without_failed_cleanup.remove(&new_crs_info);
             assert_eq!(state_without_failed_cleanup, expected_state);
             assert!(guard.state().contains_key(&new_epoch_data));
+        } else if foreign_material {
+            expected_events.push(StorageEvent::new(
+                new_crs_info.clone(),
+                StorageOp::Delete,
+                StorageOutcome::Deleted,
+            ));
+            // The CRS entry is created and then deleted by the same call, so the epoch returns to
+            // the state it had before the resharing.
+            assert_eq!(guard.state(), expected_state);
+            assert!(
+                guard.state().contains_key(&concurrent_fhe_key_info),
+                "the rollback must keep the key share of another request"
+            );
+            assert!(
+                guard.state().contains_key(&new_epoch_data),
+                "the epoch marker must stay while the epoch still holds a key share"
+            );
         } else {
             expected_events.push(StorageEvent::new(
                 new_crs_info.clone(),
@@ -258,8 +315,9 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
             .session_maker
             .epoch_exists(&new_epoch_id)
             .await,
-        fail_rollback,
-        "the failed epoch must remain registered only when cleanup needs a retry"
+        fail_rollback || foreign_material,
+        "the failed epoch must remain registered only when cleanup needs a retry or when the \
+         epoch still holds material"
     );
     assert!(
         epoch_manager
@@ -270,9 +328,10 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
 }
 
 #[rstest::rstest]
-#[case::only_removes_new_epoch_private_material(false)]
-#[case::cleanup_failure_keeps_retry_state(true)]
+#[case::only_removes_new_epoch_private_material(false, false)]
+#[case::cleanup_failure_keeps_retry_state(true, false)]
+#[case::keeps_material_of_another_request(false, true)]
 #[tokio::test]
-async fn failed_reshare(#[case] fail_rollback: bool) {
-    run_failed_reshare_storage_test(fail_rollback).await;
+async fn failed_reshare(#[case] fail_rollback: bool, #[case] foreign_material: bool) {
+    run_failed_reshare_storage_test(fail_rollback, foreign_material).await;
 }

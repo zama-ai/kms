@@ -16,7 +16,8 @@ kubectl top pods -n <NAMESPACE>
 # Health check (may not be available in Chainguard enclave containers)
 # Use external health check or test endpoints directly
 kubectl port-forward -n <NAMESPACE> <POD_NAME> 9646:9646 &
-curl -f http://localhost:9646/health    # Health status
+curl -f http://localhost:9646/liveness  # Fails only after a fault that needs a restart
+curl -f http://localhost:9646/ready     # Fails before the end of startup and after the start of shutdown
 curl -f http://localhost:9646/version   # Version of the KMS running
 curl -f http://localhost:9646/config    # The configuration used
 
@@ -85,7 +86,7 @@ Keep both copies until the storage problem is understood. Restart after the prob
 ```bash
 # Test port connectivity (using port-forward for Chainguard images)
 kubectl port-forward -n <NAMESPACE> <POD_NAME> <LOCAL_PORT>:<GRPC_PORT> &
-curl -f http://localhost:<LOCAL_PORT>/health
+grpc_health_probe --addr=localhost:<LOCAL_PORT> -service=readiness
 ```
 
 **Common Fixes:**
@@ -269,7 +270,7 @@ kubectl logs -n <NAMESPACE> <POD_NAME> --timestamps
 
 # Network analysis (use kubectl port-forward instead)
 kubectl port-forward -n <NAMESPACE> <POD_NAME> <LOCAL_PORT>:<GRPC_PORT>
-# Then test locally: curl http://localhost:<LOCAL_PORT>/health
+# Then test locally: grpc_health_probe --addr=localhost:<LOCAL_PORT> -service=readiness
 
 # Process and memory analysis (use kubectl top instead)
 kubectl top pod -n <NAMESPACE> <POD_NAME> --containers

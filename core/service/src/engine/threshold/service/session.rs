@@ -1,18 +1,15 @@
 // === Standard Library ===
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     hash::Hash,
     sync::{Arc, Weak},
 };
 
-use crate::{
-    engine::{
-        context::ContextInfo,
-        rng_source::{RngSource, RngSourceError},
-        threshold::service::epoch_manager::EpochData,
-        utils::MetricedError,
-    },
-    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
+use crate::engine::{
+    context::{ContextInfo, SignerAddress},
+    rng_source::{RngSource, RngSourceError},
+    threshold::service::epoch_manager::EpochData,
+    utils::MetricedError,
 };
 
 // === External Crates ===
@@ -55,6 +52,8 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tonic::Code;
 
 struct Context {
+    // The ID under which the session maker stores this context.
+    context_id: ContextId,
     // I may not belong to all the contexts I am aware of
     // especially in the case of resharing where I only belong
     // in one of the two contexts at play.
@@ -63,6 +62,9 @@ struct Context {
     // to build a RoleAssignment on a TwoSetRole,
     // we need 2 contexts
     role_assignment: RoleAssignment<Role>,
+    // Signer address of each party whose node lists one in the context. A party without a
+    // listed signer address has no entry.
+    signers: HashMap<Role, SignerAddress>,
     threshold: u8,
 }
 
@@ -181,50 +183,7 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 }
 
 impl SessionMaker {
-    /// Builds a session maker that serves `all_epochs`, the epoch data read from private
-    /// storage, and every MPC context stored in `crypto_storage`.
-    pub(crate) async fn new_initialized<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-    >(
-        my_id: Option<Role>,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        all_epochs: HashMap<EpochId, EpochData>,
-        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-        verifier: Option<Arc<AttestedVerifier>>,
-        rng_source: Arc<RngSource>,
-    ) -> anyhow::Result<Self> {
-        let session_maker: SessionMaker =
-            Self::new_uninitialized(networking_manager, verifier, rng_source);
-        if all_epochs.is_empty() {
-            tracing::warn!(
-                "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
-            );
-        }
-        for (epoch_id, prss) in all_epochs {
-            session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                "Loaded epoch data from storage for request ID {}.",
-                epoch_id
-            );
-        }
-        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
-        if mpc_contexts.is_empty() {
-            tracing::warn!(
-                "No MPC context found in storage! There should at a minimum be a default context!"
-            );
-        }
-        for context_info in mpc_contexts {
-            session_maker.add_context_info(my_id, &context_info).await?;
-            tracing::info!(
-                "Loaded MPC context from storage for context ID {}.",
-                context_info.context_id()
-            );
-        }
-        Ok(session_maker)
-    }
-
-    pub(crate) fn new_uninitialized(
+    pub(crate) fn new(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng_source: Arc<RngSource>,
@@ -369,6 +328,7 @@ impl SessionMaker {
             context_id,
             Some(Role::indexed_from_one(1)),
             four_party_dummy_role_assignment(),
+            HashMap::new(),
             1,
         )
         .await;
@@ -388,9 +348,11 @@ impl SessionMaker {
 
         let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {
+            context_id: default_context_id,
             threshold: 1,
             my_role: Some(Role::indexed_from_one(1)),
             role_assignment,
+            signers: HashMap::new(),
         };
 
         let default_epoch = match (prss_setup_z128, prss_setup_z64) {
@@ -426,12 +388,29 @@ impl SessionMaker {
     async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
-        let mut health_check_sessions = HashMap::new();
-        for (context_id, context) in self.context_map.read().await.iter() {
-            if context.my_role.is_some() {
-                health_check_sessions
-                    .insert(*context_id, self.get_healthcheck_session(context_id).await?);
+        // Building a session connects to every peer, so do not hold the `context_map` guard
+        // across it. While that network I/O runs, a `context_map` writer can queue. The tokio
+        // lock is fair: every later read then waits behind the writer, and the writer waits for
+        // this guard, so a nested read such as the one in `get_healthcheck_session` never
+        // completes.
+        let mut contexts = Vec::new();
+        {
+            let context_map_guard = self.context_map.read().await;
+            for (context_id, context) in context_map_guard.iter() {
+                if let Some(my_role) = context.my_role {
+                    contexts.push((*context_id, my_role, context.role_assignment.clone()));
+                }
             }
+        }
+
+        let nm = self.networking_manager.read().await;
+        let mut health_check_sessions = HashMap::new();
+        for (context_id, my_role, role_assignment) in contexts {
+            health_check_sessions.insert(
+                context_id,
+                nm.make_healthcheck_session(role_assignment, my_role)
+                    .await?,
+            );
         }
         Ok(health_check_sessions)
     }
@@ -445,7 +424,7 @@ impl SessionMaker {
         let my_role = self.my_role(context_id).await?;
 
         if let Some(role) = my_role {
-            Ok(nm.make_healthcheck_session(&role_assignment, role).await?)
+            Ok(nm.make_healthcheck_session(role_assignment, role).await?)
         } else {
             Err(anyhow::anyhow!(
                 "My role is not defined for context {}",
@@ -471,19 +450,23 @@ impl SessionMaker {
         }
     }
 
+    #[cfg(test)]
     async fn add_context(
         &self,
         context_id: ContextId,
         my_role: Option<Role>,
         role_assignment: RoleAssignment<Role>,
+        signers: HashMap<Role, SignerAddress>,
         threshold: u8,
     ) {
         let mut context_map = self.context_map.write().await;
         context_map.insert(
             context_id,
             Context {
+                context_id,
                 my_role,
                 role_assignment,
+                signers,
                 threshold,
             },
         );
@@ -496,6 +479,7 @@ impl SessionMaker {
         info: &ContextInfo,
     ) -> anyhow::Result<()> {
         let mut role_assignment_map = HashMap::new();
+        let mut signers = HashMap::new();
         let mut ca_certs_map = HashMap::new();
 
         let num_nodes = info.mpc_nodes.len();
@@ -535,6 +519,12 @@ impl SessionMaker {
                     info.context_id()
                 ));
             }
+            let signer = node
+                .ecdsa_signer_address()
+                .map_err(|e| anyhow::anyhow!("{e} in context {}", info.context_id()))?;
+            if let Some(signer) = signer {
+                signers.insert(Role::indexed_from_one(party_id), signer);
+            }
 
             if let Some(ca_cert) = &node.ca_cert {
                 let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
@@ -548,31 +538,40 @@ impl SessionMaker {
             inner: role_assignment_map,
         };
 
-        self.add_context(
-            *info.context_id(),
-            my_role,
-            role_assignment,
-            info.threshold as u8,
-        )
-        .await;
+        let context_id = *info.context_id();
 
-        match self.verifier.as_ref() {
-            Some(verifier) => {
-                let context_id_as_session_id = info.context_id().derive_session_id()?;
-                let release_pcrs = if info.pcr_values.is_empty() {
-                    tracing::warn!(
-                        "No PCR values provided for context {}, attested TLS verification may be weakened",
-                        info.context_id()
-                    );
-                    None
-                } else {
-                    Some(info.pcr_values.iter().cloned().collect())
-                };
-                verifier
-                    .add_context(context_id_as_session_id, ca_certs_map, release_pcrs)
-                    .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {}", e))?;
-            }
-            _ => { /* do nothing */ }
+        let mut context_map = self.context_map.write().await;
+        if context_map.contains_key(&context_id) {
+            tracing::error!("Refusing to replace existing MPC context {context_id}");
+            anyhow::bail!("MPC context {context_id} already exists");
+        }
+
+        context_map.insert(
+            context_id,
+            Context {
+                context_id,
+                my_role,
+                role_assignment,
+                signers,
+                threshold: info.threshold as u8,
+            },
+        );
+        drop(context_map);
+
+        if let Some(verifier) = &self.verifier {
+            let verifier_context_id = context_id.derive_session_id()?;
+            let release_pcrs = if info.pcr_values.is_empty() {
+                tracing::warn!(
+                    "No PCR values provided for context {}, attested TLS verification may be weakened",
+                    info.context_id()
+                );
+                None
+            } else {
+                Some(info.pcr_values.iter().cloned().collect())
+            };
+            verifier
+                .add_context(verifier_context_id, ca_certs_map, release_pcrs)
+                .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {e}"))?;
         }
 
         Ok(())
@@ -853,9 +852,6 @@ impl SessionMaker {
             threshold_set_2: context_info_s2.threshold,
         };
 
-        let role_assignment_s1 = context_info_s1.role_assignment.clone().inner;
-        let role_assignment_s2 = context_info_s2.role_assignment.clone().inner;
-
         let my_role_both_sets = match (context_info_s1.my_role, context_info_s2.my_role) {
             (None, None) => {
                 return Err(anyhow::anyhow!(
@@ -872,41 +868,15 @@ impl SessionMaker {
             }),
         };
 
-        // Go over role_assignment_s1 and role_assignment_s2, if one of the value is common to both return
-        // TwoSetsRole::Both, else TwoSetsRole::Set1 or TwoSetsRole::Set2
-        let mut reversed_role_assignment_both_sets = role_assignment_s1
-            .into_iter()
-            .map(|(role, id)| (id, TwoSetsRole::OnlySet1(role)))
-            .collect::<HashMap<_, _>>();
-
-        role_assignment_s2.into_iter().for_each(|(role, id)| {
-            match reversed_role_assignment_both_sets.entry(id) {
-                Entry::Occupied(occupied_entry) => {
-                    let role_set_1 = occupied_entry.into_mut();
-                    match role_set_1 {
-                        TwoSetsRole::OnlySet1(role1) => {
-                            *role_set_1 = TwoSetsRole::Both(DualRole {
-                                role_set_1: *role1,
-                                role_set_2: role,
-                            });
-                        }
-                        _ => {
-                            panic!("Inconsistent state in role assignment for two sets session");
-                        }
-                    }
-                }
-                Entry::Vacant(vacant_entry) => {
-                    let _ = vacant_entry.insert(TwoSetsRole::OnlySet2(role));
-                }
-            }
-        });
-
-        let role_assignment_both_sets = RoleAssignment {
-            inner: reversed_role_assignment_both_sets
-                .into_iter()
-                .map(|(id, role)| (role, id))
-                .collect(),
-        };
+        let role_assignment_both_sets =
+            merge_two_sets_role_assignments(context_info_s1, context_info_s2)?;
+        // `my_role` comes from the signer address of this node, the merge from MPC identities.
+        // They disagree if one context lists my MPC identity without my signer address.
+        if !role_assignment_both_sets.contains_key(&my_role_both_sets) {
+            return Err(anyhow::anyhow!(
+                "My role {my_role_both_sets} is not in the merged party set of contexts {context_id_set1} and {context_id_set2}: both contexts list my MPC identity, but only one lists my signer address"
+            ));
+        }
         let session_parameters = TwoSetsSessionParameters::new(
             threshold,
             session_id,
@@ -960,6 +930,118 @@ impl SessionMaker {
             .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
         Ok(context_info.role_assignment.len())
     }
+}
+
+/// Merges the role assignments of the two contexts of a two-sets session.
+///
+/// A party of set 1 and a party of set 2 become one [`TwoSetsRole::Both`] party if they have
+/// the same MPC identity. TLS authenticates the MPC identity, and the networking layer routes
+/// messages by it. The URL only tells where to connect, so the merge ignores it. A merged party
+/// keeps its set 2 [`Identity`], so the session connects to it at the URL of the new context.
+///
+/// Returns an error if the contexts disagree about a party: one MPC identity with two different
+/// signer addresses, or one signer address with two different MPC identities. A party without a
+/// listed signer address merges by MPC identity alone. Also returns an error if one context
+/// lists an MPC identity or a signer address twice.
+fn merge_two_sets_role_assignments(
+    context_set1: &Context,
+    context_set2: &Context,
+) -> anyhow::Result<RoleAssignment<TwoSetsRole>> {
+    let context_id_set1 = &context_set1.context_id;
+    let context_id_set2 = &context_set2.context_id;
+    // Set 1 is indexed only to reject duplicates in it.
+    roles_by_mpc_identity(context_set1)?;
+    roles_by_signer(context_set1)?;
+    let mut set2_by_mpc_identity = roles_by_mpc_identity(context_set2)?;
+    let set2_by_signer = roles_by_signer(context_set2)?;
+
+    let mut merged = RoleAssignment::empty();
+    for (role_set_1, identity_set_1) in context_set1.role_assignment.iter() {
+        let mpc_identity = identity_set_1.mpc_identity();
+        let signer_set_1 = context_set1.signers.get(role_set_1);
+        let role_by_mpc_identity = set2_by_mpc_identity
+            .get(&mpc_identity)
+            .map(|(role, _)| *role);
+
+        if let Some(signer) = signer_set_1
+            && let Some(role_by_signer) = set2_by_signer.get(signer)
+            && role_by_mpc_identity != Some(*role_by_signer)
+        {
+            let other_mpc_identity = context_set2
+                .role_assignment
+                .get(role_by_signer)
+                .map(|identity| identity.mpc_identity().to_string())
+                .unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Signer {} is party {role_set_1} with MPC identity {mpc_identity} in context {context_id_set1}, but party {role_by_signer} with MPC identity {other_mpc_identity} in context {context_id_set2}",
+                signer.0
+            ));
+        }
+
+        let Some((role_set_2, identity_set_2)) = set2_by_mpc_identity.remove(&mpc_identity) else {
+            merged.insert(TwoSetsRole::OnlySet1(*role_set_1), identity_set_1.clone());
+            continue;
+        };
+        if let (Some(signer_1), Some(signer_2)) =
+            (signer_set_1, context_set2.signers.get(&role_set_2))
+            && signer_1 != signer_2
+        {
+            return Err(anyhow::anyhow!(
+                "MPC identity {mpc_identity} is party {role_set_1} with signer {} in context {context_id_set1}, but party {role_set_2} with signer {} in context {context_id_set2}",
+                signer_1.0,
+                signer_2.0
+            ));
+        }
+        merged.insert(
+            TwoSetsRole::Both(DualRole {
+                role_set_1: *role_set_1,
+                role_set_2,
+            }),
+            identity_set_2.clone(),
+        );
+    }
+
+    // The set 2 parties left in the index have no MPC identity in set 1.
+    for (role_set_2, identity_set_2) in set2_by_mpc_identity.into_values() {
+        merged.insert(TwoSetsRole::OnlySet2(role_set_2), identity_set_2.clone());
+    }
+    Ok(merged)
+}
+
+/// Maps each MPC identity of `context` to the role and the network identity of its party.
+///
+/// Returns an error if two parties of the context have the same MPC identity.
+fn roles_by_mpc_identity(
+    context: &Context,
+) -> anyhow::Result<HashMap<MpcIdentity, (Role, &Identity)>> {
+    let mut roles = HashMap::new();
+    for (role, identity) in context.role_assignment.iter() {
+        if let Some((other_role, _)) = roles.insert(identity.mpc_identity(), (*role, identity)) {
+            return Err(anyhow::anyhow!(
+                "Parties {other_role} and {role} have the same MPC identity {} in context {}",
+                identity.mpc_identity(),
+                context.context_id
+            ));
+        }
+    }
+    Ok(roles)
+}
+
+/// Maps each listed signer address of `context` to the role of its party.
+///
+/// Returns an error if two parties of the context have the same signer address.
+fn roles_by_signer(context: &Context) -> anyhow::Result<HashMap<SignerAddress, Role>> {
+    let mut roles = HashMap::new();
+    for (role, signer) in context.signers.iter() {
+        if let Some(other_role) = roles.insert(*signer, *role) {
+            return Err(anyhow::anyhow!(
+                "Parties {other_role} and {role} have the same signer {} in context {}",
+                signer.0,
+                context.context_id
+            ));
+        }
+    }
+    Ok(roles)
 }
 
 /// This is the same as [SessionMaker] but it does not allow mutation of the inner state.
@@ -1142,17 +1224,77 @@ pub(crate) async fn validate_context_and_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::engine::{
         context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
-    use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+    use std::time::Duration;
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
         crypto::aws_lc_rs::default_provider,
-        pki_types::{ServerName, UnixTime},
+        pki_types::{CertificateDer, ServerName, UnixTime},
+        server::danger::ClientCertVerifier,
     };
+
+    /// Sunshine: one health check session per context that has a role for this party.
+    #[tokio::test]
+    async fn healthcheck_sessions_cover_contexts_with_my_role() {
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut AesRng::seed_from_u64(5)),
+            TaskRngs::insecure_seed_from_u64(6),
+        );
+        let sessions = session_maker
+            .get_healthcheck_session_all_contexts()
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        let session = sessions.get(&*crate::consts::DEFAULT_MPC_CONTEXT).unwrap();
+        assert_eq!(session.get_num_parties(), 4);
+    }
+
+    /// A context change while the health check sessions are built must not deadlock. The test
+    /// polls both futures by hand, so the order does not depend on timing. It holds the networking
+    /// manager, so that the first poll of the health check reads `context_map` and then waits for
+    /// the networking manager. A context change must then complete in one poll, which is only
+    /// possible if the health check holds no `context_map` guard while it waits.
+    #[tokio::test]
+    async fn healthcheck_sessions_do_not_block_a_context_change() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut rng),
+            TaskRngs::insecure_seed_from_u64(8),
+        );
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let networking_guard = session_maker.networking_manager.write().await;
+
+        let mut health_check = std::pin::pin!(session_maker.get_healthcheck_session_all_contexts());
+        assert!(
+            health_check.as_mut().poll(&mut cx).is_pending(),
+            "the health check must wait for the networking manager"
+        );
+
+        let new_context = ContextId::new_random(&mut rng);
+        let mut context_change =
+            std::pin::pin!(session_maker.add_four_party_dummy_context(new_context));
+        assert!(
+            context_change.as_mut().poll(&mut cx).is_ready(),
+            "the context change must not wait for the health check"
+        );
+
+        drop(networking_guard);
+        let sessions = tokio::time::timeout(Duration::from_secs(5), health_check)
+            .await
+            .expect("the health check must finish once the networking manager is free")
+            .unwrap();
+        assert!(sessions.contains_key(&*crate::consts::DEFAULT_MPC_CONTEXT));
+    }
 
     /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
     /// requested context ID, and excludes epochs belonging to other contexts.
@@ -1237,6 +1379,7 @@ mod tests {
                 context_id,
                 Some(Role::indexed_from_one(1)),
                 RoleAssignment::empty(),
+                HashMap::new(),
                 1,
             )
             .await;
@@ -1500,8 +1643,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn remove_context_updates_attested_verifier_references() {
+    fn session_maker_with_attested_verifier() -> (SessionMaker, Arc<AttestedVerifier>) {
         _ = default_provider().install_default();
         let verifier = Arc::new(
             AttestedVerifier::new(
@@ -1515,26 +1657,27 @@ mod tests {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
-        let session_maker = SessionMaker::new_uninitialized(
+        let session_maker = SessionMaker::new(
             networking_manager,
             Some(Arc::clone(&verifier)),
             Arc::new(RngSource::from_rngs(TaskRngs::insecure_seed_from_u64(6))),
         );
 
-        let identity = "shared.example.com";
-        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-        let (_, certificate, _) =
-            threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
-                identity, false, false, &keypair,
-            )
-            .unwrap();
-        let certificate_pem = certificate.pem().into_bytes();
-        let make_context = |context_id| ContextInfo {
+        (session_maker, verifier)
+    }
+
+    fn context_with_ca(
+        identity: &str,
+        certificate_pem: Vec<u8>,
+        context_id: ContextId,
+        pcr_values: Vec<threshold_networking::tls::ReleasePCRValues>,
+    ) -> ContextInfo {
+        ContextInfo {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: identity.to_string(),
                 party_id: 1,
                 external_url: format!("https://{identity}:8443"),
-                ca_cert: Some(certificate_pem.clone()),
+                ca_cert: Some(certificate_pem),
                 public_storage_url: String::new(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
@@ -1548,39 +1691,529 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
-            pcr_values: vec![],
-        };
+            pcr_values,
+        }
+    }
+
+    fn certificate_der(certificate_pem: &[u8]) -> Vec<u8> {
+        x509_parser::pem::parse_x509_pem(certificate_pem)
+            .unwrap()
+            .1
+            .contents
+    }
+
+    #[tokio::test]
+    async fn remove_context_updates_attested_verifier_references() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+
+        let identity = "shared.example.com";
+        let (ca_pem, pcr_values) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der = certificate_der(&ca_pem.contents);
         let mut rng = AesRng::seed_from_u64(7);
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
         session_maker
-            .add_context_info(None, &make_context(context_a))
+            .add_context_info(
+                None,
+                &context_with_ca(
+                    identity,
+                    ca_pem.contents.clone(),
+                    context_a,
+                    vec![pcr_values.clone()],
+                ),
+            )
             .await
             .unwrap();
         session_maker
-            .add_context_info(None, &make_context(context_b))
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem.contents, context_b, vec![pcr_values]),
+            )
             .await
             .unwrap();
 
         let server_name = ServerName::try_from(identity).unwrap();
-        let verify_certificate = || {
-            verifier.verify_server_cert(certificate.der(), &[], &server_name, &[], UnixTime::now())
+        let verify_server = || {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
         };
-        assert!(verify_certificate().is_ok());
+        let verify_client = || {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(&certificate_der),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        assert!(session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_a).await.unwrap();
         assert!(!session_maker.context_exists(&context_a).await);
         assert!(session_maker.context_exists(&context_b).await);
-        assert!(
-            verify_certificate().is_ok(),
-            "the shared trust root must remain while another live context references it"
-        );
+        assert!(verify_server().is_ok());
+        assert!(verify_client().is_ok());
 
         session_maker.remove_context(&context_b).await.unwrap();
         assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server().is_err());
+        assert!(verify_client().is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_context_removes_only_its_attested_verifier_root() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+        let identity = "rotated.example.com";
+        let (ca_pem_a, pcr_values_a) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let (ca_pem_b, pcr_values_b) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
+        let mut rng = AesRng::seed_from_u64(10);
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_a.contents, context_a, vec![pcr_values_a]),
+            )
+            .await
+            .unwrap();
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_b.contents, context_b, vec![pcr_values_b]),
+            )
+            .await
+            .unwrap();
+
+        let server_name = ServerName::try_from(identity).unwrap();
+        let verify_server = |certificate: &[u8]| {
+            verifier.verify_server_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
+        };
+        let verify_client = |certificate: &[u8]| {
+            verifier.verify_client_cert(
+                &CertificateDer::from_slice(certificate),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        assert!(session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_ok());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_a).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
+
+        session_maker.remove_context(&context_a).await.unwrap();
+        assert!(!session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_a).is_err());
+        assert!(verify_client(&certificate_der_a).is_err());
+        assert!(verify_server(&certificate_der_b).is_ok());
+        assert!(verify_client(&certificate_der_b).is_ok());
+
+        session_maker.remove_context(&context_b).await.unwrap();
+        assert!(!session_maker.context_exists(&context_b).await);
+        assert!(verify_server(&certificate_der_b).is_err());
+        assert!(verify_client(&certificate_der_b).is_err());
+    }
+
+    #[tokio::test]
+    async fn duplicate_context_is_rejected_without_replacing_its_verifier_root() {
+        let (session_maker, verifier) = session_maker_with_attested_verifier();
+        let identity = "duplicate.example.com";
+        let (ca_pem_a, pcr_values_a) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let (ca_pem_b, pcr_values_b) =
+            threshold_networking::tls::generate_mock_tls_cert_with_attestation(identity)
+                .await
+                .unwrap();
+        let certificate_der_a = certificate_der(&ca_pem_a.contents);
+        let certificate_der_b = certificate_der(&ca_pem_b.contents);
+        let mut rng = AesRng::seed_from_u64(11);
+        let context_id = ContextId::new_random(&mut rng);
+
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_a.contents, context_id, vec![pcr_values_a]),
+            )
+            .await
+            .unwrap();
+        session_maker
+            .add_context_info(
+                None,
+                &context_with_ca(identity, ca_pem_b.contents, context_id, vec![pcr_values_b]),
+            )
+            .await
+            .unwrap_err();
+
+        let server_name = ServerName::try_from(identity).unwrap();
         assert!(
-            verify_certificate().is_err(),
-            "the trust root must be removed after its last live context is removed"
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
         );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_a),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_ok()
+        );
+        assert!(
+            verifier
+                .verify_server_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
+        assert!(
+            verifier
+                .verify_client_cert(
+                    &CertificateDer::from_slice(&certificate_der_b),
+                    &[],
+                    UnixTime::now(),
+                )
+                .is_err()
+        );
+        assert_eq!(session_maker.context_count().await, 1);
+    }
+
+    /// One node of a test context for the two-sets merge.
+    struct TestNode {
+        mpc_identity: String,
+        host: String,
+        port: u16,
+        signer: Option<SignerAddress>,
+    }
+
+    fn test_signer(byte: u8) -> SignerAddress {
+        SignerAddress(alloy_primitives::Address::repeat_byte(byte))
+    }
+
+    /// Node `i` with MPC identity `node-{i}`, host `node-{i}{host_suffix}`, port 50001 and the
+    /// signer `test_signer(i)`.
+    fn test_node(i: u8, host_suffix: &str) -> TestNode {
+        TestNode {
+            mpc_identity: format!("node-{i}"),
+            host: format!("node-{i}{host_suffix}"),
+            port: 50001,
+            signer: Some(test_signer(i)),
+        }
+    }
+
+    fn four_test_nodes(host_suffix: &str) -> Vec<TestNode> {
+        (1..=4).map(|i| test_node(i, host_suffix)).collect()
+    }
+
+    /// Registers a threshold 1 context through [`SessionMaker::add_context_info`], in which
+    /// party `i` (one-based) is `nodes[i - 1]`.
+    async fn add_test_context(
+        session_maker: &SessionMaker,
+        context_id: ContextId,
+        my_role: Option<usize>,
+        nodes: &[TestNode],
+    ) {
+        let context = ContextInfo {
+            mpc_nodes: nodes
+                .iter()
+                .enumerate()
+                .map(|(i, node)| NodeInfo {
+                    mpc_identity: node.mpc_identity.clone(),
+                    party_id: i as u32 + 1,
+                    external_url: format!("http://{}:{}", node.host, node.port),
+                    ca_cert: None,
+                    public_storage_url: String::new(),
+                    public_storage_prefix: None,
+                    extra_signer_addresses: vec![],
+                    scheme_digests: node
+                        .signer
+                        .map(SchemeDigests::from_ecdsa_address)
+                        .unwrap_or_default(),
+                })
+                .collect(),
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 1,
+            pcr_values: vec![],
+        };
+        session_maker
+            .add_context_info(my_role.map(Role::indexed_from_one), &context)
+            .await
+            .unwrap();
+    }
+
+    /// Registers `set1` and `set2` as two contexts and builds the two-sets session parameters.
+    async fn two_sets_params(
+        my_role_set1: Option<usize>,
+        set1: &[TestNode],
+        my_role_set2: Option<usize>,
+        set2: &[TestNode],
+    ) -> anyhow::Result<(TwoSetsSessionParameters, RoleAssignment<TwoSetsRole>)> {
+        let mut rng = AesRng::seed_from_u64(300);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(301));
+        let context_set1 = ContextId::new_random(&mut rng);
+        let context_set2 = ContextId::new_random(&mut rng);
+        add_test_context(&session_maker, context_set1, my_role_set1, set1).await;
+        add_test_context(&session_maker, context_set2, my_role_set2, set2).await;
+        session_maker
+            .get_session_params_two_sets(SessionId::from(1u128), &context_set1, &context_set2)
+            .await
+    }
+
+    /// Same as [`two_sets_params`], but expects an error and returns its message.
+    async fn two_sets_error(
+        my_role_set1: Option<usize>,
+        set1: &[TestNode],
+        my_role_set2: Option<usize>,
+        set2: &[TestNode],
+    ) -> String {
+        match two_sets_params(my_role_set1, set1, my_role_set2, set2).await {
+            Ok(_) => panic!("building the two-sets session parameters must fail"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    fn both(role_set_1: usize, role_set_2: usize) -> TwoSetsRole {
+        TwoSetsRole::Both(DualRole {
+            role_set_1: Role::indexed_from_one(role_set_1),
+            role_set_2: Role::indexed_from_one(role_set_2),
+        })
+    }
+
+    fn assert_unique_mpc_identities(role_assignment: &RoleAssignment<TwoSetsRole>) {
+        let mpc_identities: HashSet<_> = role_assignment
+            .iter()
+            .map(|(_, identity)| identity.mpc_identity())
+            .collect();
+        assert_eq!(mpc_identities.len(), role_assignment.len());
+    }
+
+    /// Sunshine: parties with the same MPC identity and signer merge even though their host and
+    /// port differ, and the merged party uses the set 2 URL.
+    #[tokio::test]
+    async fn two_sets_merge_ignores_url() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes(".kms.svc.cluster.local");
+        set2[3].port = 50002;
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        assert_eq!(role_assignment.len(), 4);
+        for i in 1..=4 {
+            let identity = role_assignment.get(&both(i, i)).unwrap();
+            assert_eq!(
+                identity.hostname(),
+                format!("node-{i}.kms.svc.cluster.local")
+            );
+        }
+        assert_eq!(role_assignment.get(&both(4, 4)).unwrap().port(), 50002);
+    }
+
+    /// Sunshine: a party can have another role in set 2 than in set 1. The merge pairs the two
+    /// roles by MPC identity, and the merged party uses the set 2 URL.
+    #[tokio::test]
+    async fn two_sets_merge_reordered_roles() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes(".kms.svc.cluster.local");
+        set2.reverse();
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(4), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 4));
+        assert_eq!(role_assignment.len(), 4);
+        for i in 1..=4 {
+            let identity = role_assignment.get(&both(i, 5 - i)).unwrap();
+            assert_eq!(identity.mpc_identity(), MpcIdentity(format!("node-{i}")));
+            assert_eq!(
+                identity.hostname(),
+                format!("node-{i}.kms.svc.cluster.local")
+            );
+        }
+    }
+
+    /// Sunshine: a context that lists only this node's signer, as the default context built
+    /// from the peer list does, merges with a context that lists every signer.
+    #[tokio::test]
+    async fn two_sets_merge_by_mpc_identity_when_signers_are_missing() {
+        let mut set1 = four_test_nodes("");
+        for node in &mut set1[1..] {
+            node.signer = None;
+        }
+        let set2 = four_test_nodes(".kms.svc.cluster.local");
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        for i in 1..=4 {
+            assert!(role_assignment.contains_key(&both(i, i)));
+        }
+    }
+
+    /// Sunshine: a node with a new signer and a new MPC identity is a new party. The old party
+    /// stays in set 1 only and the new party is in set 2 only.
+    #[tokio::test]
+    async fn two_sets_merge_new_signer_is_new_party() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[3] = test_node(5, "");
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, Some(1), &set2)
+            .await
+            .unwrap();
+
+        assert_eq!(params.my_role(), both(1, 1));
+        assert_eq!(role_assignment.len(), 5);
+        for i in 1..=3 {
+            assert!(role_assignment.contains_key(&both(i, i)));
+        }
+        let old_party = TwoSetsRole::OnlySet1(Role::indexed_from_one(4));
+        let new_party = TwoSetsRole::OnlySet2(Role::indexed_from_one(4));
+        assert_eq!(
+            role_assignment.get(&old_party).unwrap().mpc_identity(),
+            MpcIdentity("node-4".to_string())
+        );
+        assert_eq!(
+            role_assignment.get(&new_party).unwrap().mpc_identity(),
+            MpcIdentity("node-5".to_string())
+        );
+        assert_unique_mpc_identities(&role_assignment);
+    }
+
+    /// Sunshine: two sets without a common MPC identity or signer do not merge any party.
+    #[tokio::test]
+    async fn two_sets_merge_disjoint_sets() {
+        let set1 = four_test_nodes("");
+        let set2: Vec<_> = (5..=8).map(|i| test_node(i, "")).collect();
+
+        let (params, role_assignment) = two_sets_params(Some(1), &set1, None, &set2).await.unwrap();
+
+        assert_eq!(
+            params.my_role(),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(1))
+        );
+        assert_eq!(role_assignment.len(), 8);
+        for i in 1..=4 {
+            assert!(
+                role_assignment.contains_key(&TwoSetsRole::OnlySet1(Role::indexed_from_one(i)))
+            );
+            assert!(
+                role_assignment.contains_key(&TwoSetsRole::OnlySet2(Role::indexed_from_one(i)))
+            );
+        }
+        assert_unique_mpc_identities(&role_assignment);
+    }
+
+    /// Negative: one MPC identity with two different signers is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_mpc_identity_with_other_signer() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[1].signer = Some(test_signer(9));
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("MPC identity node-2"), "{err}");
+        assert!(err.contains(&test_signer(9).0.to_string()), "{err}");
+    }
+
+    /// Negative: one signer with two different MPC identities is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_signer_with_other_mpc_identity() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[1].mpc_identity = "node-2-renamed".to_string();
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains(&test_signer(2).0.to_string()), "{err}");
+        assert!(err.contains("node-2-renamed"), "{err}");
+    }
+
+    /// Negative: a context that lists one MPC identity twice is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_duplicate_mpc_identity() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[3].mpc_identity = "node-3".to_string();
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("same MPC identity node-3"), "{err}");
+    }
+
+    /// Negative: a context that lists one signer twice is rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_duplicate_signer() {
+        let mut set1 = four_test_nodes("");
+        set1[3].signer = Some(test_signer(3));
+        let set2 = four_test_nodes("");
+
+        let err = two_sets_error(Some(1), &set1, Some(1), &set2).await;
+
+        assert!(err.contains("same signer"), "{err}");
+    }
+
+    /// Negative: if set 2 lists this node's MPC identity without its signer, this node is in
+    /// set 1 only by signer but merged by MPC identity, and the parameters are rejected.
+    #[tokio::test]
+    async fn two_sets_merge_rejects_my_mpc_identity_without_my_signer() {
+        let set1 = four_test_nodes("");
+        let mut set2 = four_test_nodes("");
+        set2[0].signer = None;
+
+        let err = two_sets_error(Some(1), &set1, None, &set2).await;
+
+        assert!(err.contains("only one lists my signer address"), "{err}");
     }
 }

@@ -10,6 +10,7 @@ use crate::grpc::{
 };
 use crate::tls::extract_subject_from_cert;
 use async_trait::async_trait;
+use bytes::Bytes;
 use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use serde::{Deserialize, Serialize};
@@ -448,7 +449,7 @@ impl Gnetworking for NetworkingImpl {
         let send_result = tokio::time::timeout(
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
-                value: request.value,
+                value: reallocate_small_bytes(request.value),
                 // Narrow the fixed-width wire round back to the in-memory `usize`.
                 round_counter: tag.round_counter as usize,
             }),
@@ -472,6 +473,21 @@ impl Gnetworking for NetworkingImpl {
         Ok(tonic::Response::new(SendValueResponse {
             status: Status::Active.into(),
         }))
+    }
+}
+
+/// Copies payloads of at most 4 KiB into their own exactly-sized buffer.
+/// `request.value` is a view into tonic's per-call receive buffer (at least 8 KiB),
+/// and the view keeps that whole buffer allocated while the message waits in a queue (Bytes being zero-copy).
+/// The copy is negligible at this size; larger payloads keep the zero-copy path
+/// (they pin at most 2x their size).
+fn reallocate_small_bytes(data: Bytes) -> Bytes {
+    const RECV_COPY_THRESHOLD: usize = 4 * 1024;
+
+    if data.len() <= RECV_COPY_THRESHOLD {
+        Bytes::copy_from_slice(&data)
+    } else {
+        data
     }
 }
 

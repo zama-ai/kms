@@ -3,7 +3,10 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 // === External Crates ===
@@ -16,6 +19,7 @@ use kms_grpc::{
 };
 use observability::{
     conf::TelemetryConfig,
+    health::HealthState,
     metrics::{self},
     metrics_names::OP_BOOT,
 };
@@ -44,7 +48,6 @@ use threshold_networking::{
     tls::AttestedVerifier,
 };
 
-use threshold_types::role::Role;
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -52,10 +55,7 @@ use tokio::{
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{Server, server::TcpIncoming};
-use tonic_health::{
-    pb::health_server::{Health, HealthServer},
-    server::HealthReporter,
-};
+use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
 use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
@@ -424,7 +424,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) signatures: Vec<crate::engine::base::StoredTypedSignature>,
+    pub(crate) signatures: Vec<crate::cryptography::signing::StoredTypedSignature>,
     pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
 }
@@ -521,7 +521,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
-    (HealthReporter, HealthServer<impl Health>),
+    (HealthState, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
@@ -685,6 +685,14 @@ where
     // the initial MPC node might not accept any peers because initially there's no context
     let mpc_socket_addr = mpc_listener.local_addr()?;
 
+    let (health, core_service_health_service) = HealthState::new().await;
+    // We are only serving after initialization
+    health
+        .reporter()
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
+    let mpc_server_health = health.clone();
+
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
 
@@ -708,11 +716,21 @@ where
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
+        let shutdown_requested = AtomicBool::new(false);
         let graceful_shutdown_signal = async {
             // Set the server to be serving when we boot
             threshold_health_reporter.set_serving::<GrpcServer>().await;
-            // await is the same as recv on a oneshot channel
-            _ = rx.await;
+            // await is the same as recv on a oneshot channel. A dropped sender means that the
+            // signal task ended without a signal, for example after a panic. That is no shutdown
+            // request, so the stop of the server that follows counts as a fault.
+            if rx.await.is_ok() {
+                shutdown_requested.store(true, Ordering::Release);
+            } else {
+                tracing::error!(
+                    "The shutdown signal task of the core-to-core server on {} ended without a signal",
+                    mpc_socket_addr
+                );
+            }
             // Observe that the following is the shut down of the core (which communicates with the other cores)
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
@@ -733,7 +751,7 @@ where
         // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
         // then this should be changed
         let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
-        match tls_config {
+        let serve_result = match tls_config {
             Some((server_config, _, _)) => {
                 router
                     .serve_with_incoming_shutdown(
@@ -747,12 +765,27 @@ where
                     .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
                     .await
             }
+        };
+        let serve_error = serve_result.err().map(|e| format!("{e:?}"));
+        if let Some(reason) = core_to_core_stop_fault(
+            shutdown_requested.load(Ordering::Acquire),
+            serve_error.as_deref(),
+        ) {
+            // Without the core-to-core server the node cannot take part in any MPC protocol, and
+            // only a restart starts the server again.
+            // `report_fatal` logs the fault, so the returned error does not log it again.
+            mpc_server_health
+                .report_fatal("core_to_core_server", &reason)
+                .await;
+            return Err(anyhow::anyhow!(
+                "Core-to-core server on {mpc_socket_addr} stopped outside a shutdown: {reason}"
+            ));
         }
-        .map_err(|e| {
-            anyhow_error_and_log(format!(
-                "Failed to launch ddec server on {mpc_socket_addr} with error: {e:?}"
-            ))
-        })?;
+        if let Some(e) = serve_error {
+            return Err(anyhow_error_and_log(format!(
+                "Core-to-core server on {mpc_socket_addr} failed during its shutdown: {e}"
+            )));
+        }
         tracing::info!(
             "Threshold core on {} shutdown completed successfully",
             mpc_socket_addr
@@ -800,26 +833,23 @@ where
         Some(custodian_meta_store.clone()),    // custodian_context_store
     );
 
-    let (core_service_health_reporter, core_service_health_service) =
-        tonic_health::server::health_reporter();
-    // We are only serving after initialization
-    core_service_health_reporter
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-        .await;
-
-    let session_maker = SessionMaker::new_initialized(
-        threshold_config.my_id.map(Role::indexed_from_one),
-        &crypto_storage,
-        all_epochs,
-        networking_manager,
-        verifier,
-        base_kms.rng_source(),
-    )
-    .await?;
-    let immutable_session_maker = session_maker.make_immutable();
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng_source());
 
     let tracker = Arc::new(TaskTracker::new());
     let rate_limiter = RateLimiter::new(rate_limiter_conf);
+
+    let epoch_manager = RealThresholdEpochManager {
+        crypto_storage: crypto_storage.clone(),
+        session_maker: session_maker.clone(),
+        base_kms: base_kms.new_instance(),
+        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
+        _init: PhantomData,
+        _reshare: PhantomData,
+    };
+    epoch_manager.init_all_epochs_from_storage().await?;
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
@@ -839,17 +869,7 @@ where
         );
     }
 
-    let epoch_manager = RealThresholdEpochManager {
-        crypto_storage: crypto_storage.clone(),
-        session_maker: session_maker.clone(),
-        base_kms: base_kms.new_instance(),
-        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
-        tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
-        _init: PhantomData,
-        _reshare: PhantomData,
-    };
-    let slow_events = Arc::new(Mutex::new(HashMap::new()));
+    let immutable_session_maker = session_maker.make_immutable();
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance(),
@@ -880,7 +900,7 @@ where
         dkg_pubinfo_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
@@ -896,7 +916,7 @@ where
         preproc_factory,
         num_sessions_preproc,
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _producer_factory: PhantomData,
     };
@@ -907,7 +927,7 @@ where
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _ceremony: PhantomData,
     };
@@ -959,15 +979,31 @@ where
         Arc::clone(&tracker),
         immutable_session_maker,
         config.bandwidth_benchmark.clone().unwrap_or_default(),
-        core_service_health_reporter.clone(),
+        health.clone(),
         abort_handle,
     );
 
     Ok((
         kms,
-        (core_service_health_reporter, core_service_health_service),
+        (health, core_service_health_service),
         metastore_status_service,
     ))
+}
+
+/// Returns the reason to report a stop of the core-to-core server as a fatal fault, or `None` when
+/// the stop is part of a shutdown.
+///
+/// The server also stops without an error, when its stream of incoming connections ends. The TLS
+/// stream ends after an accept error such as `EMFILE`. So every stop outside a shutdown is a fault.
+/// `serve_error` describes the error that stopped the server, if any.
+fn core_to_core_stop_fault(shutdown_requested: bool, serve_error: Option<&str>) -> Option<String> {
+    if shutdown_requested {
+        return None;
+    }
+    Some(match serve_error {
+        Some(e) => e.to_string(),
+        None => "the server stopped without an error and without a shutdown request".to_string(),
+    })
 }
 
 fn update_threshold_kms_system_metrics<PubS, PrivS>(
@@ -1030,6 +1066,21 @@ mod tests {
     use crate::consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM};
 
     use super::*;
+
+    #[test]
+    fn core_to_core_stop_outside_shutdown_is_fatal() {
+        let reason = core_to_core_stop_fault(false, None).expect("a stop without error is fatal");
+        assert!(reason.contains("without a shutdown request"));
+        let reason = core_to_core_stop_fault(false, Some("accept failed"))
+            .expect("a stop with an error is fatal");
+        assert!(reason.contains("accept failed"));
+    }
+
+    #[test]
+    fn core_to_core_stop_during_shutdown_is_not_fatal() {
+        assert_eq!(core_to_core_stop_fault(true, None), None);
+        assert_eq!(core_to_core_stop_fault(true, Some("accept failed")), None);
+    }
 
     // Minimal test-only wrapper for the historical V2 wire shape with the old fat nested
     // `PublicKeyMaterial::Compressed` variant. We need this because the current types _can_ deserialize
@@ -1313,5 +1364,47 @@ mod tests {
             v2_bytes.len(),
             v3_bytes.len()
         );
+    }
+
+    /// An abort looks up the ID in its own service's map only, so the maps must be distinct.
+    #[tokio::test]
+    async fn services_have_separate_ongoing_maps() {
+        use crate::{
+            conf::init_conf, cryptography::signatures::gen_sig_keys,
+            engine::rng_source::test_rng_source, vault::storage::ram::RamStorage,
+        };
+
+        let mut config: CoreConfig =
+            init_conf(&format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        // No peers, so no default context to seed.
+        config.threshold.as_mut().unwrap().peers = None;
+        let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+        // Without a signing key, the constructor skips the storage checks.
+        let base_kms = BaseKmsStruct::new_no_signing_key(
+            kms_grpc::rpc_types::KMSType::Threshold,
+            verf_key,
+            test_rng_source(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (kms, _, _) = new_real_threshold_kms(
+            config,
+            RamStorage::new(),
+            RamStorage::new(),
+            None,
+            None,
+            listener,
+            base_kms,
+            None,
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+
+        let key_gen = &kms.key_generator.ongoing;
+        let preproc = &kms.keygen_preprocessor.ongoing;
+        let crs_gen = &kms.crs_generator.ongoing;
+        assert!(!Arc::ptr_eq(key_gen, preproc));
+        assert!(!Arc::ptr_eq(key_gen, crs_gen));
+        assert!(!Arc::ptr_eq(preproc, crs_gen));
     }
 }

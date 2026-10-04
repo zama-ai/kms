@@ -25,6 +25,8 @@ The Argo test commands and summaries retain their existing shell scripts.
 The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml). At submit time
 `generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers). That TOML
 file is the source of truth for both public- and user-decrypt rate ladders.
+Each operation has separate async and sync ladders. The client uses `--sync`
+for `PublicDecryptSync` and `UserDecryptSync`; async tests submit requests and poll for results.
 
 ```toml
 [defaults]              # applied to every rate unless the rate overrides it
@@ -35,7 +37,7 @@ maxshed = 0             # max shed (rate-limited) requests, % of offered
 pct = 98                # min achieved/target rate, %
 allowfail = false       # false → a breach fails the run; true → warns only
 
-[scenarios.pdec]
+[scenarios.pdec-async]
 key = "udec-key-gen"    # task providing the decryption key
 after = ["crs-gen"]     # dependencies for the first rate
 rates = [
@@ -44,24 +46,38 @@ rates = [
   { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
-[scenarios.udec]
+[scenarios.udec-async]
 key = "udec-key-gen"
-after = ["pdec"]
+after = ["pdec-async"]
 rates = [
   { rate = 2400 },                                              # uses the defaults
   { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },          # override some limits
   { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
+
+[scenarios.pdec-sync]
+key = "udec-key-gen"
+after = ["udec-async"]
+rates = [{ rate = 1200 }]
 ```
 
 Rules:
 
 - every `rates` entry is an inline table with a `rate` key;
-- anything unspecified falls back to `[defaults]`;
+- unspecified per-rate limits fall back to `[defaults]`;
+- Scenario names are `pdec-async`, `pdec-sync`, `udec-async`, or `udec-sync`.
+- The scenario name selects the command and endpoint, and identifies tasks and artifacts.
 - `key` names the task that supplies the key ID; `after` is an optional list of
-  dependencies that must run before the first rate of a ladder. The list can be either an Argo DAG task, e.g. `crs-gen`, or an entry from the `scenarios` table, e.g. `pdec`.
+  dependencies that must run before the first rate of a ladder. The list can be either an Argo DAG task, e.g. `crs-gen`, or an entry from the `scenarios` table, e.g. `pdec-async`.
 
 `keygen`/`crs` are one-shot setup and not configured here.
+The example shows one sync rung; the configuration file contains both complete sync ladders.
+The ladders run sequentially to avoid competing workloads. Each ladder starts independently,
+even when a preceding ladder exceeds its limits. A failed rung skips only higher rates in its own ladder.
+
+Sync rates are PDEC 1,200/1,400/1,700 and UDEC 1,500/1,900/2,300 requests/s.
+The first two rungs of each sync ladder use the default limits and fail the run on a breach.
+The third rung has relaxed limits and `allowfail = true`, so a breach produces a warning.
 
 To preview the fully-expanded workflow locally:
 
@@ -100,7 +116,7 @@ modes configure a 30,000-entry MetaStore decryption store for these tests.
 
 The public- and user-decrypt rates, their durations, and their budgets
 are defined in [`perf-scenarios.toml`](perf-scenarios.toml). The Slack report
-labels each result by its target rate, for example `✅ 2400/s`.
+groups results by operation and endpoint, and labels each result by its target rate, for example `async ✅ 2400/s`.
 
 The budget percentages (`maxfail`, `maxshed`) are shares of _offered_ requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
@@ -125,6 +141,7 @@ The Slack report and JSON artifacts use these fields.
 
 | Metric                        | Meaning                                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `scenario`                    | The measured scenario: `pdec-async`, `pdec-sync`, `udec-async`, or `udec-sync`.               |
 | `offered`                     | Requests the rate generator scheduled.                                                      |
 | `completed`                   | Requests that collected enough KMS responses                                                |
 | `completed_in_window`         | Requests completed during the configured measurement window.                                |
@@ -299,6 +316,18 @@ python3 ci/scripts/analyze_perf_run.py \
 
 Run-ID mode requires an authenticated `gh` CLI. The analyzer reports missing or
 partial instrumentation while retaining any rate results it can parse.
+Report rows identify the operation, endpoint, and rate, such as `udec-sync-2300`.
+Skipped rungs appear with their reasons in Markdown and in the JSON `skipped_rates` list.
+Per-core service tables use the public or user decryption metrics for each scenario.
+For older metrics without a `scenario` field, the analyzer assumes the async variant of the operation.
+Sync analysis requires a client image that emits the `scenario` field.
+
+Run the local tooling checks with Python 3.11 or later, Bash, and `jq`:
+
+```bash
+python3 ci/perf-testing/generate-perf-workflow.py --self-test
+python3 ci/scripts/analyze_perf_run.py --self-test
+```
 
 ## Reference: workflow form fields
 

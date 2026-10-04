@@ -37,6 +37,7 @@ fn default_builder() -> Builder {
         .type_attribute("KeySetAddedInfo", DERIVES)
         .type_attribute("TypedSigncryptedCiphertext", DERIVES)
         .type_attribute("KeyDigest", DERIVES)
+        .bytes(".kms.v1.TypedCiphertext.ciphertext")
 }
 
 // This is the `main` for wasm builds, which does not include
@@ -72,6 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "TypedCiphertext",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
+        // `Bytes` does not implement the wasm-bindgen ABI traits, so the
+        // accessors for this field are written by hand in `rpc_types.rs`.
+        .field_attribute("TypedCiphertext.ciphertext", "#[wasm_bindgen(skip)]")
         .type_attribute(
             "TypedSigncryptedCiphertext",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",

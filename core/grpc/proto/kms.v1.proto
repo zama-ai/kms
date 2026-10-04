@@ -750,7 +750,6 @@ message CustodianRecoveryRequest {
 message OperatorBackupOutput {
   bytes signcryption = 1;
   PkeSchemeType pke_type = 2;
-  SigningSchemeType signing_type = 3;
 }
 
 enum PkeSchemeType {
@@ -812,7 +811,7 @@ message SchemeDigest {
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
-  // The public verification key of the KMS server. MUST be manually validated by custodian
+  // The public verification keys of the KMS server. MUST be manually validated by custodian
   bytes operator_verf_key = 2;
   /// The ciphertexts that are the backup. Indexed by the custodian role.
   map<uint64, OperatorBackupOutput> cts = 3;
@@ -903,7 +902,9 @@ message KeyInfo {
   // Mapping of key type string to digest
   // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  // If there are no key_digests, the digest verification is skipped.
+  // Uncompressed keys need the "ServerKey" and "PublicKey" digests, compressed keys the
+  // "CompressedXofKeySet" and "PublicKey" digests. The digests are checked against the stored
+  // public material and signed for the new epoch.
   repeated KeyDigest key_digests = 4;
 }
 

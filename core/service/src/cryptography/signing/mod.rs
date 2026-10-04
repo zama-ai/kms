@@ -1,13 +1,15 @@
-//! Multi-scheme signing support (issue #3078).
-//!
-//! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
-//! internally.
-
+pub mod composite;
 pub mod ecdsa;
 mod eddsa;
 pub mod identity;
 mod mldsa;
 pub mod seed;
+pub mod typed_signature;
+pub mod verf_key_set;
+
+pub use composite::canonical_schemes;
+pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
+pub use verf_key_set::{KeyFingerprint, VerfKeySet};
 
 use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
@@ -89,6 +91,21 @@ pub enum SigningError {
         expected = SigningSchemeType::VARIANTS.join(", ")
     )]
     UnknownSchemeName(String),
+    #[error("could not serialize the signed payload: {0}")]
+    Serialization(String),
+    /// A set of signing schemes was empty, which would make "every signature
+    /// verified" vacuously true.
+    #[error("a signing scheme set must name at least one scheme")]
+    EmptySchemeSet,
+    /// A composite signature carried a different set of schemes than the
+    /// verifier required.
+    #[error("signature was made under schemes {actual}, but {expected} were required")]
+    UnexpectedSchemeSet {
+        /// The set the verifier demanded.
+        expected: String,
+        /// The set the signature claims.
+        actual: String,
+    },
 }
 
 /// Trait for any value that is tied to a concrete signature scheme.
@@ -424,13 +441,13 @@ const _: () = {
     assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa87>>();
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicSigKeyVersions {
     V0(UnifiedPublicSigKey),
 }
 
 /// A verification key tagged with the scheme it belongs to.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicSigKeyVersions)]
 pub enum UnifiedPublicSigKey {
     Ecdsa256k1(PublicSigKey),
@@ -482,8 +499,8 @@ impl HasSigningScheme for UnifiedPublicSigKey {
 }
 
 /// The verification keys a client or validator holds for its peers: per party
-/// id, one key per scheme that party has published.
-pub type SchemeVerfKeys = HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>;
+/// id, the set of keys that party has published.
+pub type SchemeVerfKeys = HashMap<u32, VerfKeySet>;
 
 /// The verification key `party_id` published for `scheme`, if it published one.
 pub fn verf_key_for(
@@ -491,7 +508,7 @@ pub fn verf_key_for(
     party_id: u32,
     scheme: SigningSchemeType,
 ) -> Option<&UnifiedPublicSigKey> {
-    keys.get(&party_id).and_then(|keys| keys.get(&scheme))
+    keys.get(&party_id).and_then(|keys| keys.get(scheme))
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
@@ -539,27 +556,43 @@ pub fn unified_verify(
     }
 }
 
-/// Scaffolding shared by the test modules of this module and its backends.
-#[cfg(test)]
-pub(crate) mod test_support {
+/// Scaffolding shared by the test modules of this module and its backends, and by the integration
+/// tests under `core/service/tests/`.
+///
+/// Also compiled under the `testing` feature, because an integration test is a separate crate and
+/// cannot see this one's `cfg(test)`. Re-exported as
+/// [`crate::cryptography::signatures::test_support`], since this module is only `pub(crate)`.
+#[cfg(any(test, feature = "testing"))]
+pub mod test_support {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use rand::RngCore;
 
-    pub(crate) fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
+    /// 32 bytes drawn from `rng`, for a backend that takes its key material as a seed.
+    pub fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
         let mut s = [0u8; 32];
         rng.fill_bytes(&mut s);
         s
     }
 
     /// A complete node signing identity: an ECDSA key with a root seed attached.
-    pub(crate) fn seeded_identity<R: rand::CryptoRng + RngCore>(
-        rng: &mut R,
-    ) -> NodeSigningIdentity {
+    pub fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> NodeSigningIdentity {
         let (_pk, sk) = gen_sig_keys(rng);
         NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
+    }
+
+    /// The published key set of a freshly seeded identity, for a party that has to cover `schemes`.
+    ///
+    /// Tests that build a peer's setup message need a set covering
+    /// [`crate::backup::BACKUP_SIGNING_SCHEMES`], which an ECDSA-only identity cannot produce.
+    pub fn seeded_verf_key_set<R: rand::CryptoRng + RngCore>(
+        rng: &mut R,
+        schemes: &[SigningSchemeType],
+    ) -> VerfKeySet {
+        VerfKeySet::from_identity(&seeded_identity(rng), schemes)
+            .expect("a seeded identity covers every scheme")
     }
 
     /// The contract every [`SigningScheme`] backend owes, checked in one place so that a new
@@ -568,7 +601,8 @@ pub(crate) mod test_support {
     /// A freshly produced signature verifies, and a tampered message, a different domain
     /// separator, and a tampered signature all reject. Key generation is not part of the trait,
     /// so the caller supplies the signing key.
-    pub(crate) fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
+    #[cfg(feature = "non-wasm")]
+    pub fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
         let vk = S::verifying_key(sk).expect("the backend must derive its verification key");
         let sig = S::sign(dsep, b"hello", sk).expect("the backend must sign");
         S::verify(dsep, b"hello", &sig, &vk).expect("a fresh signature must verify");
@@ -749,6 +783,29 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
             "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
         );
+    }
+
+    /// Declaration order is ascending wire order.
+    ///
+    /// Two things depend on this and neither would fail loudly if it broke.
+    /// [`composite::canonical_schemes`] calls "canonical" ascending wire order
+    /// but sorts with the derived [`Ord`], which follows declaration order; and
+    /// [`verf_key_set::VerfKeySet`] reports its schemes in `BTreeMap` order, the
+    /// same derived `Ord`. If the two orders ever disagreed, a signature's
+    /// preimage would name its schemes in a different order than the key set
+    /// verifying it reports, silently.
+    #[test]
+    fn declaration_order_is_wire_order() {
+        // `EnumIter` yields variants in declaration order, so the index is the
+        // position the derived `Ord` sorts by.
+        for (index, scheme) in SigningSchemeType::iter().enumerate() {
+            assert_eq!(
+                scheme.as_wire(),
+                index as i32,
+                "{scheme} is declared at position {index} but travels as {}",
+                scheme.as_wire()
+            );
+        }
     }
 
     #[test]

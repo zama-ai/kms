@@ -9,6 +9,8 @@ pub enum SetupSkipReason {
     InvalidHeader,
     InvalidRole,
     DuplicateRole,
+    /// The published verification keys did not cover [`crate::backup::BACKUP_SIGNING_SCHEMES`].
+    UnusableVerificationKeys,
 }
 
 /// Why a single custodian recovery output was skipped during filtering.

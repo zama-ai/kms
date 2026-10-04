@@ -565,7 +565,7 @@ pub(crate) mod tests {
         (
             msg,
             vec![TypedCiphertext {
-                ciphertext: ct_buf,
+                ciphertext: ct_buf.into(),
                 fhe_type: ct_type as i32,
                 external_handle: vec![],
                 ciphertext_format: ct_format as i32,

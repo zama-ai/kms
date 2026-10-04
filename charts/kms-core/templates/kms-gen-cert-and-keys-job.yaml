@@ -10,9 +10,20 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
   annotations:
+    {{- /*
+    In enclave mode, also run on upgrade: the enclave gets the kms-gen-keys
+    config only from this job, and kms-gen-keys keeps an existing signing key
+    and CA certificate and adds only missing material (e.g. the root signing
+    seed of v0.15). The non-enclave branch replaces the TLS certificates, and
+    the statefulset init container already runs kms-gen-keys at each start.
+    */}}
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    {{- else }}
     "helm.sh/hook": pre-install
+    {{- end }}
     "helm.sh/hook-weight": "-1"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
   name: {{ $kmsGenCertAndKeysName }}
 spec:
   template:

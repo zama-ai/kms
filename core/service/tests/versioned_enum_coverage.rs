@@ -44,18 +44,17 @@ fn dispatch_underlying_type_name(enum_name: &str) -> String {
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
 const ALLOW_UNCOVERED: &[&str] = &[
-    // Field of UnifiedSigncryptionKeyOwned.
-    // Covered via UnifiedSigncryptionKeyTest.
+    // Field of InternalCustodianContext, reached through a
+    // RecoveryValidationMaterial payload.
+    // Covered via RecoveryValidationMaterialTest.
     "UnifiedPublicEncKey",
-    // Field of UnifiedUnsigncryptionKeyOwned.
-    // Covered via UnifiedUnsigncryptionKeyTest.
-    "UnifiedPrivateEncKey",
     // Field of UnifiedCipher.
     // Covered via UnifiedCipherTest.
     "PkeSchemeType",
-    // Field of UnifiedSigncryption. (PrivateSigKey / PublicSigKey expose it
-    // only via the HasSigningScheme trait method, not as a struct field.)
-    // Covered via UnifiedSigncryptionTest.
+    // Field of StoredTypedSignature, and of UnifiedSigncryptionV0. (PrivateSigKey /
+    // PublicSigKey expose it only via the `signing_scheme_type` method, not as
+    // a struct field.)
+    // Covered via StoredTypedSignatureTest, and via UnifiedSigncryptionTest.
     "SigningSchemeType",
     // Map value in RecoveryValidationMaterialPayload.cts.
     // Covered via RecoveryValidationMaterialTest.
@@ -65,6 +64,9 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // field. Covered (in serialized-and-signcrypted form) via
     // OperatorBackupOutputTest.
     "BackupMaterial",
+    // The versioned mirror of VerfKeySet, reached through VerfKeySet's `try_convert`.
+    // Covered via VerfKeySetTest.
+    "VerfKeySetRepr",
     // Field of RecoveryValidationMaterial.payload.
     // Covered via RecoveryValidationMaterialTest.
     "RecoveryValidationMaterialPayload",
