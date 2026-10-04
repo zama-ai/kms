@@ -207,12 +207,8 @@ impl<
     }
 }
 
-// This is an enum to determine whether to start the dkg
-// in a secure mode. If the secure mode is selected,
-// a preprocessing handle must be given.
-// This is essentially the same as an Option, but it's
-// more clear to label the variants as `Secure`
-// and `Insecure`.
+// This is an enum to determine whether to start the dkg in a secure mode. If the secure mode is selected, a
+// preprocessing handle must be given.
 #[expect(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum PreprocHandleWithMode {
@@ -222,6 +218,7 @@ pub enum PreprocHandleWithMode {
             Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
         ),
     ),
+    #[cfg_attr(not(feature = "insecure"), expect(dead_code))]
     Insecure(RequestId),
 }
 
