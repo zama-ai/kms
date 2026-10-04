@@ -105,14 +105,30 @@ jobs:
               - 'docs/**'
 
   ############################################################################
+  # Test material shared by the Rust and Wasm testing pipelines.
+  ############################################################################
+  generate-test-material:
+    name: main/generate-test-material
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    uses: ./.github/workflows/generate-test-material.yml
+
+  ############################################################################
   # Rust testing pipeline
-  # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
-  # is intentional while we validate the shared rust cache, so every run
-  # exercises and warms it. Tighten with a change filter once that's settled.
+  # Runs on every PR/push after material generation. It exercises and warms
+  # the shared rust cache even when no Rust paths changed.
   ############################################################################
   rust-testing:
     name: main/rust-testing
+    needs: [generate-test-material]
     uses: ./.github/workflows/rust-testing.yml
+    with:
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
@@ -336,8 +352,30 @@ jobs:
       contents: read # Required to checkout repository code
     needs:
       - check-changes
+      - generate-test-material
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
+    with:
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     secrets: inherit
+
+  notify-kms-nightly:
+    name: main/kms-nightly-notification
+    if: always() && github.event_name == 'schedule'
+    needs: [generate-test-material, rust-testing]
+    environment: main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post nightly tests result in a channel
+        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
+        env:
+          ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_ICON_EMOJI: ':github-octocat:'
+          SLACK_TITLE: 'KMS Nightly Tests Result'
+          SLACK_COLOR: ${{ needs.generate-test-material.result == 'success' && needs.rust-testing.result == 'success' && 'good' || 'danger' }}
+          SLACK_MESSAGE: "Test material: ${{ needs.generate-test-material.result }} \nRust tests: ${{ needs.rust-testing.result }}"
