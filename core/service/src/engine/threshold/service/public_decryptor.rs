@@ -52,10 +52,7 @@ use crate::{
             BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
             sign_public_decryption_result,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::PublicDecryptor,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -119,7 +116,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     }
 }
 
-pub struct RealPublicDecryptor<
+pub(crate) struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodDecryptor<
@@ -239,7 +236,6 @@ impl<
     }
 }
 
-#[tonic::async_trait]
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -249,7 +245,7 @@ impl<
                 SmallSession<ResiduePolyF4Z128>,
             >,
         > + 'static,
-> PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
+> RealPublicDecryptor<PubS, PrivS, Dec>
 {
     // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
     // recorded below. Every event and error in this request — including the ones emitted by the
@@ -263,7 +259,7 @@ impl<
         context_id = tracing::field::Empty,
         epoch_id = tracing::field::Empty
     ))]
-    async fn public_decrypt(
+    pub(crate) async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -651,7 +647,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    async fn public_decrypt_sync(
+    pub(crate) async fn public_decrypt_sync(
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
@@ -675,7 +671,7 @@ impl<
         self.get_result(Request::new(req_id.into())).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {

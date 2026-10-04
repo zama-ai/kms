@@ -20,7 +20,7 @@ use kms_lib::{
         signatures::NodeSigningIdentity,
     },
     engine::{
-        backup_operator::boot_base_kms, centralized::central_kms::RealCentralizedKms,
+        backup_operator::boot_base_kms, centralized::central_kms::CentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
         migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
         threshold::service::new_real_threshold_kms,
@@ -680,7 +680,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 .await?;
             // A node without its signing key boots in recovery mode, as a threshold node does,
             // so that it can recover its keys from the custodians.
-            let (kms, (health, health_service)) = RealCentralizedKms::new_from_base_kms(
+            let (kms, (health, health_service)) = CentralizedKms::new_from_base_kms(
                 core_config,
                 public_vault,
                 private_vault,

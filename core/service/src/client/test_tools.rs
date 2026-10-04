@@ -7,10 +7,11 @@ use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
-use crate::engine::centralized::central_kms::RealCentralizedKms;
+use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::rng_source::test_rng_source;
-use crate::engine::threshold::service::{RealThresholdKms, new_real_threshold_kms};
+use crate::engine::threshold::service::new_real_threshold_kms;
+use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::util::rate_limiter::RateLimiterConfig;
@@ -393,7 +394,7 @@ pub async fn setup_threshold_with_custom_peers<
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
-                RealThresholdKms<PubS, PrivS>,
+                ThresholdKms<PubS, PrivS>,
                 (HealthState, _),
                 MetaStoreStatusServiceImpl,
             )> = new_real_threshold_kms(
@@ -755,7 +756,7 @@ pub async fn setup_centralized_no_client<
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health, health_service)) = RealCentralizedKms::new(
+    let (kms, (health, health_service)) = CentralizedKms::new(
         core_config,
         pub_storage,
         priv_storage,
@@ -790,9 +791,8 @@ pub async fn setup_centralized_no_client<
         .await
         .expect("Could not start server");
     });
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     await_server_ready(service_name, listen_port).await;
     ServerHandle::new_centralized(arc_kms_clone, listen_port, tx, handle_health)
 }
@@ -901,17 +901,16 @@ pub async fn setup_recovery_mode<
                 .unwrap();
             let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
             let core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-            let (kms, (health, health_service)) =
-                RealCentralizedKms::<PubS, PrivS>::new_from_base_kms(
-                    core_config,
-                    pub_storage,
-                    priv_storage,
-                    Some(backup_vault),
-                    None,
-                    base_kms,
-                )
-                .await
-                .expect("a server without its signing key must boot in recovery mode");
+            let (kms, (health, health_service)) = CentralizedKms::<PubS, PrivS>::new_from_base_kms(
+                core_config,
+                pub_storage,
+                priv_storage,
+                Some(backup_vault),
+                None,
+                base_kms,
+            )
+            .await
+            .expect("a server without its signing key must boot in recovery mode");
             let kms = Arc::new(kms);
             let server = Arc::clone(&kms);
             let handle_health = health.clone();
@@ -999,9 +998,8 @@ pub async fn setup_recovery_mode<
         }
     };
     // The service name does not depend on the type parameters of the server.
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     await_server_ready(service_name, service_port).await;
     let uri = Uri::from_str(&format!(
         "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{service_port}"

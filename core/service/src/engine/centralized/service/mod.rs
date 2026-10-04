@@ -59,7 +59,7 @@ mod tests {
     use crate::util::key_setup::store_server_signing_keys;
     use crate::{
         cryptography::signatures::{NodeSigningIdentity, PublicSigKey, gen_sig_keys},
-        engine::centralized::central_kms::RealCentralizedKms,
+        engine::centralized::central_kms::CentralizedKms,
         vault::storage::ram::RamStorage,
     };
     use aes_prng::AesRng;
@@ -69,7 +69,7 @@ mod tests {
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
         rng: &mut AesRng,
-    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+    ) -> (CentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
         let (verf_key, sig_key) = gen_sig_keys(rng);
         let mut public_storage = RamStorage::new();
         let mut private_storage = RamStorage::new();
@@ -80,7 +80,7 @@ mod tests {
             .await
             .unwrap();
         let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
-        let (kms, _health_service) = RealCentralizedKms::new(
+        let (kms, _health_service) = CentralizedKms::new(
             core_config,
             public_storage,
             private_storage,
