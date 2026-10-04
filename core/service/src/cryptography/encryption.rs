@@ -68,6 +68,23 @@ impl HasPkeScheme for UnifiedPublicEncKey {
 }
 
 impl UnifiedPublicEncKey {
+    /// Encrypt `msg` under this key with the hybrid KEM/DEM its scheme calls for.
+    pub(crate) fn hybrid_encrypt(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        msg: &[u8],
+    ) -> Result<HybridKemCt, CryptographyError> {
+        match self {
+            UnifiedPublicEncKey::MlKem512(public_enc_key) => {
+                hybrid_ml_kem::enc::<MlKem512, _>(rng, msg, &public_enc_key.0)
+            }
+            UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+            UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+                hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, msg, public_enc_key)
+            }
+        }
+    }
+
     /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
     /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
@@ -225,28 +242,8 @@ impl Encrypt for UnifiedPublicEncKey {
         let mut serialized_msg = ZeroizingWriter::new();
         tfhe::safe_serialization::safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-        let (inner_ct, scheme) = match self {
-            UnifiedPublicEncKey::MlKem512(public_enc_key) => (
-                hybrid_ml_kem::enc::<MlKem512, _>(
-                    rng,
-                    serialized_msg.as_slice(),
-                    &public_enc_key.0,
-                )?,
-                PkeSchemeType::MlKem512,
-            ),
-            UnifiedPublicEncKey::MlKem1024(_) => {
-                return Err(CryptographyError::MlKem1024Unsupported);
-            }
-            UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => (
-                hybrid_composite_ml_kem::enc_ml_kem_1024_p384(
-                    rng,
-                    serialized_msg.as_slice(),
-                    public_enc_key,
-                )?,
-                PkeSchemeType::MlKem1024P384,
-            ),
-        };
-        Ok(UnifiedCipher::new(inner_ct, scheme))
+        let inner_ct = self.hybrid_encrypt(rng, serialized_msg.as_slice())?;
+        Ok(UnifiedCipher::new(inner_ct, self.encryption_scheme_type()))
     }
 }
 
@@ -312,6 +309,22 @@ impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
 }
 
 impl UnifiedPrivateEncKey {
+    /// Decrypt `ct` under this key with the hybrid KEM/DEM its scheme calls for.
+    pub(crate) fn hybrid_decrypt(
+        &self,
+        ct: HybridKemCt,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        match self {
+            UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
+                hybrid_ml_kem::dec::<MlKem512>(ct, &private_enc_key.0)
+            }
+            UnifiedPrivateEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+            UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
+                hybrid_composite_ml_kem::dec_ml_kem_1024_p384(ct, private_enc_key)
+            }
+        }
+    }
+
     /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
     /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
@@ -497,20 +510,7 @@ impl Decrypt for UnifiedPrivateEncKey {
                 "encryption type of cipher does not match the decryption key type".to_string(),
             ));
         }
-        let raw_plaintext = match self {
-            UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
-                hybrid_ml_kem::dec::<MlKem512>(cipher.cipher.to_owned(), &private_enc_key.0)?
-            }
-            UnifiedPrivateEncKey::MlKem1024(_) => {
-                return Err(CryptographyError::MlKem1024Unsupported);
-            }
-            UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
-                hybrid_composite_ml_kem::dec_ml_kem_1024_p384(
-                    cipher.cipher.to_owned(),
-                    private_enc_key,
-                )?
-            }
-        };
+        let raw_plaintext = self.hybrid_decrypt(cipher.cipher.to_owned())?;
         // Keep plaintext guarded through deserialization.
         let mut res_buf = std::io::Cursor::new(&*raw_plaintext);
         safe_deserialize(&mut res_buf, SAFE_SER_SIZE_LIMIT)

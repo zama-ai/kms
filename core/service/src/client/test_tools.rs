@@ -1,9 +1,11 @@
-use crate::conf::{CoreConfig, init_conf};
+use crate::conf::{CoreConfig, Keychain, SecretSharingKeychain, init_conf};
 use crate::conf::{
     ServiceEndpoint,
     threshold::{PeerConf, ThresholdPartyConf},
 };
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
+use crate::cryptography::signatures::PublicSigKey;
+use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
@@ -14,16 +16,20 @@ use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
+use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::StorageExt;
 use crate::vault::storage::{
-    Storage, crypto_material::get_core_signing_identity, file::FileStorage,
+    Storage, StorageProxy, StorageType, crypto_material::get_core_signing_identity,
+    file::FileStorage,
 };
 use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
+use observability::health::HealthState;
 use std::collections::HashMap;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use test_utils::random_free_port::get_listeners_random_free_ports;
@@ -36,7 +42,6 @@ use tonic::transport::{Channel, Uri};
 use tonic_health::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_client::HealthClient;
-use tonic_health::server::HealthReporter;
 
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.
@@ -190,7 +195,7 @@ pub async fn setup_threshold_no_client<
     servers.sort_by_key(|(idx, _, _, _)| *idx);
     let mut server_handles = HashMap::new();
     for (
-        ((i, cur_server, service_config, (health_reporter, cur_health_service)), cur_mpc_shutdown),
+        ((i, cur_server, service_config, (health, cur_health_service)), cur_mpc_shutdown),
         (service_listener, _service_port),
     ) in servers
         .into_iter()
@@ -200,6 +205,7 @@ pub async fn setup_threshold_no_client<
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
         let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle_health = health.clone();
         tokio::spawn(async move {
             run_server(
                 service_config,
@@ -209,7 +215,7 @@ pub async fn setup_threshold_no_client<
                     None, None, None, None, None, None,
                 )),
                 cur_health_service,
-                health_reporter,
+                health,
                 server_shutdown_rx.map(drop),
             )
             .await
@@ -223,6 +229,7 @@ pub async fn setup_threshold_no_client<
                 mpc_confs[i - 1].port,
                 server_shutdown_tx,
                 cur_mpc_shutdown,
+                handle_health,
             ),
         );
         // Wait until MPC server is ready, this should happen as soon as the MPC server boots up
@@ -388,7 +395,7 @@ pub async fn setup_threshold_with_custom_peers<
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
                 ThresholdKms<PubS, PrivS>,
-                (HealthReporter, _),
+                (HealthState, _),
                 MetaStoreStatusServiceImpl,
             )> = new_real_threshold_kms(
                 core_config,
@@ -430,7 +437,7 @@ pub async fn setup_threshold_with_custom_peers<
     let mut server_handles = HashMap::new();
     for (
         (
-            (server_idx, _my_id, cur_server, service_config, (health_reporter, cur_health_service)),
+            (server_idx, _my_id, cur_server, service_config, (health, cur_health_service)),
             cur_mpc_shutdown,
         ),
         (service_listener, _service_port),
@@ -442,6 +449,7 @@ pub async fn setup_threshold_with_custom_peers<
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
         let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle_health = health.clone();
         tokio::spawn(async move {
             run_server(
                 service_config,
@@ -451,7 +459,7 @@ pub async fn setup_threshold_with_custom_peers<
                     None, None, None, None, None, None,
                 )),
                 cur_health_service,
-                health_reporter,
+                health,
                 server_shutdown_rx.map(drop),
             )
             .await
@@ -466,6 +474,7 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_ports[server_idx],
                 server_shutdown_tx,
                 cur_mpc_shutdown,
+                handle_health,
             ),
         );
         // Wait until MPC server is ready
@@ -547,6 +556,9 @@ pub struct ServerHandle {
     pub service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
     // The handle to shut down the optional MPC server
     pub mpc_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    // Liveness and readiness of the server. Tests read them here, because the gRPC health service
+    // can be gone after the server shuts down.
+    pub health: HealthState,
 }
 
 impl ServerHandle {
@@ -556,6 +568,7 @@ impl ServerHandle {
         mpc_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
         mpc_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        health: HealthState,
     ) -> Self {
         Self {
             server,
@@ -563,6 +576,7 @@ impl ServerHandle {
             mpc_port: Some(mpc_port),
             service_shutdown_tx,
             mpc_shutdown_tx: Some(mpc_shutdown_tx),
+            health,
         }
     }
 
@@ -570,6 +584,7 @@ impl ServerHandle {
         server: Arc<dyn Shutdown + Send + Sync + 'static>,
         service_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        health: HealthState,
     ) -> Self {
         Self {
             server,
@@ -577,6 +592,7 @@ impl ServerHandle {
             mpc_port: None,
             service_shutdown_tx,
             mpc_shutdown_tx: None,
+            health,
         }
     }
 
@@ -734,13 +750,13 @@ pub async fn setup_centralized_no_client<
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_identity(&priv_storage).await.unwrap();
 
-    create_default_centralized_context_in_storage(&mut priv_storage, sk.ecdsa())
+    create_default_centralized_context_in_storage(&mut priv_storage, &sk.verf_key())
         .await
         .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health_reporter, health_service)) = CentralizedKms::new(
+    let (kms, (health, health_service)) = CentralizedKms::new(
         core_config,
         pub_storage,
         priv_storage,
@@ -752,6 +768,7 @@ pub async fn setup_centralized_no_client<
     .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
+    let handle_health = health.clone();
     tokio::spawn(async move {
         let config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
@@ -768,7 +785,7 @@ pub async fn setup_centralized_no_client<
                 None, None, None, None, None, None,
             )),
             health_service,
-            health_reporter,
+            health,
             rx.map(drop),
         )
         .await
@@ -777,7 +794,7 @@ pub async fn setup_centralized_no_client<
     let service_name =
         <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     await_server_ready(service_name, listen_port).await;
-    ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
+    ServerHandle::new_centralized(arc_kms_clone, listen_port, tx, handle_health)
 }
 
 pub(crate) async fn setup_centralized<
@@ -803,6 +820,193 @@ pub(crate) async fn setup_centralized<
     let channel = connect_with_retry(uri).await;
     let client = CoreServiceEndpointClient::new(channel);
     (server_handle, client)
+}
+
+/// Opens the custodian backup vault under `material_path` with the storage `prefix` of one node,
+/// as the test environment builders configure it with a custodian keychain.
+pub async fn custodian_backup_vault(material_path: &Path, prefix: Option<&str>) -> Vault {
+    let storage = StorageProxy::from(
+        FileStorage::new(Some(material_path), StorageType::BACKUP, prefix).unwrap(),
+    );
+    let keychain = make_keychain_proxy(
+        &Keychain::SecretSharing(SecretSharingKeychain {}),
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    Vault {
+        storage,
+        keychain: Some(keychain),
+    }
+}
+
+/// Boots one server that has no signing key in `priv_storage`, through the [`boot_base_kms`] that
+/// `kms-server` boots with, so it enters recovery mode exactly as a deployed node does. With
+/// `threshold_party_id` the
+/// server is that threshold party and runs without peers, since backup recovery is local to the
+/// node. Without it, the server is centralized.
+///
+/// Returns the server, a client connected to it and the verification key it booted under.
+///
+/// # Panics
+///
+/// Panics if `priv_storage` still holds a signing key, or if the server cannot boot.
+pub async fn setup_recovery_mode<
+    PubS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
+>(
+    pub_storage: PubS,
+    mut priv_storage: PrivS,
+    backup_vault: Vault,
+    threshold_party_id: Option<usize>,
+) -> (
+    ServerHandle,
+    CoreServiceEndpointClient<Channel>,
+    PublicSigKey,
+) {
+    let kms_type = match threshold_party_id {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    let base_kms = boot_base_kms(
+        kms_type,
+        &priv_storage,
+        &pub_storage,
+        Some(&backup_vault),
+        test_rng_source(),
+    )
+    .await
+    .expect("no verification key to boot in recovery mode under");
+    assert!(
+        base_kms.signing_identity().is_err(),
+        "a server in recovery mode must have no signing key"
+    );
+    let verf_key = (*base_kms.verf_key()).clone();
+    let ip_addr = DEFAULT_URL.parse().unwrap();
+    let (service_listener, service_port) = get_listeners_random_free_ports(&ip_addr, 1)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
+        None, None, None, None, None, None,
+    ));
+    let server_handle = match threshold_party_id {
+        None => {
+            create_default_centralized_context_in_storage(&mut priv_storage, &verf_key)
+                .await
+                .unwrap();
+            let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
+            let core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+            let (kms, (health, health_service)) = CentralizedKms::<PubS, PrivS>::new_from_base_kms(
+                core_config,
+                pub_storage,
+                priv_storage,
+                Some(backup_vault),
+                None,
+                base_kms,
+            )
+            .await
+            .expect("a server without its signing key must boot in recovery mode");
+            let kms = Arc::new(kms);
+            let server = Arc::clone(&kms);
+            let handle_health = health.clone();
+            let service_config = ServiceEndpoint {
+                listen_address: ip_addr.to_string(),
+                listen_port: service_port,
+                timeout_secs: 360,
+                grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
+            };
+            tokio::spawn(async move {
+                run_server(
+                    service_config,
+                    service_listener,
+                    server,
+                    meta_store_status_service,
+                    health_service,
+                    handle_health,
+                    service_shutdown_rx.map(drop),
+                )
+                .await
+                .expect("Could not start server");
+            });
+            ServerHandle::new_centralized(kms, service_port, service_shutdown_tx, health)
+        }
+        Some(party_id) => {
+            let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
+            let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+            let threshold_config = core_config
+                .threshold
+                .as_mut()
+                .expect("the threshold config must have a threshold section");
+            threshold_config.my_id = Some(party_id);
+            // Without peers the default context stays as an earlier boot stored it.
+            threshold_config.peers = None;
+            let (mpc_listener, mpc_port) = get_listeners_random_free_ports(&ip_addr, 1)
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            let (mpc_shutdown_tx, mpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let (kms, (health, health_service), _metastore_status_service) =
+                new_real_threshold_kms(
+                    core_config,
+                    pub_storage,
+                    priv_storage,
+                    Some(backup_vault),
+                    None,
+                    mpc_listener,
+                    base_kms,
+                    None,
+                    mpc_shutdown_rx.map(drop),
+                )
+                .await
+                .expect("a server without its signing key must boot in recovery mode");
+            let kms = Arc::new(kms);
+            let server = Arc::clone(&kms);
+            let handle_health = health.clone();
+            let service_config = ServiceEndpoint {
+                listen_address: ip_addr.to_string(),
+                listen_port: service_port,
+                timeout_secs: 60u64,
+                grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
+            };
+            tokio::spawn(async move {
+                run_server(
+                    service_config,
+                    service_listener,
+                    server,
+                    meta_store_status_service,
+                    health_service,
+                    handle_health,
+                    service_shutdown_rx.map(drop),
+                )
+                .await
+                .expect("Failed to start threshold server");
+            });
+            ServerHandle::new_threshold(
+                kms,
+                service_port,
+                mpc_port,
+                service_shutdown_tx,
+                mpc_shutdown_tx,
+                health,
+            )
+        }
+    };
+    // The service name does not depend on the type parameters of the server.
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
+    await_server_ready(service_name, service_port).await;
+    let uri = Uri::from_str(&format!(
+        "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{service_port}"
+    ))
+    .unwrap();
+    let client = CoreServiceEndpointClient::new(connect_with_retry(uri).await);
+    (server_handle, client, verf_key)
 }
 
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.

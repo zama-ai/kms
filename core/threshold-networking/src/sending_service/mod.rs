@@ -11,5 +11,5 @@ mod service;
 mod session;
 
 // Public API — reachable as `threshold_networking::sending_service::…`.
-pub use service::{ArcSendValueRequest, GrpcSendingService, SendingService};
+pub use service::{GrpcSendingService, SendingService};
 pub use session::NetworkSession;

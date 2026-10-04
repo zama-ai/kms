@@ -664,7 +664,7 @@ pub mod tests {
     use crate::backup::BACKUP_PKE_SCHEME;
     use crate::backup::custodian::CustodianContextAnchor;
     use crate::cryptography::encryption::{Encryption, PkeScheme};
-    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
+    use crate::cryptography::signatures::{NodeSigningIdentity, test_support::seeded_identity};
     use crate::engine::base::derive_request_id;
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
@@ -682,8 +682,8 @@ pub mod tests {
     use std::collections::HashMap;
 
     /// An uninitialized secret-sharing vault, an empty private storage and a signing key.
-    fn unanchored_fixture() -> (RamStorage, Vault, PrivateSigKey) {
-        let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(7));
+    fn unanchored_fixture() -> (RamStorage, Vault, NodeSigningIdentity) {
+        let sig_key = seeded_identity(&mut AesRng::seed_from_u64(7));
         let vault = Vault {
             storage: StorageProxy::from(RamStorage::new()),
             keychain: Some(KeychainProxy::SecretSharing(SecretShareKeychain::new(

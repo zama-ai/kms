@@ -201,7 +201,11 @@ jobs:
           WORKSPACE: ${{ github.workspace }}
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
         run: |
-          echo "EIF_OUTPUT_DIR=${WORKSPACE}/${WORKING_DIRECTORY}/eif-output" >> "$GITHUB_ENV"
+          # Create the directory as the runner user. Otherwise the Docker bind
+          # mount below creates it as root, and later steps cannot write to it.
+          EIF_OUTPUT_DIR="${WORKSPACE}/${WORKING_DIRECTORY}/eif-output"
+          mkdir -p "${EIF_OUTPUT_DIR}"
+          echo "EIF_OUTPUT_DIR=${EIF_OUTPUT_DIR}" >> "$GITHUB_ENV"
 
       - name: Create EIF file
         env:
@@ -240,8 +244,9 @@ jobs:
             echo "eif_pcr2=${EIF_MEASUREMENT_PCR2}"
           } >> "$GITHUB_OUTPUT"
 
+      # Runs on every event, not only releases, so that a broken copy shows up
+      # before a release. Only the upload below is release-only.
       - name: Prepare EIF release metadata
-        if: github.event_name == 'release'
         env:
           EIF_INFO_NAME: ${{ inputs.eif-info-name }}
           EIF_OUTPUT_DIR: ${{ env.EIF_OUTPUT_DIR }}

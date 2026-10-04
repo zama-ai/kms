@@ -11,7 +11,9 @@ use ml_dsa::{
 #[cfg(feature = "non-wasm")]
 use ml_dsa::{SignatureEncoding, Signer};
 use serde::{Deserialize, Serialize, de::Visitor};
+use std::hash::Hash;
 use tfhe::named::Named;
+use zeroize::Zeroizing;
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
@@ -29,9 +31,9 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
         msg: &[u8],
         sk: &MlDsaSigningKey<P>,
     ) -> Result<Vec<u8>, SigningError> {
-        let signed = [&dsep[..], msg].concat();
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
         let sig: MlDsaSignature<P> = sk
-            .try_sign(&signed)
+            .try_sign(signed.as_slice())
             .map_err(|e| SigningError::Sign(e.to_string()))?;
         Ok(sig.to_vec())
     }
@@ -44,8 +46,8 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     ) -> Result<(), SigningError> {
         let sig = MlDsaSignature::<P>::try_from(sig)
             .map_err(|e| SigningError::MalformedSignature(e.to_string()))?;
-        let signed = [&dsep[..], msg].concat();
-        vk.verify(&signed, &sig)
+        let signed = Zeroizing::new([&dsep[..], msg].concat());
+        vk.verify(signed.as_slice(), &sig)
             .map_err(|e| SigningError::Verify(e.to_string()))
     }
 
@@ -95,27 +97,54 @@ impl<P: MlDsaParams> std::fmt::Debug for MlDsaVerfKey<P> {
     }
 }
 
+/// Prints only the key's `0x`-prefixed digest, the same text published as its address, rather than
+/// its full encoding.
+impl<P: MlDsaParams + MlDsaParamSet> std::fmt::Display for MlDsaVerfKey<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "0x{}",
+            hex::encode(MlDsa::<P>::digest(P::SCHEME, &self.0))
+        )
+    }
+}
+
 impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-/// The FIPS-204 parameter set's own name.
+impl<P: MlDsaParams> Hash for MlDsaVerfKey<P> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.encode().as_slice().hash(state);
+    }
+}
+
+/// Equality on the inner verifying key is exact, so it is a genuine equivalence
+/// relation and this marker is sound.
+impl<P: MlDsaParams> Eq for MlDsaVerfKey<P> {}
+
+/// What identifies a FIPS-204 parameter set: its own name and the signing scheme it implements.
 pub trait MlDsaParamSet {
     const PARAM_SET_NAME: &'static str;
+    /// The signing scheme this parameter set implements.
+    const SCHEME: SigningSchemeType;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa44 {
     const PARAM_SET_NAME: &'static str = "MlDsa44VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa44;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa65 {
     const PARAM_SET_NAME: &'static str = "MlDsa65VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa65;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa87 {
     const PARAM_SET_NAME: &'static str = "MlDsa87VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa87;
 }
 
 impl<P: MlDsaParams + MlDsaParamSet> Named for MlDsaVerfKey<P> {
@@ -192,5 +221,16 @@ mod tests {
         exercise_param_set::<MlDsa44>(1);
         exercise_param_set::<MlDsa65>(2);
         exercise_param_set::<MlDsa87>(3);
+    }
+
+    /// A key displays as its published address, never as its full encoding.
+    #[test]
+    fn display_prints_the_digest() {
+        let mut rng = AesRng::seed_from_u64(4);
+        let sk = MlDsa::<MlDsa87>::keygen_from_seed(&random_seed(&mut rng));
+        let vk = MlDsaVerfKey(MlDsa::<MlDsa87>::verifying_key(&sk).unwrap());
+        let unified =
+            crate::cryptography::signing::UnifiedPublicSigKey::MlDsa87(Box::new(vk.clone()));
+        assert_eq!(vk.to_string(), unified.address_text());
     }
 }

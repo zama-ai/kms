@@ -23,6 +23,7 @@ use crate::vault::storage::{Storage, StorageExt};
 use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
 use algebra::structure_traits::Ring;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use observability::health::HealthState;
 use std::sync::Arc;
 use threshold_execution::endpoints::keygen::SecureOnlineDistributedKeyGen128;
 use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
@@ -32,7 +33,6 @@ use threshold_execution::zk::ceremony::SecureCeremony;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
-use tonic_health::server::HealthReporter;
 
 type KeyGen = SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>;
 
@@ -60,7 +60,7 @@ pub struct ThresholdKms<
     /// Caller-input bounds enforced by the `bandwidth_benchmark` endpoint.
     pub(crate) bandwidth_bench_config: BandwidthBenchmarkConfig,
     tracker: Arc<TaskTracker>,
-    health_reporter: HealthReporter,
+    health: HealthState,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
 }
 
@@ -97,7 +97,7 @@ where
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         bandwidth_bench_config: BandwidthBenchmarkConfig,
-        health_reporter: HealthReporter,
+        health: HealthState,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
@@ -119,7 +119,7 @@ where
                 bandwidth_bench_config.max_concurrent_runs,
             ),
             bandwidth_bench_config,
-            health_reporter,
+            health,
             mpc_abort_handle,
         }
     }
@@ -132,13 +132,15 @@ where
     PrivS: StorageExt + Send + Sync + 'static,
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let health_reporter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = Arc::clone(&self.tracker);
         let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
         let handle = {
             let new_handle_clone = mpc_abort_handle.clone();
             tokio::task::spawn(async move {
-                health_reporter
+                health.mark_shutting_down().await;
+                health
+                    .reporter()
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
                 tracing::trace!("Set not serving");

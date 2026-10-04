@@ -326,24 +326,30 @@ Two jobs: optional `docker-build`, then performance test execution against `aws-
 
 ## Rolling Upgrade Testing (`rolling-upgrade-testing.yml`)
 
-End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties from the legacy, pre-split repositories, upgrade two configurable batches to images from the insecure repositories, and run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
+End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties from the legacy, pre-split repositories, upgrade two configurable batches to the new images, and run Argo decrypt tests in each mixed-version state. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh). The inputs and the test profiles are described in [`ci/scripts/README.md`](../../ci/scripts/README.md#rolling-upgrade-testing).
 
 Manual dispatch only.
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `old_image_tag` | (required) | Baseline KMS Core image |
+| `old_image_tag` | (required) | Baseline KMS Core image (legacy repositories) |
 | `new_image_tag` | (required) | Upgrade target (ignored when `build=true`) |
+| `new_image_repository` | `insecure` | Repositories of the new side: `insecure` (nightly and branch builds) or `legacy` (release tags) |
+| `core_client_image_tag` | `old_image_tag` | Test-harness core-client for the mixed-state tests |
+| `client_logs` | `false` | Core-client tracing logs |
 | `build` | `false` | Build a new image and use as `new_image_tag` |
 | `kms_branch` | (optional) | Branch for `build=true` and chart checkout |
 | `fhe_params` | `Test` | Argo keygen/preprocessing params |
 | `old_kms_chart_version` | `1.5.1` | Initial deploy chart |
 | `new_kms_chart_version` | `repository` | Upgrade chart (or repo charts) |
 | `tkms_infra_chart_version` | `0.3.2` | TKMS Infra chart |
-| `first_batch_parties` | `1,2,3,4,5` | First upgrade wave |
-| `second_batch_parties` | `6,7,8,9` | Second upgrade wave |
+| `first_batch_parties` | `1,2,3,4,5` | First upgrade batch |
+| `second_batch_parties` | `6,7,8,9` | Second upgrade batch |
+| `test_profile` | `decrypt` | `decrypt` or `prss-threshold` |
+| `epoch_migration` | `false` | Pass the 0.15 epoch-data migration config to the upgraded parties (v0.14 → v0.15+) |
+| `restart_parties` | (empty) | Parties to restart after each upgrade batch: `all` or party IDs |
 
-Jobs: optional `docker-build`, `start-runner` (EC2 SLAB), `rolling-upgrade-testing` (deploy → baseline perf → upgrade-1 → mixed perf → upgrade-2 → mixed perf → cleanup), `stop-runner` (always runs).
+Jobs: optional `docker-build`, `start-runner` (EC2 SLAB), `rolling-upgrade-testing` (deploy → baseline tests → upgrade batch 1 → mixed tests → upgrade batch 2 → mixed tests → cleanup, with network-metric snapshots around the mixed tests), `stop-runner` (always runs).
 
 ```mermaid
 graph TD
@@ -353,11 +359,11 @@ graph TD
     dockerBuild --> startRunner
     startRunner --> mainJob[rolling_upgrade_testing]
     mainJob --> step1[deploy_13_nodes_old]
-    step1 --> step2[baseline_perf_tests]
+    step1 --> step2[baseline_tests]
     step2 --> step3[upgrade_first_batch]
-    step3 --> step4[perf_tests_mixed_first_batch]
+    step3 --> step4[mixed_tests_first_batch]
     step4 --> step5[upgrade_second_batch]
-    step5 --> step6[perf_tests_mixed_second_batch]
+    step5 --> step6[mixed_tests_second_batch]
     step6 --> cleanup[cleanup]
     mainJob --> stopRunner[stop_runner]
 ```

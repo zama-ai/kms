@@ -3,7 +3,7 @@ use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::{DSEP_PUBDATA_KEY, keygen_payload_bytes, preproc_payload_bytes};
+use crate::engine::base::{DSEP_PUBDATA_KEY, keygen_payload, preproc_payload};
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -180,14 +180,14 @@ impl Client {
             )));
         }
 
-        let payload_bytes = preproc_payload_bytes(preproc_id, sol_type.extraData.as_ref())?;
+        let payload = preproc_payload(preproc_id, sol_type.extraData.as_ref());
         self.verify_result_signatures(
             &resp.signatures,
             &resp.external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_KEY,
-            &payload_bytes,
+            &payload,
         )
         .map(|_signer| ())
     }
@@ -399,7 +399,7 @@ impl Client {
                 ));
             }
         }
-        let payload_bytes = keygen_payload_bytes(preproc_id, key_id, &key_digests, extra_data)?;
+        let payload = keygen_payload(preproc_id, key_id, &key_digests, extra_data);
 
         self.verify_result_signatures(
             &key_gen_result.signatures,
@@ -407,7 +407,7 @@ impl Client {
             sol_type,
             domain,
             &DSEP_PUBDATA_KEY,
-            &payload_bytes,
+            &payload,
         )
         .map(|_signer| ())
     }

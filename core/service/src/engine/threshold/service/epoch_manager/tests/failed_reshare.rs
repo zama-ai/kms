@@ -32,6 +32,12 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     let unrelated_id = derive_request_id("unrelated_material").unwrap();
     let concurrent_key_id = derive_request_id("concurrent_keygen_key").unwrap();
 
+    let params = crate::consts::TEST_PARAM;
+    let config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+        .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+        .build();
+    let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+
     let epoch_data = dummy_epoch_data(*DEFAULT_MPC_CONTEXT);
     epoch_manager
         .session_maker
@@ -55,14 +61,9 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
             .await
             .unwrap();
         }
-        store_versioned_at_request_id(
-            &mut (*guard),
-            &crs_id,
-            &TestType { i: 8 },
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap();
+        store_versioned_at_request_id(&mut (*guard), &crs_id, &crs, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         for public_type in [PubDataType::PublicKey, PubDataType::CRS] {
             store_versioned_at_request_id(
                 &mut (*guard),
@@ -153,9 +154,22 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     );
 
     let public_before;
+    let (compressed_keyset_bytes, public_key_bytes, crs_bytes);
     {
         let public_storage = crypto_storage.inner.get_public_storage();
         let mut guard = public_storage.lock().await;
+        compressed_keyset_bytes = guard
+            .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .unwrap();
+        public_key_bytes = guard
+            .load_bytes(&key_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        crs_bytes = guard
+            .load_bytes(&crs_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         guard.clear_events();
         public_before = guard.state();
     }
@@ -173,22 +187,22 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
 
     let (_keyset, compressed_keyset) =
         gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-    let params = crate::consts::TEST_PARAM;
-    let config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
-        .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
-        .build();
-    let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+    let crs_digest = hashing::hash_element(&DSEP_PUBDATA_CRS, &crs_bytes);
 
-    let mut previous_epoch = make_verified_previous_epoch(
+    let previous_epoch = make_verified_previous_epoch(
         keeper_epoch_id,
         &key_id,
         &preproc_id,
         crate::consts::TEST_PARAM,
+        HashMap::from([
+            (PubDataType::CompressedXofKeySet, vec![1; 32]),
+            (PubDataType::PublicKey, vec![2; 32]),
+        ]),
+        vec![VerifiedCrsInfo {
+            crs_id,
+            crs_digest: crs_digest.clone(),
+        }],
     );
-    previous_epoch.crs_info.push(VerifiedCrsInfo {
-        crs_id,
-        crs_digest: vec![],
-    });
 
     let sk = epoch_manager.base_kms.signing_identity().unwrap();
     let res = RealThresholdEpochManager::<
@@ -199,15 +213,20 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     >::store_reshared_keys(
         &crypto_storage,
         &epoch_manager.session_maker,
+        &epoch_manager.reshare_storage_lock,
         &sk,
         &[SigningSchemeType::Ecdsa256k1],
         new_epoch_id,
         vec![],
         &previous_epoch,
-        vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+        vec![VerifiedPublicMaterial::new_compressed(
+            compressed_keyset,
+            compressed_keyset_bytes,
+            public_key_bytes,
+        )],
         vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
         &dummy_domain(),
-        vec![crs],
+        vec![VerifiedCrsMaterial::new(crs_bytes, &crs_digest).unwrap()],
     )
     .await;
     assert!(

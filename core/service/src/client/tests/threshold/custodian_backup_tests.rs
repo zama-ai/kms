@@ -2,7 +2,7 @@ use crate::backup::BackupCiphertext;
 use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
-use crate::client::test_tools::ServerHandle;
+use crate::client::test_tools::{ServerHandle, custodian_backup_vault, setup_recovery_mode};
 use crate::client::tests::common::{
     PollConfig, keygen_config, retrying_poll, uncompressed_keygen_config,
 };
@@ -30,8 +30,11 @@ use crate::util::key_setup::test_tools::TestingPlaintext;
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
+use crate::util::key_setup::{delete_all_verf_material, ensure_all_verf_material};
 use crate::vault::storage::StorageType;
-use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
+use crate::vault::storage::crypto_material::{
+    data_exists, data_exists_at_epoch, get_core_root_signing_seed, get_core_signing_identity,
+};
 use crate::vault::storage::delete_at_request_and_epoch_id;
 use crate::vault::storage::delete_at_request_id;
 use crate::vault::storage::file::FileStorage;
@@ -39,6 +42,7 @@ use crate::vault::storage::read_context_at_id;
 use crate::vault::storage::read_versioned_at_request_and_epoch_id;
 use crate::vault::storage::read_versioned_at_request_id;
 
+use crate::cryptography::signatures::VerfKeySet;
 use aes_prng::AesRng;
 use alloy_primitives::Address;
 use hashing::hash_versioned;
@@ -164,6 +168,39 @@ impl ThresholdBackupTestEnv {
             .from_path(self.material_dir.path())
             .await
             .unwrap()
+    }
+
+    /// Spawn the KMS server of `party` alone, in recovery mode, on this env's material directory;
+    /// see [`setup_recovery_mode`]. The wrapper must outlive the returned server.
+    ///
+    /// Returns the server, its client and the verification key the server booted under.
+    async fn spawn_recovery_mode_server(
+        &self,
+        party: u32,
+    ) -> (
+        ServerHandle,
+        CoreServiceEndpointClient<Channel>,
+        PublicSigKey,
+    ) {
+        let idx = party as usize - 1;
+        let path = self.material_dir.path();
+        setup_recovery_mode(
+            FileStorage::new(
+                Some(path),
+                StorageType::PUB,
+                self.pub_prefixes()[idx].as_deref(),
+            )
+            .unwrap(),
+            FileStorage::new(
+                Some(path),
+                StorageType::PRIV,
+                self.priv_prefixes()[idx].as_deref(),
+            )
+            .unwrap(),
+            custodian_backup_vault(path, self.backup_prefixes()[idx].as_deref()).await,
+            Some(party as usize),
+        )
+        .await
     }
 
     /// Construct a fresh internal Client backed by this env's material dir.
@@ -626,6 +663,147 @@ async fn test_recovery_names_the_context_after_rotation_threshold() {
 
     shutdown_servers(kms_servers).await;
     drop(kms_clients);
+    let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_threshold(
+        n,
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        None,
+        &key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        None,
+        1,
+        env.test_path(),
+    )
+    .await;
+}
+
+/// Party 1 loses its signing key, its root signing seed, its context anchor and every published
+/// verification key. It boots alone in recovery mode under the ECDSA key named in its backup vault,
+/// and custodian recovery restores its signing material and its anchor. After the operator
+/// republishes the verification keys, the cluster boots normally and serves a decryption.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recovery_without_signing_material_threshold() {
+    use crate::vault::storage::read_custodian_context_anchor;
+
+    const PARTY: u32 = 1;
+    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let (amount_custodians, threshold) = (3, 1);
+    let mut env = ThresholdBackupTestEnv::new(
+        "recovery_without_signing_material_threshold",
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let key_id: RequestId =
+        derive_request_id("recovery_without_signing_material_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("recovery_without_signing_material_threshold_preproc").unwrap();
+    let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
+    run_threshold_keygen(
+        FheParameter::Test,
+        env.kms_clients(),
+        env.internal_client(),
+        &preproc_id,
+        &key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        env.test_path(),
+        0,
+    )
+    .await;
+    env.shutdown().await;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+
+    // Capture the signing material of the party while the disk is intact.
+    let idx = PARTY as usize - 1;
+    let party_priv_prefix = &env.priv_prefixes()[idx..=idx];
+    let sig_keys = read_signing_keys(env.test_path(), party_priv_prefix).await;
+    let operator_verf_keys = operator_verf_key_map(env.test_path(), env.pub_prefixes()).await;
+    let mut priv_store = FileStorage::new(
+        env.test_path(),
+        StorageType::PRIV,
+        env.priv_prefixes()[idx].as_deref(),
+    )
+    .unwrap();
+    let mut pub_store = FileStorage::new(
+        env.test_path(),
+        StorageType::PUB,
+        env.pub_prefixes()[idx].as_deref(),
+    )
+    .unwrap();
+    let seed = get_core_root_signing_seed(&priv_store).await.unwrap();
+    assert!(seed.is_some(), "custodian backup needs a root signing seed");
+
+    // Lose the signing material, the anchor and every published verification key of the party.
+    for (req_id, data_type) in [
+        (*SIGNING_KEY_ID, PrivDataType::SigningKey),
+        (*SIGNING_KEY_ID, PrivDataType::SigningSeed),
+        (env.req_new_cus, PrivDataType::CustodianContextAnchor),
+    ] {
+        delete_at_request_id(&mut priv_store, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+    delete_all_verf_material(&mut pub_store).await.unwrap();
+    assert_eq!(get_core_root_signing_seed(&priv_store).await.unwrap(), None);
+    assert_eq!(
+        read_custodian_context_anchor(&priv_store).await.unwrap(),
+        None
+    );
+
+    let (kms_server, kms_client, boot_verf_key) = env.spawn_recovery_mode_server(PARTY).await;
+    assert_eq!(
+        &boot_verf_key, &operator_verf_keys[&PARTY],
+        "the backup vault must name the key the party published"
+    );
+    let kms_clients = HashMap::from([(PARTY, kms_client)]);
+    run_full_custodian_recovery(
+        &kms_clients,
+        &operator_verf_keys,
+        env.req_new_cus,
+        env.mnemonics.clone(),
+        kms_clients.len(),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        read_signing_keys(env.test_path(), party_priv_prefix).await,
+        sig_keys
+    );
+    assert_eq!(get_core_root_signing_seed(&priv_store).await.unwrap(), seed);
+    assert_eq!(
+        read_custodian_context_anchor(&priv_store).await.unwrap(),
+        Some(env.req_new_cus),
+        "recovery anchors the context it restored under"
+    );
+
+    kms_server.assert_shutdown().await;
+    drop(kms_clients);
+    // The operator republishes the verification keys from the restored identity.
+    let identity = get_core_signing_identity(&priv_store).await.unwrap();
+    ensure_all_verf_material(&mut pub_store, &identity)
+        .await
+        .unwrap();
+    assert_eq!(
+        operator_verf_key_map(env.test_path(), env.pub_prefixes()).await,
+        operator_verf_keys
+    );
+
+    // The normal boot verifies the public material against the restored signing key, and the
+    // decryption needs the signed response of the party.
     let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
     run_decryption_threshold(
@@ -1416,6 +1594,19 @@ async fn emulate_custodian(
             let cur_verf_key = operator_verf_keys
                 .get(i)
                 .expect("operator verification key missing for party {cur_idx}");
+            // The custodian learns the operator's key set from the request itself, and checks
+            // its ECDSA key against the published one. The map above also names the operator by
+            // address.
+            let cur_verf_keys: VerfKeySet = safe_deserialize(
+                std::io::Cursor::new(&cur_recovery_req.operator_verf_key),
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+            assert_eq!(
+                cur_verf_keys.ecdsa().unwrap(),
+                cur_verf_key,
+                "the recovery request of operator {i} must carry its published ECDSA key"
+            );
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
                 std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
@@ -1426,7 +1617,7 @@ async fn emulate_custodian(
                 .verify_reencrypt(
                     rng,
                     &cur_cus_reenc.to_owned().try_into().unwrap(),
-                    cur_verf_key,
+                    &cur_verf_keys,
                     &cur_enc_key,
                 )
                 .unwrap();
