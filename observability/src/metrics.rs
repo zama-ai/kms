@@ -183,8 +183,10 @@ pub enum UserDecryptStage {
     ScheduleDelay,
     /// Convert one ciphertext from its wire format into its low-level representation.
     Deserialize,
-    /// Create the MPC session used to decrypt one ciphertext.
+    /// Create the MPC session used for bit-decomposition decryption.
     SessionCreate,
+    /// Derive the PRSS state used for noise-flooded decryption.
+    PrssDerive,
     /// Compute this KMS party's partial decryption of one ciphertext.
     PartialDecrypt,
     /// Encrypt and authenticate one partial decryption for the client.
@@ -196,12 +198,13 @@ pub enum UserDecryptStage {
 }
 
 impl UserDecryptStage {
-    const COUNT: usize = 8;
+    const COUNT: usize = 9;
     const LABELS: [&'static str; Self::COUNT] = [
         "admission",
         "schedule_delay",
         "deserialize",
         "session_create",
+        "prss_derive",
         "partial_decrypt",
         "signcrypt",
         "result_sign",
