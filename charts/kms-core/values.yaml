@@ -280,9 +280,9 @@ kmsInit:
   affinity:
   tolerations:
 
-# When enabled with Nitro, this job's pod priority is high enough to preempt
-# the core pod and take its enclave slot. Leave enabled false except for the
-# install or the one upgrade that must run the job.
+# When enabled with Nitro, the job uses the built-in system-cluster-critical
+# priority so it can preempt the core pod and take its enclave slot. Leave
+# enabled false except for the install or the one upgrade that must run the job.
 kmsGenCertAndKeys:
   enabled: false
   nameOverride:

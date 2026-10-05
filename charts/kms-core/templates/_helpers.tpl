@@ -258,10 +258,6 @@ args:
 {{- default $kmsCoreNameDefault .Values.kmsGenCertAndKeys.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "kmsGenCertAndKeysPriorityClassName" -}}
-{{- printf "%s-priority" (include "kmsGenCertAndKeysJobName" .) | trunc 63 | trimSuffix "-" -}}
-{{- end -}}
-
 {{- define "kmsCoreInitEnvVars" -}}
 export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"

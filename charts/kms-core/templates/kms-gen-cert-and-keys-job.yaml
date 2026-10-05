@@ -17,8 +17,9 @@ metadata:
     seed of v0.15). The non-enclave branch replaces the TLS certificates, and
     the statefulset init container already runs kms-gen-keys at each start.
     This job requests the whole hugepage pool, so it cannot schedule beside
-    the running core. Its PriorityClass is above the core pod, and the
-    scheduler preempts that pod to free the enclave slot.
+    the running core. It uses the built-in system-cluster-critical class so
+    the scheduler preempts that pod. The chart does not create a PriorityClass:
+    the deployer cannot get or delete them.
     */}}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     "helm.sh/hook": pre-install,pre-upgrade
@@ -44,7 +45,7 @@ spec:
         {{- end }}
       restartPolicy: Never
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
-      priorityClassName: {{ include "kmsGenCertAndKeysPriorityClassName" . }}
+      priorityClassName: system-cluster-critical
       initContainers:
         - image: {{ .Values.socat.image.name }}:{{ .Values.socat.image.tag }}
           imagePullPolicy: {{ .Values.socat.image.pullPolicy }}
