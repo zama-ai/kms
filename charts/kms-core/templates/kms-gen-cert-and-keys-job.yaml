@@ -45,8 +45,6 @@ spec:
       restartPolicy: Never
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
       priorityClassName: {{ include "kmsGenCertAndKeysPriorityClassName" . }}
-      {{- end }}
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
       initContainers:
         - image: {{ .Values.socat.image.name }}:{{ .Values.socat.image.tag }}
           imagePullPolicy: {{ .Values.socat.image.pullPolicy }}
