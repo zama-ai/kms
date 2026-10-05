@@ -112,10 +112,10 @@ No root signing seed found in storage "..."; this node can only sign under ECDSA
 - Centralized and threshold nodes must both do this step.
 - With the Helm chart, a node without an enclave runs `kms-gen-keys` at each pod start. That run generates the seed after the upgrade, so you only do the check in [Check the result](#check-the-result).
 - With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. In enclave mode, the chart runs this job before each upgrade while `kmsGenCertAndKeys.enabled` is `true`. The job keeps the signing key and the CA certificate of the node. Do these steps:
-  1. Use chart version 1.9.5 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and run `helm upgrade`.
+  1. Use chart version 1.9.6 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and run `helm upgrade`.
   2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes, because the job reports success also when the seed generation failed.
   3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade.
-- The job needs a free Nitro Enclave slot and hugepages on the host, beside the enclave of the running core. If the host has no free slot, the job pod stays pending, and `helm upgrade` stops at its timeout. For this reason, do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade.
+- Chart 1.9.6 stops this release's core StatefulSet before the job, then scales it back to `kmsPeers.count` after the job. The job uses the enclave slot and hugepages the core just released, so the host does not need a second slot. The party is down until that upgrade finishes. If the job fails, the core stays at 0 replicas until the next successful `helm upgrade`. Do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade: each later upgrade would stop the core again.
 - A node without Helm must run `kms-gen-keys`.
 
 ### Run kms-gen-keys

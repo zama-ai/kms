@@ -16,6 +16,8 @@ metadata:
     and CA certificate and adds only missing material (e.g. the root signing
     seed of v0.15). The non-enclave branch replaces the TLS certificates, and
     the statefulset init container already runs kms-gen-keys at each start.
+    The slot hook at weight -3 stops the core pod first. This job requests the
+    whole hugepage pool, so it cannot schedule beside the running core.
     */}}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     "helm.sh/hook": pre-install,pre-upgrade

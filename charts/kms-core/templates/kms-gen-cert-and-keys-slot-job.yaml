@@ -1,0 +1,218 @@
+{{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.nitroEnclave.enabled -}}
+{{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
+{{- $slotServiceAccount := printf "%s-slot" $kmsGenCertAndKeysName | trunc 63 | trimSuffix "-" }}
+{{- $stopJobName := printf "%s-stop" $kmsGenCertAndKeysName | trunc 63 | trimSuffix "-" }}
+{{- $startJobName := printf "%s-start" $kmsGenCertAndKeysName | trunc 63 | trimSuffix "-" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $slotServiceAccount }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ $slotServiceAccount }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $slotServiceAccount }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ $slotServiceAccount }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $slotServiceAccount }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ $slotServiceAccount }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+subjects:
+  - kind: ServiceAccount
+    name: {{ $slotServiceAccount }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ $slotServiceAccount }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $stopJobName }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ $stopJobName }}
+  annotations:
+    {{- /* Run before the gen job (weight -1) and before the config hook (weight -2). */}}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: kms-core-gen-cert-and-keys
+        app.kubernetes.io/name: {{ $stopJobName }}
+    spec:
+      serviceAccountName: {{ $slotServiceAccount }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-credentials
+      {{- if .Values.kmsCore.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kmsCore.affinity }}
+      {{- with .nodeAffinity }}
+      affinity:
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.kmsCore.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: stop-core
+          image: {{ .Values.kubectl.image.name }}:{{ .Values.kubectl.image.tag }}
+          imagePullPolicy: {{ .Values.kubectl.image.pullPolicy }}
+          command:
+            - /usr/bin/env
+            - sh
+            - -c
+            - |
+              set -eu
+              sts="{{ $kmsCoreName }}"
+              ns="{{ .Release.Namespace }}"
+              if ! kubectl get statefulset "$sts" -n "$ns" >/dev/null 2>&1; then
+                echo "statefulset $sts is not in $ns; nothing to stop"
+                exit 0
+              fi
+              echo "scaling $sts to 0 so the cert-and-keys job can take its enclave slot"
+              kubectl scale statefulset "$sts" -n "$ns" --replicas=0
+              deadline=$((SECONDS + 600))
+              while true; do
+                pods=$(kubectl get pods -n "$ns" -l "app.kubernetes.io/name=$sts" -o name || true)
+                if [ -z "$pods" ]; then
+                  echo "core pods for $sts are gone"
+                  exit 0
+                fi
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "timed out waiting for $sts to stop; the statefulset is still at 0 replicas"
+                  echo "$pods"
+                  exit 1
+                fi
+                echo "waiting for $pods"
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $startJobName }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ $startJobName }}
+  annotations:
+    {{- /*
+    Helm keeps a live replica count of 0 when the chart value did not change.
+    Scale back after the release manifest is applied.
+    */}}
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  template:
+    metadata:
+      labels:
+        app: kms-core-gen-cert-and-keys
+        app.kubernetes.io/name: {{ $startJobName }}
+    spec:
+      serviceAccountName: {{ $slotServiceAccount }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-credentials
+      {{- if .Values.kmsCore.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kmsCore.affinity }}
+      {{- with .nodeAffinity }}
+      affinity:
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.kmsCore.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: start-core
+          image: {{ .Values.kubectl.image.name }}:{{ .Values.kubectl.image.tag }}
+          imagePullPolicy: {{ .Values.kubectl.image.pullPolicy }}
+          command:
+            - /usr/bin/env
+            - sh
+            - -c
+            - |
+              set -eu
+              sts="{{ $kmsCoreName }}"
+              ns="{{ .Release.Namespace }}"
+              replicas="{{ .Values.kmsPeers.count }}"
+              if ! kubectl get statefulset "$sts" -n "$ns" >/dev/null 2>&1; then
+                echo "statefulset $sts is not in $ns; nothing to start"
+                exit 0
+              fi
+              echo "restoring $sts to $replicas replicas"
+              kubectl scale statefulset "$sts" -n "$ns" --replicas="$replicas"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+{{- end -}}
