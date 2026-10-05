@@ -186,7 +186,7 @@ chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
 runs before install, and before each upgrade while `kmsGenCertAndKeys.enabled`
 is `true`. Set `kmsGenCertAndKeys.enabled` to `true` for the upgrade, so that
 this job does step 1. Then set it back to `false`. From chart 1.9.6, the
-job preempts the core pod and reuses its enclave slot. The party is down
+job is pinned to this release's core node, preempts that pod, and reuses its enclave slot. The party is down
 until the StatefulSet starts the core again. The job reports success also when step 1 failed, so step 2
 is mandatory. See
 [Upgrade from v0.14 to v0.15](../operations/upgrade-0.14-to-0.15.md#check-the-result)

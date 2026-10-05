@@ -115,7 +115,7 @@ No root signing seed found in storage "..."; this node can only sign under ECDSA
   1. Use chart version 1.9.6 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and run `helm upgrade`.
   2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes, because the job reports success also when the seed generation failed.
   3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade.
-- Chart 1.9.6 sets the job's `priorityClassName` to the built-in `system-cluster-critical` class. The job requests the core's hugepages, so the scheduler preempts the core pod and the job uses that enclave slot. The chart does not create a PriorityClass. The StatefulSet replica count stays at `kmsPeers.count`. The replacement core pod stays Pending until the job releases the slot. The party is down until that pod is Ready. Do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade: each later upgrade preempts the core again.
+- Chart 1.9.6 sets the job's `priorityClassName` to the built-in `system-cluster-critical` class. The job requests the core's hugepages, so the scheduler preempts the core pod and the job uses that enclave slot. On upgrade the job is pinned to the node where this release's core pod is running, so it does not evict another party. The chart does not create a PriorityClass. The StatefulSet replica count stays at `kmsPeers.count`. The replacement core pod stays Pending until the job releases the slot. The party is down until that pod is Ready. Do not keep `kmsGenCertAndKeys.enabled` set to `true` after this upgrade: each later upgrade preempts the core again.
 - A node without Helm must run `kms-gen-keys`.
 
 ### Run kms-gen-keys
