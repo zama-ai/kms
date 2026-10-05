@@ -289,27 +289,11 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
         ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
     {
         let shared_masked_ptxts = {
-            let ciphertext = ciphertext.clone();
-            let keyshares = keyshares.clone();
-            let preprocessing = preprocessing.clone();
-
-            spawn_compute_bound(move || -> anyhow::Result<_> {
-                let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-                for current_ct_block in ciphertext.packed_blocks() {
-                    let partial_decrypt =
-                        partial_decrypt128(&keyshares, current_ct_block, ddec_key_type)?;
-                    let res = partial_decrypt
-                        + preprocessing
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?
-                            .next_mask()?;
-
-                    shared_masked_ptxts.push(res);
-                }
-                Ok(shared_masked_ptxts)
-            })
-            .await?
-        }?;
+            let mut preparation = preprocessing
+                .lock()
+                .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
+            masked_partial_decrypt(&keyshares, &ciphertext, ddec_key_type, &mut *preparation)?
+        };
 
         let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, &keyshares).await?;
         let usable_message_bits =
@@ -359,25 +343,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
-    let ddec_key_type = ct.decryption_key_type();
-    let ct_large = match ct {
-        LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
-        LowLevelCiphertextAndKeys::BigStandard(ct128) => ct128,
-        LowLevelCiphertextAndKeys::Small { ct, server_key, ck } => match ct {
-            RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                spawn_compute_bound(move || {
-                    ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
-                })
-                .await??,
-            ),
-            RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                spawn_compute_bound(move || {
-                    ck.squash_boolean_block_noise(&server_key, &boolean_block)
-                })
-                .await??,
-            ),
-        },
-    };
+    let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
 
     let len = ct_large.len();
     let preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
@@ -488,7 +454,7 @@ fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ct_large: &SnsRadixOrBoolCiphertext,
     ddec_key_type: SnsDecryptionKeyType,
-    preparation: &mut InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>,
+    preparation: &mut impl NoiseFloodPreprocessing<EXTENSION_DEGREE>,
 ) -> anyhow::Result<Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -1029,14 +995,16 @@ where
 
 async fn open_masked_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
     session: &S,
-    res: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    mut res: Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
 ) -> anyhow::Result<Vec<Z128>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Transfer the masked shares into the public opening without copying the allocation.
+    let shares = std::mem::take(&mut *res);
     let opened = SecureRobustOpen::default()
-        .robust_open_list_to_all(session, res, session.threshold() as usize)
+        .robust_open_list_to_all(session, shares, session.threshold() as usize)
         .await?;
     reconstruct_message(opened, &keyshares.parameters)
 }

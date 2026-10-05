@@ -730,6 +730,22 @@ impl SessionMaker {
             .new_prss_session_state(session_id))
     }
 
+    /// Derives the Z64 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
+    async fn prss_state_z64(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z64>> {
+        let epoch_map_guard = self.epoch_map.read().await;
+        let prss_setup_extended = epoch_map_guard
+            .get(&epoch_id)
+            .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
+        Ok(prss_setup_extended
+            .prss
+            .prss_setup_z64
+            .new_prss_session_state(session_id))
+    }
+
     async fn make_small_session_z64(
         &self,
         session_id: SessionId,
@@ -741,15 +757,7 @@ impl SessionMaker {
             .make_base_session(session_id, context_id, network_mode)
             .await?;
 
-        let prss_state = {
-            let epoch_map_guard = self.epoch_map.read().await;
-            let prss_setup_extended = epoch_map_guard
-                .get(&epoch_id)
-                .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss.prss_setup_z64;
-
-            prss_setup.new_prss_session_state(session_id)
-        };
+        let prss_state = self.prss_state_z64(session_id, epoch_id).await?;
 
         let session = SmallSession {
             base_session,
