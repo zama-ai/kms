@@ -58,6 +58,7 @@ fn get_my_share(val: u64, n: usize, threshold: usize, my_role: Role) -> Share<Re
 
 fn bit_dec_online(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_online");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -91,7 +92,7 @@ fn bit_dec_online(c: &mut Criterion) {
                     };
 
                     //Async is fine because we use Dummy preprocessing
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z64,
@@ -103,7 +104,7 @@ fn bit_dec_online(c: &mut Criterion) {
                         NetworkMode::Async,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
@@ -113,6 +114,7 @@ fn bit_dec_online(c: &mut Criterion) {
 
 fn bit_dec_small_e2e_abort(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_small_e2e_abort");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 8),
@@ -159,7 +161,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_small::<
+                    let _result = rt.block_on(execute_protocol_small::<
                         _,
                         _,
                         ResiduePolyF8Z64,
@@ -172,7 +174,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         None,
                         &mut computation,
                         None,
-                    );
+                    ));
                 });
             },
         );
@@ -182,6 +184,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
 
 fn bit_dec_large_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_large_e2e");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 8),
@@ -224,7 +227,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z64,
@@ -236,7 +239,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );

@@ -41,6 +41,7 @@ impl std::fmt::Display for OneShotConfig {
 
 fn triple_nsmall128(c: &mut Criterion) {
     let mut group = c.benchmark_group("triple_nsmall128");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(4, 1, 10000),
@@ -72,7 +73,7 @@ fn triple_nsmall128(c: &mut Criterion) {
                                 .unwrap();
                         };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_small::<
+                    let _result = rt.block_on(execute_protocol_small::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -85,7 +86,7 @@ fn triple_nsmall128(c: &mut Criterion) {
                         None,
                         &mut computation,
                         None,
-                    );
+                    ));
                 });
             },
         );
@@ -95,6 +96,7 @@ fn triple_nsmall128(c: &mut Criterion) {
 
 fn triple_z128(c: &mut Criterion) {
     let mut group = c.benchmark_group("triple_generation_z128");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -133,7 +135,7 @@ fn triple_z128(c: &mut Criterion) {
                             .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -145,7 +147,7 @@ fn triple_z128(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
@@ -155,6 +157,7 @@ fn triple_z128(c: &mut Criterion) {
 
 fn triple_z64(c: &mut Criterion) {
     let mut group = c.benchmark_group("triple_generation_z64");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -193,7 +196,7 @@ fn triple_z64(c: &mut Criterion) {
                             .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z64,
@@ -205,7 +208,7 @@ fn triple_z64(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
@@ -215,6 +218,7 @@ fn triple_z64(c: &mut Criterion) {
 
 fn random_sharing(c: &mut Criterion) {
     let mut group = c.benchmark_group("random_sharing");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -253,7 +257,7 @@ fn random_sharing(c: &mut Criterion) {
                             .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -265,7 +269,7 @@ fn random_sharing(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
@@ -274,6 +278,7 @@ fn random_sharing(c: &mut Criterion) {
 
 fn double_sharing(c: &mut Criterion) {
     let mut group = c.benchmark_group("double_sharing");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -304,7 +309,7 @@ fn double_sharing(c: &mut Criterion) {
                         dsh.init(&mut session, config.batch_size).await.unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -316,7 +321,7 @@ fn double_sharing(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
@@ -325,6 +330,7 @@ fn double_sharing(c: &mut Criterion) {
 
 fn bitgen_nlarge(c: &mut Criterion) {
     let mut group = c.benchmark_group("bitgen_nlarge");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -371,7 +377,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<
+                    let _result = rt.block_on(execute_protocol_large::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -383,7 +389,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
-                    );
+                    ));
                 });
             },
         );
