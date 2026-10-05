@@ -1,10 +1,10 @@
-use aes_prng::AesRng;
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_algebra::{
     galois_rings::degree_4::ResiduePolyF4Z128, matrix::VdmMatrix, structure_traits::Sample,
 };
+use threshold_types::rng::AesRng;
 
 const PRODUCTION_PARTIES: usize = 13;
 const PRODUCTION_THRESHOLD: usize = 4;

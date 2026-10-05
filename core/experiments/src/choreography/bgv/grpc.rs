@@ -1,10 +1,10 @@
 //! gRPC-based choreography for experimental features
 //! This is meant for testing and benchmarking, and definitely not for production use.
 
-use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use threshold_types::rng::AesRng;
 
 use super::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
 #[cfg(feature = "measure_memory")]

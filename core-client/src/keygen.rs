@@ -5,7 +5,6 @@ use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
     SigVerificationMaterial, dummy_domain,
 };
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
@@ -21,6 +20,7 @@ use kms_lib::engine::base::{
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};
+use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 use tonic::Code;
 use tonic::transport::Channel;

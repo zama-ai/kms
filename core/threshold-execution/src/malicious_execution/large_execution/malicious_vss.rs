@@ -1,7 +1,7 @@
-use aes_prng::AesRng;
 use itertools::Itertools;
 use rand::SeedableRng;
 use std::collections::HashSet;
+use threshold_types::rng::AesRng;
 use tonic::async_trait;
 
 use crate::{

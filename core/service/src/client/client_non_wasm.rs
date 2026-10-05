@@ -202,10 +202,10 @@ mod tests {
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
     use crate::engine::base::CrsSignedPayload;
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::solidity_types::CrsgenVerification;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"CLNTTEST";
     const PARTY: u32 = 1;

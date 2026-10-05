@@ -723,7 +723,6 @@ mod tests {
     use crate::vault::storage::test_support::StorageEntry;
     use crate::vault::storage::{Storage, StorageReader};
 
-    use aes_prng::AesRng;
     use hashing::hash_versioned;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
@@ -734,6 +733,7 @@ mod tests {
     use tfhe::ServerKey;
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::zk::CompactPkeCrs;
+    use threshold_types::rng::AesRng;
 
     use crate::vault::storage::s3::split_url;
 

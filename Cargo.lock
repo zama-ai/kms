@@ -90,17 +90,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aes-prng"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49cccd49cb7034d6ee7db9ac3549bb3fb38ff17179d93b726efb974cc9ddafa9"
-dependencies = [
- "aes 0.8.4",
- "byteorder",
- "rand 0.8.6",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3254,7 +3243,6 @@ dependencies = [
 name = "experiments"
 version = "0.15.0-1"
 dependencies = [
- "aes-prng",
  "anyhow",
  "async-trait",
  "bc2wrap",
@@ -4445,7 +4433,6 @@ dependencies = [
  "aes 0.9.3",
  "aes-gcm 0.11.1",
  "aes-gcm-siv",
- "aes-prng",
  "alloy-dyn-abi",
  "alloy-primitives",
  "alloy-signer",
@@ -4545,7 +4532,6 @@ dependencies = [
 name = "kms-core-client"
 version = "0.15.0-1"
 dependencies = [
- "aes-prng",
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
@@ -4575,6 +4561,7 @@ dependencies = [
  "threshold-execution",
  "threshold-hashing",
  "threshold-networking",
+ "threshold-types",
  "tokio",
  "toml",
  "tonic",
@@ -7832,7 +7819,6 @@ dependencies = [
 name = "threshold-algebra"
 version = "0.15.0-1"
 dependencies = [
- "aes-prng",
  "anyhow",
  "bc2wrap",
  "criterion",
@@ -7859,7 +7845,6 @@ dependencies = [
 name = "threshold-bgv"
 version = "0.15.0-1"
 dependencies = [
- "aes-prng",
  "anyhow",
  "bc2wrap",
  "bytes",
@@ -7889,7 +7874,6 @@ name = "threshold-execution"
 version = "0.15.0-1"
 dependencies = [
  "aes 0.9.3",
- "aes-prng",
  "anyhow",
  "async-trait",
  "bc2wrap",
@@ -7944,7 +7928,6 @@ dependencies = [
 name = "threshold-networking"
 version = "0.15.0-1"
 dependencies = [
- "aes-prng",
  "anyhow",
  "async-trait",
  "attestation-doc-validation",

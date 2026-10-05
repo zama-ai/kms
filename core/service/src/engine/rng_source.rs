@@ -12,10 +12,10 @@
 //! reseeding interval (i.e. one epoch).
 
 use crate::cryptography::attestation::{SecurityModule, SecurityModuleProxy};
-use aes_prng::AesRng;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::sync::{Arc, Mutex};
+use threshold_types::rng::AesRng;
 use zeroize::Zeroizing;
 
 type Seed128 = <AesRng as SeedableRng>::Seed;

@@ -58,8 +58,8 @@ pub(crate) fn dec_ml_kem_1024_p384(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn mlkem1024_p384_pke_sunshine() {

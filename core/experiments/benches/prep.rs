@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use algebra::sharing::shamir::{InputOp, RevealOp};
@@ -16,6 +15,7 @@ use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPr
 use threshold_execution::tests::helper::tests_and_benches::execute_protocol_large;
 use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 
 use rand::SeedableRng;
 

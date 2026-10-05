@@ -963,13 +963,13 @@ impl TryFrom<UserDecryptionResponsePayload> for UserDecryptionInvariants {
 mod tests {
     use std::collections::HashMap;
 
-    use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::kms::v1::{
         TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         client::user_decryption_wasm::{

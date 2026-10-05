@@ -2,7 +2,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
-use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use anyhow::anyhow;
 use kms_grpc::{
@@ -23,6 +22,7 @@ use threshold_execution::{
     zk::ceremony::Ceremony,
 };
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};

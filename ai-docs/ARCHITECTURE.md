@@ -189,7 +189,9 @@ The service crate is the main surface area. Key subdirectories under
 ### Task randomness
 
 [`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
-RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. `AesRng`
+([rng.rs](../core/threshold-types/src/rng.rs)) runs AES-128 in counter mode through
+`tfhe-csprng`. A fork never
 carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
 wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
 through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each

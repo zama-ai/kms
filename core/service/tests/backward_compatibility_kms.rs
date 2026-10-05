@@ -5,7 +5,6 @@
 //!
 
 mod common;
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
@@ -96,6 +95,7 @@ use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
 };
 use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.

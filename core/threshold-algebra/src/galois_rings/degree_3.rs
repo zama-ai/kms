@@ -320,13 +320,13 @@ mod tests {
         },
         structure_traits::{ErrorCorrect, Sample},
     };
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashSet;
     use std::num::Wrapping;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     #[test]

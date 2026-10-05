@@ -524,8 +524,8 @@ mod tests {
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
     use crate::vault::storage::{Storage, ram::RamStorage};
 
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     /// The availability response includes CRS metadata stored under an epoch.
     #[tokio::test]

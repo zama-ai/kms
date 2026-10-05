@@ -546,7 +546,6 @@ pub(crate) mod tests {
         },
         runtime::sessions::large_session::LargeSession,
     };
-    use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         poly::Poly,
@@ -559,6 +558,7 @@ pub(crate) mod tests {
     use rstest::rstest;
     use std::{collections::HashSet, num::Wrapping};
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double

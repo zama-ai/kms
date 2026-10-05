@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use algebra::sharing::shamir::InputOp;
@@ -6,6 +5,7 @@ use algebra::sharing::shamir::ShamirSharings;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::Ring;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use threshold_types::rng::AesRng;
 
 use rand::SeedableRng;
 use std::num::Wrapping;

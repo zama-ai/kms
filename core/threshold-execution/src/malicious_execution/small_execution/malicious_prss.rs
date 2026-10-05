@@ -1,7 +1,7 @@
-use aes_prng::AesRng;
 use rand::SeedableRng;
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
+use threshold_types::rng::AesRng;
 use tonic::async_trait;
 
 use crate::{
