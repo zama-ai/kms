@@ -737,6 +737,10 @@ decryption through both sync and async endpoints. The scenario configuration sel
 operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
 Python analyzer report the ladders separately.
 
+Performance diagnostics record core container restart counts and termination
+details in the `perf-diagnostics` artifact. The enclave logger reports the server
+exit status in the core logs.
+
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.
 

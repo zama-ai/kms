@@ -1,4 +1,4 @@
-"""Coordinates CPU, application metrics, ENA lifecycle, and pod placement samples."""
+"""Coordinates CPU, application metrics, ENA lifecycle, pod placement, and kms-core restarts."""
 
 import argparse
 import time
@@ -57,6 +57,73 @@ def lifecycle_rows(daemonset, pods, stamp):
             ]
         )
     return rows
+
+
+def core_lifecycle_rows(pods, stamp):
+    """One row per kms-core container: readiness, restarts, and why it last terminated."""
+    rows = []
+    for pod in pods.get("items", []):
+        name = pod.get("metadata", {}).get("name")
+        for container in pod.get("status", {}).get("containerStatuses") or []:
+            state = container.get("state") or {}
+            last = (container.get("lastState") or {}).get("terminated") or {}
+            rows.append(
+                [
+                    stamp,
+                    name,
+                    container.get("name"),
+                    container.get("ready", False),
+                    container.get("restartCount", 0),
+                    state.get("running", {}).get("startedAt", ""),
+                    state.get("waiting", {}).get("reason", ""),
+                    last.get("reason", ""),
+                    last.get("exitCode", ""),
+                    last.get("startedAt", ""),
+                    last.get("finishedAt", ""),
+                ]
+            )
+    return rows
+
+
+def finish_core(namespace, output):
+    """Records why kms-core containers restarted, while the pods still exist."""
+    output.mkdir(parents=True, exist_ok=True)
+
+    def capture(args, path, timeout=120):
+        result = best_effort(
+            ["kubectl", f"--request-timeout={timeout}s", "-n", namespace, *args],
+            timeout=timeout + 5,
+        )
+        with path.open("w") as stream:
+            stream.write(result.stdout + result.stderr)
+
+    capture(["describe", "pods", "-l", "app=kms-core"], output / "describe-pods.txt")
+    capture(["get", "events", "--sort-by=.lastTimestamp", "-o", "wide"], output / "events.txt")
+    for pod in kube_json(namespace, "get", "pods", "-l", "app=kms-core").get("items", []):
+        name = pod.get("metadata", {}).get("name")
+        for container in pod.get("status", {}).get("containerStatuses") or []:
+            if container.get("restartCount", 0):
+                capture(
+                    ["logs", "--previous", "--timestamps", name, "-c", container.get("name")],
+                    output / f"{name}-{container.get('name')}-previous.log",
+                )
+        if any(
+            c.get("name") == "kms-core-enclave-logger"
+            for c in pod.get("status", {}).get("containerStatuses") or []
+        ):
+            capture(
+                [
+                    "exec",
+                    name,
+                    "-c",
+                    "kms-core-enclave",
+                    "--",
+                    "sh",
+                    "-c",
+                    "nitro-cli describe-enclaves; cat /var/log/nitro_enclaves/*.log",
+                ],
+                output / f"{name}-nitro.log",
+            )
 
 
 def finish(namespace, output):
@@ -137,14 +204,26 @@ def sample(namespace, output):
             ("sample_pod_placement.py", "pod-placement.tsv"),
         ]:
             children.append(start_sampler(script, [namespace], output / name))
-        with (output / "ena-lifecycle.log").open("w") as stream:
+        with (
+            (output / "ena-lifecycle.log").open("w") as stream,
+            (output / "core-lifecycle.tsv").open("w") as core_lifecycle,
+        ):
             stream.write("# daemonset: timestamp kind created desired current ready unavailable\n")
             stream.write(
                 "# pod: timestamp kind pod created started node phase ready restarts "
                 "container_started waiting_reason terminated_reason\n"
             )
+            core_lifecycle.write(
+                "# timestamp pod container ready restarts started waiting_reason "
+                "last_terminated_reason last_exit_code last_started last_finished\n"
+            )
             while True:
                 stamp = timestamp()
+                for row in core_lifecycle_rows(
+                    kube_json(namespace, "get", "pods", "-l", "app=kms-core"), stamp
+                ):
+                    core_lifecycle.write(tsv(row) + "\n")
+                core_lifecycle.flush()
                 rows = lifecycle_rows(
                     kube_json(namespace, "get", "daemonset/ena-probe"),
                     kube_json(namespace, "get", "pods", "-l", "app=ena-probe"),
@@ -156,6 +235,7 @@ def sample(namespace, output):
                 time.sleep(10)
     finally:
         stop_samplers(children)
+        finish_core(namespace, output / "core-restarts")
         finish(namespace, output)
 
 
