@@ -1,0 +1,22 @@
+{{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.nitroEnclave.enabled -}}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ include "kmsGenCertAndKeysPriorityClassName" . }}
+  labels:
+    app: kms-core-gen-cert-and-keys
+    app.kubernetes.io/name: {{ include "kmsGenCertAndKeysPriorityClassName" . }}
+  annotations:
+    {{- /*
+    The cert-and-keys job is a pre-install/pre-upgrade hook at weight -1.
+    This class must exist before that pod is admitted. It is not deleted on
+    success: the pod copies the integer priority at admission.
+    */}}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+description: Preempt the KMS core pod so the cert-and-keys job can take its Nitro enclave slot.
+preemptionPolicy: PreemptLowerPriority
+value: 1000000
+globalDefault: false
+{{- end -}}
