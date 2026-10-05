@@ -41,15 +41,14 @@ use kms_lib::{
 use observability::health::register_process_health;
 use std::{net::ToSocketAddrs, num::NonZero, sync::Arc, thread};
 use thread_handles::init_rayon_thread_pool;
-use threshold_networking::tls::AttestedVerifier;
+use threshold_networking::tls::{AttestedVerifier, build_p2p_tls_config};
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
-    client::{ClientConfig, danger::DangerousClientConfigBuilder},
+    client::ClientConfig,
     crypto::{CryptoProvider, aws_lc_rs::default_provider as aws_lc_rs_default_provider},
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
     sign::{CertifiedKey, SingleCertAndKey},
-    version::TLS13,
 };
 
 #[derive(Parser)]
@@ -132,6 +131,7 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
 /// instead of using the wrapper from tonic::transport because we need to
 /// provide our own certificate verifier that can validate bundled attestation
 /// documents and that can receive new trust roots on the context change.
+/// Uses [`build_p2p_tls_config`] for the P2P transport policy.
 async fn build_tls_config(
     peers: &Option<Vec<PeerConf>>,
     tls_config: &TlsConf,
@@ -292,14 +292,7 @@ async fn build_tls_config(
     // We do not need to add context to verifier here
     // because it'll be added using [ensure_default_threshold_context_in_storage].
 
-    let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
-        .with_client_cert_verifier(verifier.clone())
-        .with_cert_resolver(cert_resolver.clone());
-    let client_config = DangerousClientConfigBuilder {
-        cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
-    }
-    .with_custom_certificate_verifier(verifier.clone())
-    .with_client_cert_resolver(cert_resolver.clone());
+    let (server_config, client_config) = build_p2p_tls_config(verifier.clone(), cert_resolver)?;
     Ok((server_config, client_config, verifier))
 }
 

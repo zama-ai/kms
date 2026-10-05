@@ -62,6 +62,8 @@ The networking service uses a session-based model. For each MPC computation (i.e
 
 ### TLS Configuration and Requirements
 
+P2P connections require TLS 1.3 and hybrid key exchange. The permitted groups are `X25519MLKEM768` and `secp256r1MLKEM768`, with X25519 first. Both client and server reject classical-only and pure ML-KEM exchanges. Manual and automatic certificate configurations use the same policy. Every peer must support at least one permitted group before deployment. Certificate signatures remain classical.
+
 #### Identity and Authentication
 
 Each MPC node is identified by its **Common Name (CN)** within its certificate. This identity is validated against the certificate's **Subject Alternative Name (SAN)** list.

@@ -51,6 +51,8 @@ Request IDs work as follows. The gateway contracts assign each ID and bind it to
 
 The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
 
+P2P TLS requires TLS 1.3 with `X25519MLKEM768` or `secp256r1MLKEM768` key exchange, with X25519 first. The server and client use an explicit AWS-LC provider restricted to these hybrid groups. `threshold_networking::tls::build_p2p_tls_config` constructs both configurations, and `kms-server` supplies the attested verifier and certificate resolver. This policy applies to manual and automatic certificates. Classical-only and pure ML-KEM peers cannot connect. Certificate authentication uses classical signatures. Every peer must support at least one permitted hybrid group before deployment.
+
 Consequences for agents:
 
 - The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
