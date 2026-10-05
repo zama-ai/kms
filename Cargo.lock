@@ -7971,6 +7971,7 @@ dependencies = [
 name = "threshold-types"
 version = "0.15.0-1"
 dependencies = [
+ "aes 0.9.3",
  "anyhow",
  "async-trait",
  "bytes",

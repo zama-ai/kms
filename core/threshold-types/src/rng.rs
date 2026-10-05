@@ -6,18 +6,29 @@
 
 use rand::{CryptoRng, Error, RngCore, SeedableRng};
 use tfhe_csprng::generators::aes_ctr::{AesCtrParams, BYTES_PER_BATCH};
-use tfhe_csprng::generators::{DefaultRandomGenerator, RandomGenerator};
+use tfhe_csprng::generators::{RandomGenerator, SoftwareRandomGenerator};
 use tfhe_csprng::seeders::{Seed, SeedKind};
+use zeroize::Zeroizing;
 
 // TODO(#3255): use a 256-bit seed when `tfhe-csprng` has an audited AES-256 generator.
 /// Size in bytes of the seed of [`AesRng`].
 pub const SEED_SIZE: usize = 16;
 
-/// Random number generator that runs AES-128 in counter mode through [`DefaultRandomGenerator`].
+// Fails the build if `aes` loses its `zeroize` feature, which wipes the key on drop.
+// Covers the `aes` of `tfhe-csprng` only while both resolve to the same package.
+const _: () = {
+    const fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroize_on_drop::<aes::Aes128>();
+};
+
+/// Random number generator that runs AES-128 in counter mode through [`SoftwareRandomGenerator`].
+///
+/// A drop wipes the key. [`SoftwareRandomGenerator`] keeps the key in an `aes` cipher; the other
+/// `tfhe-csprng` generators do not wipe it.
 pub struct AesRng {
-    generator: DefaultRandomGenerator,
+    generator: SoftwareRandomGenerator,
     // The generator is not `Clone`: a clone starts a generator from this seed at the same index.
-    seed: Seed,
+    seed: Zeroizing<[u8; SEED_SIZE]>,
     // Number of bytes drawn from the current batch of `BYTES_PER_BATCH` bytes.
     used_bytes: usize,
 }
@@ -50,11 +61,10 @@ impl SeedableRng for AesRng {
     type Seed = [u8; SEED_SIZE];
 
     fn from_seed(seed: Self::Seed) -> Self {
-        // The generator takes the little-endian bytes of a `Seed` as the AES key.
-        let seed = Seed(u128::from_le_bytes(seed));
         Self {
-            generator: DefaultRandomGenerator::new(seed),
-            seed,
+            // The generator takes the little-endian bytes of a `Seed` as the AES key.
+            generator: SoftwareRandomGenerator::new(Seed(u128::from_le_bytes(seed))),
+            seed: Zeroizing::new(seed),
             used_bytes: 0,
         }
     }
@@ -92,11 +102,11 @@ impl Clone for AesRng {
             // See `next_byte`: the generator does not reach its bound.
             .expect("AES-CTR generator reached its output bound");
         Self {
-            generator: DefaultRandomGenerator::new(AesCtrParams {
-                seed: SeedKind::Ctr(self.seed),
+            generator: SoftwareRandomGenerator::new(AesCtrParams {
+                seed: SeedKind::Ctr(Seed(u128::from_le_bytes(*self.seed))),
                 first_index,
             }),
-            seed: self.seed,
+            seed: self.seed.clone(),
             used_bytes: self.used_bytes,
         }
     }

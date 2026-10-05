@@ -95,7 +95,7 @@ threshold-types = { path = "./core/threshold-types" } # Types share across the K
 thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)
-aes = "=0.9.3"  # AES block cipher for direct hot-path use - LOW RISK: RustCrypto org, very popular, actively maintained
+aes = { version = "=0.9.3", features = ["zeroize"] }  # AES block cipher for direct hot-path use - LOW RISK: RustCrypto org, very popular, actively maintained
 # NOTE for aes-gcm and aes-gcm-siv: default features are off on purpose. Their default set includes
 # `getrandom`, which reaches `getrandom` 0.4 through `aead` and `crypto-common`. That crate fails to
 # compile for `wasm32-unknown-unknown` unless its `wasm_js` feature is on, which breaks the WASM
