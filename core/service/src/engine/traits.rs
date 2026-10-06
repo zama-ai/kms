@@ -9,7 +9,7 @@ use tonic::Request;
 use tonic::Response;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
 
@@ -34,10 +34,11 @@ pub trait Kms: BaseKms {
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
+
     #[expect(clippy::too_many_arguments)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        sig_key: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         ct_type: FheTypes,
