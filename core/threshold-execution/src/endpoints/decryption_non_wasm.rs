@@ -57,7 +57,6 @@ use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use threshold_types::rng::AesRng;
-#[cfg(any(test, feature = "testing"))]
 use threshold_types::role::Role;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
@@ -290,27 +289,11 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
         ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
     {
         let shared_masked_ptxts = {
-            let ciphertext = ciphertext.clone();
-            let keyshares = keyshares.clone();
-            let preprocessing = preprocessing.clone();
-
-            spawn_compute_bound(move || -> anyhow::Result<_> {
-                let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-                for current_ct_block in ciphertext.packed_blocks() {
-                    let partial_decrypt =
-                        partial_decrypt128(&keyshares, current_ct_block, ddec_key_type)?;
-                    let res = partial_decrypt
-                        + preprocessing
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?
-                            .next_mask()?;
-
-                    shared_masked_ptxts.push(res);
-                }
-                Ok(shared_masked_ptxts)
-            })
-            .await?
-        }?;
+            let mut preparation = preprocessing
+                .lock()
+                .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
+            masked_partial_decrypt(&keyshares, &ciphertext, ddec_key_type, &mut *preparation)?
+        };
 
         let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, &keyshares).await?;
         let usable_message_bits =
@@ -360,25 +343,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
-    let ddec_key_type = ct.decryption_key_type();
-    let ct_large = match ct {
-        LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
-        LowLevelCiphertextAndKeys::BigStandard(ct128) => ct128,
-        LowLevelCiphertextAndKeys::Small { ct, server_key, ck } => match ct {
-            RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                spawn_compute_bound(move || {
-                    ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
-                })
-                .await??,
-            ),
-            RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                spawn_compute_bound(move || {
-                    ck.squash_boolean_block_noise(&server_key, &boolean_block)
-                })
-                .await??,
-            ),
-        },
-    };
+    let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
 
     let len = ct_large.len();
     let preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
@@ -407,57 +372,60 @@ where
     Ok((outputs, elapsed_time))
 }
 
-/// Partially decrypt a ciphertext using noise flooding.
-/// Partially here means that each party outputs a share of the decrypted result.
+/// Partially decrypts a ciphertext using noise flooding.
+/// Each party outputs a masked share of the decrypted result.
 ///
-/// Returns this party's share of the plaintext plus some timing information.
-///
-/// This is the entry point of the User decryption protocol.
+/// This is the entry point of the user decryption protocol.
 ///
 /// # Arguments
-/// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `ct` - The ciphertext to be decrypted, bundled with the switch&squash keys
-///   (server key + noise squashing key) that its `Small` variant requires; the
-///   `Big*` variants carry no keys
-/// * `secret_key_share` - The secret key share of the party_keyshare
+/// * `prss` - The PRSS state for the ciphertext's session and epoch. The caller must derive it
+///   from the correct session ID and epoch.
+/// * `my_role` - This party's role, which selects its PRSS masks.
+/// * `ct` - The ciphertext to decrypt. Its `Small` variant carries the switch-and-squash keys;
+///   the `Big*` variants are already noise-squashed and carry no keys.
+/// * `secret_key_share` - This party's secret key share. `BigCompressed` uses its SnS compression
+///   key share; the other variants use its SnS key share.
 ///
 /// # Returns
-/// * A tuple containing the masked partial decryption of each packed block, the packing factor of the ciphertext blocks, and the time it took to execute
-/// * The partial decryptions are wrapped in [`Zeroizing`] because they are this party's share of the plaintext
+/// * A tuple with one masked partial decryption per packed block and the packing factor.
+/// * The partial decryptions use [`Zeroizing`] because they contain this party's plaintext share.
 ///
 /// # Remarks
-/// The partial decryption protocol is executed in the following steps:
-/// 1. The ciphertext is converted to a large ciphertext block
-/// 2. The protocol is initialized with the noise flooding
-/// 3. The local decryption is executed, without opening the result resulting in a partial decryption
-/// 4. The results are returned
+/// The partial decryption protocol has these steps:
+/// 1. Convert a `Small` ciphertext to the large form. The `Big*` variants need no conversion.
+/// 2. Derive one noise-flooding mask per packed block from `prss` and `my_role`.
+/// 3. Decrypt each block locally and add its mask, without opening the result.
+/// 4. Return the masked shares and packing factor.
 ///
-/// There is no "online" phase for partial decryption because all computation is local,
-/// that's why there are no traits similar to [OnlineNoiseFloodDecryption].
-#[expect(clippy::type_complexity)]
-#[instrument(skip_all, fields(sid, my_role))]
+/// There is no online phase because all computation is local. This function creates no network
+/// session and needs no trait similar to [`OnlineNoiseFloodDecryption`].
+#[instrument(skip_all, fields(my_role = %my_role))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
-    noiseflood_session: &mut P,
+    prss: &mut P,
+    my_role: Role,
     ct: LowLevelCiphertextAndKeys,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-) -> anyhow::Result<(
-    Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
-    u32,
-    Duration,
-)>
+) -> anyhow::Result<(Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>, u32)>
 where
-    P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
+    P: PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
-    {
-        let session = noiseflood_session.get_mut_base_session();
-        let sid: u128 = session.session_id().into();
-        tracing::Span::current().record("sid", sid);
-        let my_role = session.my_role();
-        tracing::Span::current().record("my_role", my_role.to_string());
-    }
+    let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
+    let packing_factor = ct_large.packing_factor();
+    let mut preparation = InMemoryNoiseFloodPreprocessing::default();
+    preparation.append_masks(
+        prss.mask_next_vec(my_role, B_SWITCH_SQUASH, ct_large.len())
+            .await?,
+    );
+    let shared_masked_ptxts =
+        masked_partial_decrypt(secret_key_share, &ct_large, ddec_key_type, &mut preparation)?;
+    Ok((shared_masked_ptxts, packing_factor as u32))
+}
 
-    let execution_start_timer = Instant::now();
+/// Brings a ciphertext to the large (noise-squashed) form that partial decryption works on.
+async fn switch_and_squash_for_partial_decrypt(
+    ct: LowLevelCiphertextAndKeys,
+) -> anyhow::Result<(SnsRadixOrBoolCiphertext, SnsDecryptionKeyType)> {
     let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
         LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
@@ -477,21 +445,36 @@ where
             ),
         },
     };
-    let packing_factor = ct_large.packing_factor();
+    Ok((ct_large, ddec_key_type))
+}
+
+/// Locally partially decrypts every packed block of `ct_large` and masks it with the next
+/// noise-flooding mask from `preparation`.
+fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ct_large: &SnsRadixOrBoolCiphertext,
+    ddec_key_type: SnsDecryptionKeyType,
+    preparation: &mut impl NoiseFloodPreprocessing<EXTENSION_DEGREE>,
+) -> anyhow::Result<Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     #[cfg(test)]
     {
-        match &ct_large {
+        match ct_large {
             SnsRadixOrBoolCiphertext::Radix(_) => {
                 let msg_bits = secret_key_share.parameters.message_modulus_log();
                 let carry_bits = secret_key_share.parameters.carry_modulus_log();
-                assert_eq!(packing_factor as u32, (msg_bits + carry_bits) / msg_bits);
+                assert_eq!(
+                    ct_large.packing_factor() as u32,
+                    (msg_bits + carry_bits) / msg_bits
+                );
             }
             SnsRadixOrBoolCiphertext::Bool(_) => {}
         }
     }
 
     let len = ct_large.len();
-    let mut preparation = noiseflood_session.init_prep_noiseflooding(len).await?;
     // The capacity is exact, so the vector never reallocates and leaves no unwiped copy.
     let mut shared_masked_ptxts = Zeroizing::new(Vec::with_capacity(len));
     for current_ct_block in ct_large.packed_blocks() {
@@ -507,10 +490,7 @@ where
 
         shared_masked_ptxts.push(res);
     }
-
-    let execution_stop_timer = Instant::now();
-    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((shared_masked_ptxts, packing_factor as u32, elapsed_time))
+    Ok(shared_masked_ptxts)
 }
 
 /// Decrypts a ciphertext using bit decomposition.
@@ -572,7 +552,7 @@ where
 /// Partially decrypt a ciphertext using bit decomposition.
 /// Partially here means that each party outputs a share of the decrypted result.
 ///
-/// Returns this party's share of the plaintext plus some timing information.
+/// Returns this party's share of the plaintext.
 ///
 /// This is the entry point of the User decryption protocol.
 ///
@@ -583,7 +563,6 @@ where
 /// * `ksk` - The public keyswitch key
 ///
 /// # Returns
-/// * A tuple containing the partial decryption of each block and the time it took to execute
 /// * The partial decryptions are wrapped in [`Zeroizing`] because they are this party's share of the plaintext
 ///
 /// # Remarks
@@ -598,12 +577,11 @@ pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-) -> anyhow::Result<(Zeroizing<Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>, Duration)>
+) -> anyhow::Result<Zeroizing<Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
-    let execution_start_timer = Instant::now();
     let sid = session.session_id();
     let own_role = session.my_role();
     let mut prep = secure_init_prep_bitdec_small_session(session, ct.len()).await?;
@@ -638,9 +616,7 @@ where
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
 
-    let execution_stop_timer = Instant::now();
-    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((ptxt_sums, elapsed_time))
+    Ok(ptxt_sums)
 }
 
 /// Represent the blocks (decryptions of the LWE ciphertext)
@@ -1019,14 +995,16 @@ where
 
 async fn open_masked_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
     session: &S,
-    res: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    mut res: Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
 ) -> anyhow::Result<Vec<Z128>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Transfer the masked shares into the public opening without copying the allocation.
+    let shares = std::mem::take(&mut *res);
     let opened = SecureRobustOpen::default()
-        .robust_open_list_to_all(session, res, session.threshold() as usize)
+        .robust_open_list_to_all(session, shares, session.threshold() as usize)
         .await?;
     reconstruct_message(opened, &keyshares.parameters)
 }
@@ -1349,9 +1327,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-    use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
+    use super::{
+        LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+        masked_partial_decrypt, partial_decrypt_using_noiseflooding,
+        threshold_decrypt64_maybe_malicious,
+    };
+    use crate::endpoints::decryption::{
+        DecryptionMode, RadixOrBoolCiphertext, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
+    };
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
+    use crate::runtime::sessions::{
+        session_parameters::GenericParameterHandles, small_session::SmallSession,
+    };
+    use crate::small_execution::prss::{DerivePRSSState, PRSSSetup};
+    use crate::tests::helper::testing::{
+        get_dummy_prss_setup, get_networkless_base_session_for_parties,
+    };
     use crate::tfhe_internals::test_feature::{
         ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
     };
@@ -1373,10 +1364,14 @@ mod tests {
     use std::{collections::HashSet, sync::Arc};
     use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-    use tfhe::{FheUint8, prelude::FheEncrypt};
+    use tfhe::{
+        FheUint8,
+        prelude::{FheEncrypt, SquashNoise},
+    };
     use threshold_types::network::NetworkMode;
     use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
+    use threshold_types::session_id::SessionId;
 
     #[test]
     fn reconstruct_key() {
@@ -1537,6 +1532,122 @@ mod tests {
     #[tokio::test]
     async fn test_small_threshold_decrypt_f8() {
         test_small_threshold_decrypt::<8>(1, 4, HashSet::new()).await
+    }
+
+    /// A partial decryption and its packing factor.
+    type PDecOutput = (Vec<ResiduePoly<Z128, 4>>, u32);
+
+    /// Runs partial decryption through session preprocessing and direct PRSS derivation on the
+    /// same ciphertext. Returns the session result first and the direct PRSS result second.
+    /// The session path uses ID 1; `prss_session_id` selects the direct PRSS state.
+    fn partial_decrypt_both_ways(
+        prss_session_id: SessionId,
+        key_type: SnsDecryptionKeyType,
+    ) -> (PDecOutput, PDecOutput) {
+        ensure_test_data_setup();
+        let (num_parties, threshold) = (4, 1);
+        let role = Role::indexed_from_one(1);
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
+        let params = keyset.get_cpu_params().unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key::<_, 4>(
+            &keyset.client_key,
+            params,
+            &mut AesRng::seed_from_u64(0),
+            num_parties,
+            threshold,
+        )
+        .unwrap();
+        let key_share = &key_shares[role.one_based() - 1];
+
+        let ct = FheUint8::encrypt(3_u8, &keyset.client_key);
+        let server_key = &keyset.public_keys.server_key;
+        let large_ct = match key_type {
+            SnsDecryptionKeyType::SnsKey => {
+                let (ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
+                let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref();
+                SnsRadixOrBoolCiphertext::Radix(
+                    server_key
+                        .noise_squashing_key()
+                        .unwrap()
+                        .squash_radix_ciphertext_noise(int_server_key, &ct)
+                        .unwrap(),
+                )
+            }
+            SnsDecryptionKeyType::SnsCompressionKey => {
+                tfhe::set_server_key(server_key.clone());
+                let compressed = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+                    .push(ct.squash_noise().unwrap())
+                    .build()
+                    .unwrap();
+                let expanded: tfhe::SquashedNoiseFheUint = compressed.get(0).unwrap().unwrap();
+                SnsRadixOrBoolCiphertext::Radix(
+                    expanded.underlying_squashed_noise_ciphertext().clone(),
+                )
+            }
+        };
+
+        // `get_dummy_prss_setup` drives its own runtime, so it runs before the test's runtime.
+        let prss_setup: PRSSSetup<ResiduePoly<Z128, 4>> = get_dummy_prss_setup(
+            get_networkless_base_session_for_parties(num_parties, threshold as u8, role),
+        );
+        let base_session =
+            get_networkless_base_session_for_parties(num_parties, threshold as u8, role);
+        let session_id = base_session.session_id();
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let session = SmallSession::new_from_prss_state(
+                base_session,
+                prss_setup.new_prss_session_state(session_id),
+            )
+            .unwrap();
+            let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
+            let mut prep = noiseflood_session
+                .init_prep_noiseflooding(large_ct.len())
+                .await
+                .unwrap();
+            let via_session =
+                masked_partial_decrypt(key_share, &large_ct, key_type, &mut prep).unwrap();
+            let packing_via_session = large_ct.packing_factor() as u32;
+
+            let mut prss_state = prss_setup.new_prss_session_state(prss_session_id);
+            let ct = match key_type {
+                SnsDecryptionKeyType::SnsKey => LowLevelCiphertextAndKeys::BigStandard(large_ct),
+                SnsDecryptionKeyType::SnsCompressionKey => {
+                    LowLevelCiphertextAndKeys::BigCompressed(large_ct)
+                }
+            };
+            let (via_prss, packing_via_prss) =
+                partial_decrypt_using_noiseflooding(&mut prss_state, role, ct, key_share)
+                    .await
+                    .unwrap();
+
+            (
+                (via_session.to_vec(), packing_via_session),
+                (via_prss.to_vec(), packing_via_prss),
+            )
+        })
+    }
+
+    #[rstest::rstest]
+    #[case::big_standard(SnsDecryptionKeyType::SnsKey)]
+    #[case::big_compressed(SnsDecryptionKeyType::SnsCompressionKey)]
+    fn partial_decrypt_with_prss_matches_session_based(#[case] key_type: SnsDecryptionKeyType) {
+        let (via_session, via_prss) =
+            partial_decrypt_both_ways(threshold_types::session_id::SessionId::from(1), key_type);
+        assert!(!via_session.0.is_empty());
+        assert_eq!(via_session, via_prss);
+    }
+
+    /// The masks depend on the session ID: a PRSS state for another session yields a different
+    /// partial decryption, so the equality above is not an artefact of unused masks.
+    #[rstest::rstest]
+    #[case::big_standard(SnsDecryptionKeyType::SnsKey)]
+    #[case::big_compressed(SnsDecryptionKeyType::SnsCompressionKey)]
+    fn partial_decrypt_with_prss_depends_on_session_id(#[case] key_type: SnsDecryptionKeyType) {
+        let (via_session, via_prss) =
+            partial_decrypt_both_ways(threshold_types::session_id::SessionId::from(2), key_type);
+        assert_eq!(via_session.1, via_prss.1);
+        assert_ne!(via_session.0, via_prss.0);
     }
 
     async fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>(
