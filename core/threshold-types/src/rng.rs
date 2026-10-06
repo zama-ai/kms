@@ -27,7 +27,7 @@ const _: () = {
 /// `tfhe-csprng` generators do not wipe it.
 pub struct AesRng {
     generator: SoftwareRandomGenerator,
-    // The generator is not `Clone`: a clone starts a generator from this seed at the same index.
+    // Only `clone` reads the seed.
     seed: Zeroizing<[u8; SEED_SIZE]>,
     // Number of bytes drawn from the current batch of `BYTES_PER_BATCH` bytes.
     used_bytes: usize,
@@ -94,8 +94,20 @@ impl RngCore for AesRng {
 
 impl CryptoRng for AesRng {}
 
+impl Drop for AesRng {
+    fn drop(&mut self) {
+        // Draws a full batch, so the buffer of the generator holds no byte that this RNG returned.
+        for _ in 0..BYTES_PER_BATCH {
+            // `next`, not `next_byte`: a drop must not panic.
+            let _ = self.generator.next();
+        }
+    }
+}
+
+/// A clone returns the same stream as its origin.
 impl Clone for AesRng {
     fn clone(&self) -> Self {
+        // The generator is not `Clone`: start one from the seed at the same index.
         let first_index = self
             .generator
             .next_table_index()

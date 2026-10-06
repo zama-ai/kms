@@ -21,6 +21,11 @@ use zeroize::Zeroizing;
 type Seed128 = <AesRng as SeedableRng>::Seed;
 type Seed256 = <ChaCha20Rng as SeedableRng>::Seed;
 
+/// Number of bytes that a fork discards from its parent after the child seed.
+///
+/// It covers the output buffer of both parents: 128 bytes in `AesRng`, 256 bytes in `ChaCha20Rng`.
+const DISCARD_BYTES: usize = 256;
+
 /// Identifies which entropy provider prevented source initialization or refresh.
 #[derive(Debug, thiserror::Error)]
 pub enum RngSourceError {
@@ -144,10 +149,11 @@ impl RngSource {
     {
         let mut seed = Zeroizing::new([0u8; N]);
         // Only infallible RNG operations run under this lock; poisoning indicates an invariant bug.
-        parent
-            .lock()
-            .expect("seed source mutex poisoned")
-            .fill_bytes(seed.as_mut());
+        let mut parent = parent.lock().expect("seed source mutex poisoned");
+        parent.fill_bytes(seed.as_mut());
+        // Pushes the child seed out of the output buffer of the parent.
+        parent.fill_bytes(Zeroizing::new([0u8; DISCARD_BYTES]).as_mut());
+        drop(parent);
         R::from_seed(*seed)
     }
 
@@ -192,6 +198,7 @@ mod tests {
         ));
         let mut expected_parent = AesRng::seed_from_u64(42);
         let mut expected_first = AesRng::from_rng(&mut expected_parent).unwrap();
+        expected_parent.fill_bytes(&mut [0u8; DISCARD_BYTES]);
         let mut expected_second = AesRng::from_rng(&mut expected_parent).unwrap();
         let first = source.fork_rng_128().next_u64();
         let second = source.fork_rng_128().next_u64();
@@ -208,6 +215,7 @@ mod tests {
         ));
         let mut expected_parent = ChaCha20Rng::seed_from_u64(43);
         let mut expected_first = ChaCha20Rng::from_rng(&mut expected_parent).unwrap();
+        expected_parent.fill_bytes(&mut [0u8; DISCARD_BYTES]);
         let mut expected_second = ChaCha20Rng::from_rng(&mut expected_parent).unwrap();
         let first = source.fork_rng_256().next_u64();
         let second = source.fork_rng_256().next_u64();
@@ -325,6 +333,7 @@ mod tests {
         let mut expected_parent = source.rng_128.lock().unwrap().clone();
         let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
         assert_eq!(sibling.new_rng().next_u64(), expected.next_u64());
+        expected_parent.fill_bytes(&mut [0u8; DISCARD_BYTES]);
         let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
         assert_eq!(base.new_rng().next_u64(), expected.next_u64());
     }

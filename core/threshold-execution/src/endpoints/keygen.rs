@@ -1835,7 +1835,7 @@ pub mod tests {
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;
-        let mut rng = threshold_types::rng::AesRng::from_entropy();
+        let mut rng = threshold_types::rng::AesRng::seed_from_u64(42);
         let tag = tfhe::Tag::default();
         let keyset1 = gen_uncompressed_key_set(params, tag.clone(), &mut rng);
         let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);
