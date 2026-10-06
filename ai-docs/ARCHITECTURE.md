@@ -270,6 +270,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
   the running or succeeded attempt, and redoes a failed one, just like the async
   variants.
+- **Noise-flooded user decryption** — Each party masks its partial decryption
+  to protect its key share before signcrypting the result for the user. The epoch's
+  PRSS setup and each ciphertext's session ID let that party derive the mask locally.
+  This path needs no network session. Public decryption and bit-decomposition user
+  decryption use network sessions.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched via

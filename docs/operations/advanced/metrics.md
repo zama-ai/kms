@@ -141,9 +141,10 @@ these operations therefore work unchanged whether clients use the async or the s
 #### Threshold user-decryption stages
 - `kms_user_decrypt_stage_duration_microseconds_total{stage}` and
   `kms_user_decrypt_stage_observations_total{stage}` expose cumulative wall time and observation
-  count for admission, scheduler delay, deserialization, session creation, partial decryption,
-  signcryption, result signing, and meta-store update. Divide the totals to obtain the mean stage
-  duration over a chosen interval.
+  count for admission, scheduler delay, deserialization, PRSS derivation, session creation,
+  partial decryption, signcryption, result signing, and meta-store update. Noise-flooded user
+  decryption records `prss_derive`; bit-decomposition records `session_create`. Divide the totals
+  to obtain the mean stage duration over a chosen interval.
 - `kms_user_decrypt_background_tasks` is the number of submitted UDEC background tasks that have
   not finished.
 
