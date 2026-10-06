@@ -84,7 +84,7 @@ def start_sampler(script, args, output, *, new_session=False):
         )
 
 
-def stop_samplers(processes, *, process_groups=False):
+def stop_samplers(processes, *, process_groups=False, timeout=SAMPLER_STOP_TIMEOUT):
     """Stops controllers first so each can reap its own children and save diagnostics.
 
     Set process_groups only for controllers started with new_session=True.
@@ -94,7 +94,7 @@ def stop_samplers(processes, *, process_groups=False):
             process.terminate()
     for process in processes:
         try:
-            process.wait(timeout=SAMPLER_STOP_TIMEOUT)
+            process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             if process_groups:
                 with contextlib.suppress(ProcessLookupError):

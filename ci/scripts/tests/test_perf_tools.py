@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -278,10 +278,11 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                 ]},
             }]
         }
-        diagnostics.finish_core("ns", Path("restarts"))
+        diagnostics.finish_core("ns", Path("restarts"), diagnostics.time.monotonic() + 270)
         commands = [call.args[0] for call in command.call_args_list]
         previous = next(args for args in commands if "--previous" in args)
         self.assertEqual(previous[-2:], ["-c", "kms-core-enclave"])
+        self.assertLess(commands.index(previous), next(i for i, args in enumerate(commands) if "describe" in args))
         enclave = next(args for args in commands if "exec" in args)
         self.assertEqual(enclave[enclave.index("-c") + 1], "kms-core-enclave")
         self.assertEqual(Path("restarts/pod-nitro.log").read_text(), "captured\n")
@@ -536,9 +537,13 @@ class DiagnosticTests(TemporaryWorkingDirectory):
     ):
         with self.assertRaises(OSError):
             diagnostics.sample("ns", Path("diagnostics"))
-        stop.assert_called_once_with(["cpu"])
-        finish.assert_called_once_with("ns", Path("diagnostics"))
-        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"))
+        stop.assert_called_once_with(["cpu"], timeout=10)
+        finish.assert_called_once_with("ns", Path("diagnostics"), ANY)
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"), ANY)
+        self.assertEqual(
+            finish.call_args.args[2] - finish_core.call_args.args[2],
+            diagnostics.ENA_FINALIZATION_RESERVE,
+        )
 
     @patch.object(diagnostics, "finish_core")
     @patch.object(diagnostics, "finish")
@@ -563,9 +568,13 @@ class DiagnosticTests(TemporaryWorkingDirectory):
             ),
         )
         self.assertEqual(start.call_count, 3)
-        stop.assert_called_once_with(["cpu", "metrics", "placement"])
-        finish.assert_called_once_with("ns", Path("diagnostics"))
-        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"))
+        stop.assert_called_once_with(["cpu", "metrics", "placement"], timeout=10)
+        finish.assert_called_once_with("ns", Path("diagnostics"), ANY)
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"), ANY)
+        self.assertEqual(
+            finish.call_args.args[2] - finish_core.call_args.args[2],
+            diagnostics.ENA_FINALIZATION_RESERVE,
+        )
 
     def test_core_lifecycle_records_restarts_and_last_termination(self):
         pods = {
@@ -602,6 +611,37 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                 ["now", "kms-core-4-core-4", "kms-core-enclave-logger", False, 0, "", "", "", "", "", ""],
             ],
         )
+
+    def test_core_lifecycle_records_current_termination_before_restart(self):
+        pods = {
+            "items": [{
+                "metadata": {"name": "pod"},
+                "status": {"containerStatuses": [{
+                    "name": "kms-core",
+                    "state": {"terminated": {
+                        "reason": "OOMKilled", "exitCode": 137,
+                        "startedAt": "t1", "finishedAt": "t2",
+                    }},
+                    "lastState": {"terminated": {"reason": "Error", "exitCode": 1}},
+                }]},
+            }]
+        }
+        self.assertEqual(
+            diagnostics.core_lifecycle_rows(pods, "now"),
+            [["now", "pod", "kms-core", False, 0, "", "", "OOMKilled", 137, "t1", "t2"]],
+        )
+
+    @patch.object(diagnostics, "best_effort", return_value=result("captured"))
+    @patch.object(diagnostics.time, "monotonic", return_value=99)
+    def test_final_capture_respects_deadline(self, clock, command):
+        self.assertEqual(
+            diagnostics.capture_before_deadline("ns", ["get", "pods"], 100), "captured"
+        )
+        self.assertEqual(command.call_args.kwargs["timeout"], 1)
+        self.assertEqual(
+            diagnostics.capture_before_deadline("ns", ["get", "pods"], 99), None
+        )
+        self.assertEqual(command.call_count, 1)
 
 
 class ProcessTests(unittest.TestCase):
