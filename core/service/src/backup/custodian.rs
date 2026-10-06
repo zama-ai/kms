@@ -538,7 +538,7 @@ impl Custodian {
         }
     }
 
-    pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {
+    pub fn private_dec_key(&self) -> &UnifiedPrivateEncKey {
         &self.dec_key
     }
 

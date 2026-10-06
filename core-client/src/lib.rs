@@ -941,6 +941,19 @@ pub struct NewTestingMpcContextFileParameters {
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// signatures are bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// signatures are bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Skip verification of the signatures and just report the result.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2555,15 +2568,43 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ =
+            let responses =
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, false).await?;
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
+            keygen::check_preproc_responses(
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                &req_id,
+                verify.as_ref(),
+                &responses,
+            )?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecurePreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ =
+            let responses =
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, true).await?;
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
+            keygen::check_preproc_responses(
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                &req_id,
+                verify.as_ref(),
+                &responses,
+            )?;
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
