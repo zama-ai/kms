@@ -73,7 +73,7 @@ fn triple_nsmall128(c: &mut Criterion) {
                                 .unwrap();
                         };
                     //Executing offline, so require Sync network
-                    let _result = rt.block_on(execute_protocol_small::<
+                    let results = rt.block_on(execute_protocol_small::<
                         _,
                         _,
                         ResiduePolyF8Z128,
@@ -87,6 +87,8 @@ fn triple_nsmall128(c: &mut Criterion) {
                         &mut computation,
                         None,
                     ));
+                    // The helper drops a party task that fails, so check that all of them finished.
+                    assert_eq!(results.len(), config.n);
                 });
             },
         );

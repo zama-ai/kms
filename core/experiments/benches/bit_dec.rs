@@ -161,7 +161,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = rt.block_on(execute_protocol_small::<
+                    let results = rt.block_on(execute_protocol_small::<
                         _,
                         _,
                         ResiduePolyF8Z64,
@@ -175,6 +175,8 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         &mut computation,
                         None,
                     ));
+                    // The helper drops a party task that fails, so check that all of them finished.
+                    assert_eq!(results.len(), config.n);
                 });
             },
         );
