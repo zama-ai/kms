@@ -477,7 +477,7 @@ fn verify_legacy_ecdsa<T>(
 /// which is returned. `signer` is the party step 3 identified, if any.
 ///
 /// That party is the one the caller expects, else the one an ECDSA signature recovered
-/// to, else the one whose key the first entry verifies under. The entries are bound to
+/// to, else the one whose keys every entry verifies under. The entries are bound to
 /// the scheme set `list` presents, not to `requested`, so adding or removing any entry
 /// makes them all fail.
 fn verify_scheme_entries<T>(
