@@ -400,11 +400,6 @@ impl Custodian {
         operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        let operator_id = operator_verification_key
-            .id(BACKUP_SIGNING_SCHEMES)
-            .map_err(|e| {
-                BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
-            })?;
         for fingerprint in operator_verification_key.all_fingerprints() {
             tracing::info!("Verifying and re-encrypting backup for operator {fingerprint}");
         }
