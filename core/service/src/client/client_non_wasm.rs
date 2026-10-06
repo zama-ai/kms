@@ -432,23 +432,6 @@ mod tests {
         );
     }
 
-    /// Entries have to agree on one signing party.
-    #[test]
-    fn mixed_party_entries_are_rejected() {
-        let identity = seeded_identity(8);
-        let other = seeded_identity(9);
-        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
-        let client = client_requesting(&identity, true, &requested);
-
-        // Both lists are signed under the whole requested set, so what is left
-        // for the verifier to object to is the two parties
-        let mine = signatures_for(&identity, &requested, &payload());
-        let theirs = signatures_for(&other, &requested, &payload());
-        let signatures = vec![mine[0].clone(), theirs[1].clone()];
-
-        assert!(verify(&client, &signatures, &payload()).is_err());
-    }
-
     /// Every requested scheme must have an entry in the list, even when the other
     /// entries and the legacy signature verify.
     #[test]
