@@ -1831,7 +1831,7 @@ pub(crate) mod tests {
     use crate::cryptography::signatures::internal_sign;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::{
-        Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
+        Signature, SigningSchemeType, composite::scheme_bound_preimage,
         test_support::seeded_identity, unified_verify,
     };
     use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
@@ -2069,7 +2069,6 @@ pub(crate) mod tests {
         let (external_signature, sigs) = signatures_for(&schemes).unwrap();
         assert_eq!(external_signature, expected_external);
         assert_eq!(sigs.len(), schemes.len());
-        let signed_payload = scheme_bound_preimage(&schemes, &payload).unwrap();
 
         for stored in &sigs {
             match stored.scheme {
