@@ -1,8 +1,8 @@
 use std::collections::{BTreeSet, HashSet};
 
-use aes_prng::AesRng;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 

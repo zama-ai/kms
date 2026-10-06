@@ -13,7 +13,6 @@ use crate::{
     tests::helper::tests_and_benches::get_seed_for_two_sets_role,
     tfhe_internals::private_keysets::PrivateKeySet,
 };
-use aes_prng::AesRng;
 use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
 use rand::SeedableRng;
 use std::{
@@ -24,6 +23,7 @@ use std::{
 use tfhe::{ServerKey, core_crypto::prelude::LweKeyswitchKey};
 use threshold_networking::local::{LocalNetworking, LocalNetworkingProducer};
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 use threshold_types::role::{DualRole, Role, RoleKind, RoleTrait, TwoSetsRole};
 use threshold_types::session_id::SessionId;
 

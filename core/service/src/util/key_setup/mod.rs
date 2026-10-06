@@ -1744,7 +1744,6 @@ mod tests {
     use crate::{
         consts::DEFAULT_PARAM, dummy_domain, engine::centralized::central_kms::gen_centralized_crs,
     };
-    use aes_prng::AesRng;
     use hashing::DomainSep;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -1752,6 +1751,7 @@ mod tests {
     use std::collections::HashSet;
     use strum::IntoEnumIterator;
     use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"SEEDKGEN";
 

@@ -110,7 +110,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
 impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericBaseSessionHandles<Role>
     for GenericSmallSessionStruct<Z, Prss>
 {
-    type RngType = aes_prng::AesRng;
+    type RngType = threshold_types::rng::AesRng;
     fn rng(&mut self) -> &mut Self::RngType {
         self.base_session.rng()
     }

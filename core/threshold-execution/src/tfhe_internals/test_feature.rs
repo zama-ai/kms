@@ -1852,7 +1852,6 @@ mod tests {
     };
     use crate::tfhe_internals::utils::reconstruct_bit_vec;
     use crate::{constants::REAL_KEY_PATH, tests::ensure_real_keys_setup};
-    use aes_prng::AesRng;
     use algebra::base_ring::{Z64, Z128};
     use algebra::galois_rings::common::ResiduePoly;
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
@@ -1867,6 +1866,7 @@ mod tests {
         set_server_key,
     };
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
     use tokio::task::JoinSet;

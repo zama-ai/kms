@@ -2213,7 +2213,6 @@ pub(crate) mod tests {
             tests::TestType,
         },
     };
-    use aes_prng::AesRng;
     use kms_grpc::{
         RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
@@ -2228,6 +2227,7 @@ pub(crate) mod tests {
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
         tfhe_internals::test_feature::gen_key_set,
     };
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     /// [`reshare_session_skews`] composes the per-protocol round counts into the

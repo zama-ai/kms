@@ -350,7 +350,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use num_integer::Integer;
     use rand::SeedableRng;
@@ -372,6 +371,7 @@ mod tests {
         shortint::{CiphertextModulus, parameters::LweDimension},
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
+    use threshold_types::rng::AesRng;
 
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
     use crate::{

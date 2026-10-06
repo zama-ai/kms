@@ -13,8 +13,6 @@ use crate::engine::{
 };
 
 // === External Crates ===
-#[cfg(test)]
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
 use threshold_execution::{
@@ -30,6 +28,8 @@ use threshold_execution::{
 use threshold_networking::{
     grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
 };
+#[cfg(test)]
+use threshold_types::rng::AesRng;
 // Only used by the `#[cfg(test)]` dummy-session constructors below.
 #[cfg(test)]
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
