@@ -2,17 +2,11 @@
 
 use super::ecdsa::PublicSigKey;
 use super::identity::NodeSigningIdentity;
-use super::{
-    HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey, canonical_schemes,
-};
-use hashing::{DomainSep, hash_element};
+use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
-
-/// Domain separator for the digest that identifies the keys a signature is made with.
-const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 
 /// One party's verification keys, keyed by the scheme each belongs to.
 ///
@@ -181,30 +175,6 @@ impl VerfKeySet {
         self.get(scheme)
             .ok_or(SigningError::NoVerificationKey(scheme))
     }
-
-    /// The identifier of the keys a signature under `schemes` is made with.
-    pub fn id(&self, schemes: &[SigningSchemeType]) -> Result<Vec<u8>, SigningError> {
-        let schemes = canonical_schemes(schemes)?;
-        Ok(hash_element(
-            &DSEP_VERF_KEY_SET,
-            &self.canonical_bytes(&schemes)?,
-        ))
-    }
-
-    /// The unambiguous byte encoding of the keys for the canonical `schemes`,
-    /// for use inside a digest.
-    fn canonical_bytes(&self, schemes: &[SigningSchemeType]) -> Result<Vec<u8>, SigningError> {
-        let mut out = Vec::new();
-        // Bounded by the number of known schemes, so the cast cannot truncate.
-        out.extend_from_slice(&(schemes.len() as u32).to_le_bytes());
-        for &scheme in schemes {
-            out.extend_from_slice(&scheme.tag());
-            let bytes = self.require(scheme)?.digest();
-            out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-            out.extend_from_slice(&bytes);
-        }
-        Ok(out)
-    }
 }
 
 #[cfg(test)]
@@ -321,36 +291,5 @@ mod tests {
                 Err(UnversionizeError::Conversion { .. })
             ));
         }
-    }
-
-    /// The id names the selected keys: swapping a selected key, or changing the
-    /// selection, changes it, while a key outside the selection does not.
-    #[test]
-    fn id_names_exactly_the_selected_keys() {
-        let mut rng = AesRng::seed_from_u64(4);
-        let identity = seeded_identity(&mut rng);
-        let other_identity = seeded_identity(&mut rng);
-        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        let selected = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87];
-
-        let base = VerfKeySet::from_identity(&identity, &every_scheme).unwrap();
-        let base_id = base.id(&selected).unwrap();
-
-        for &scheme in &every_scheme {
-            let mut swapped = base.keys.clone();
-            swapped.insert(
-                scheme,
-                other_identity.unified_verifying_key(scheme).unwrap(),
-            );
-            let swapped_id = VerfKeySet::new(swapped).unwrap().id(&selected).unwrap();
-            assert_eq!(
-                base_id == swapped_id,
-                !selected.contains(&scheme),
-                "swapping the {scheme} key had the wrong effect on the id"
-            );
-        }
-
-        assert_ne!(base_id, base.id(&[SigningSchemeType::Ecdsa256k1]).unwrap());
-        assert_ne!(base_id, base.id(&every_scheme).unwrap());
     }
 }
