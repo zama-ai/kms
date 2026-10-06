@@ -2132,7 +2132,6 @@ pub(crate) mod tests {
         );
 
         assert_eq!(inner.signatures.len(), schemes.len());
-        let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
         for stored in &inner.signatures {
             match stored.scheme {
                 SigningSchemeType::Ecdsa256k1 => {
