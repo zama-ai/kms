@@ -21,7 +21,7 @@ pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 120;
 pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 21600; // 6 hours
 
 // The default time interval after which we discard inactive sessions
-pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
+pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 10800; // 3 hours
 
 // The default maximum waiting time we wait for trying to push or fetch a message in the send/rec queue
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
