@@ -74,10 +74,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             anyhow::anyhow!("backup output not part of the custodian recovery output")
         })?;
         Ok(InternalCustodianRecoveryOutput {
-            signcryption: UnifiedSigncryption::new(
-                backup_output.signcryption.clone(),
-                backup_output.pke_type.try_into()?,
-            ),
+            signcryption: backup_output.try_into()?,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
     }

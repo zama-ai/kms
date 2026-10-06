@@ -80,18 +80,11 @@ use zeroize::Zeroizing;
 /// The marker every composite preimage starts with.
 pub const COMPOSITE_PREFIX: &[u8; 32] = b"ZamaKmsCompositeSignature2026_v1";
 
-/// Sort `schemes` into canonical order and drop duplicates.
+/// Sort `schemes` into canonical order and drop duplicates. The schemes may be
+/// given typed or by their wire discriminants, which sort in the same order.
 ///
 /// Errors when `schemes` is empty.
-pub fn canonical_schemes(
-    schemes: &[SigningSchemeType],
-) -> Result<Vec<SigningSchemeType>, SigningError> {
-    canonical(schemes)
-}
-
-/// [`canonical_schemes`] for schemes given either typed or by their wire
-/// discriminants, which sort in the same order.
-fn canonical<S: Ord + Copy>(schemes: &[S]) -> Result<Vec<S>, SigningError> {
+pub fn canonical_schemes<S: Ord + Copy>(schemes: &[S]) -> Result<Vec<S>, SigningError> {
     let mut canonical = schemes.to_vec();
     canonical.sort_unstable();
     canonical.dedup();
@@ -160,7 +153,7 @@ pub fn wire_scheme_bound_preimage<T>(
 where
     T: Serialize + Versionize + Named,
 {
-    let scheme_bytes = canonical_wire_scheme_bytes(&canonical(schemes)?);
+    let scheme_bytes = canonical_wire_scheme_bytes(&canonical_schemes(schemes)?);
     let mut out = ZeroizingWriter::new();
     let framed = |e: std::io::Error| SigningError::Serialization(e.to_string());
     out.write_all(COMPOSITE_PREFIX).map_err(framed)?;
@@ -171,7 +164,7 @@ where
 }
 
 /// The schemes `entries` were made under, in the order they are stored.
-fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType> {
+pub(crate) fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType> {
     entries.iter().map(|entry| entry.scheme).collect()
 }
 
@@ -597,7 +590,7 @@ mod tests {
         );
 
         assert!(matches!(
-            canonical_schemes(&[]),
+            canonical_schemes::<SigningSchemeType>(&[]),
             Err(SigningError::EmptySchemeSet)
         ));
     }
