@@ -225,10 +225,10 @@ network_timeout_bk = 300
 network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
 # How often old and stale sessions will be cleaned
-session_update_interval_secs = 60
+session_update_interval_secs = 120
 # The time interval after which we completely forget about completed sessions
-session_cleanup_interval_secs = 86400 # 1 day
-# The time interval after which we discard inactive sessions, or active sessions that have not seen any activity
+session_cleanup_interval_secs = 21600 # 6 hours
+# The time interval after which we discard inactive sessions
 discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocessing time ~44 min for Default params)
 # The maximum waiting time we wait for trying to push or fetch a message in the send/rec queue
 max_waiting_time_for_message_queue = 60

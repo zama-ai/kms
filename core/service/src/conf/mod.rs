@@ -530,8 +530,8 @@ mod tests {
             core_to_core_net.max_en_decode_message_size,
             Some(2147483648)
         );
-        assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
-        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
+        assert_eq!(core_to_core_net.session_update_interval_secs, Some(120));
+        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(21600));
         assert_eq!(
             core_to_core_net.discard_inactive_sessions_interval,
             Some(10800)

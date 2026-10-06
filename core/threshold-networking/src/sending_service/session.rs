@@ -1679,7 +1679,7 @@ mod tests {
             network_timeout_bk_sns: Some(1200),
             max_en_decode_message_size: Some(2 * 1024 * 1024 * 1024),
             session_update_interval_secs: Some(60),
-            session_cleanup_interval_secs: Some(86400),
+            session_cleanup_interval_secs: Some(21600),
             discard_inactive_sessions_interval: Some(15 * 60),
             max_waiting_time_for_message_queue: Some(max_waiting_time_secs),
             max_opened_inactive_sessions_per_party: Some(2000),
