@@ -35,6 +35,26 @@ impl Named for VerfKeySet {
     const NAME: &'static str = "VerfKeySet";
 }
 
+/// What a person compares by hand to check one key of a [`VerfKeySet`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyFingerprint {
+    pub scheme: SigningSchemeType,
+    /// The key's `0x` text: the address for ECDSA, the key digest for the other schemes.
+    pub text: String,
+    /// The hex-encoded key digest.
+    pub digest: String,
+}
+
+impl std::fmt::Display for KeyFingerprint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} key {} (digest {})",
+            self.scheme, self.text, self.digest
+        )
+    }
+}
+
 /// The unvalidated mirror of [`VerfKeySet`] that carries the version dispatch.
 ///
 /// `try_convert` versions the target type, not `VerfKeySet` itself, so the
@@ -123,26 +143,43 @@ impl VerfKeySet {
         self.keys.keys().copied().collect()
     }
 
+    /// Every key in the set with the scheme it is filed under, in canonical scheme order.
+    pub fn iter(&self) -> impl Iterator<Item = (SigningSchemeType, &UnifiedPublicSigKey)> + '_ {
+        self.keys.iter().map(|(scheme, key)| (*scheme, key))
+    }
+
+    /// The fingerprint of every key in the set, in canonical scheme order, for the operator and
+    /// custodians to check by hand. Every tool that prints keys for that check prints these.
+    pub fn all_fingerprints(&self) -> impl Iterator<Item = KeyFingerprint> + '_ {
+        self.iter().map(|(scheme, key)| KeyFingerprint {
+            scheme,
+            text: key.address_text(),
+            digest: hex::encode(key.digest()),
+        })
+    }
+
     /// The key for `scheme`, if the set holds one.
     pub fn get(&self, scheme: SigningSchemeType) -> Option<&UnifiedPublicSigKey> {
         self.keys.get(&scheme)
+    }
+
+    /// The ECDSA member of this set.
+    pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
+        match self.require(SigningSchemeType::Ecdsa256k1)? {
+            UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
+            // `new` files every key under the scheme it reports, so the ECDSA slot holds an ECDSA
+            // key.
+            other => Err(SigningError::SchemeMismatch {
+                signature: SigningSchemeType::Ecdsa256k1,
+                key: other.signing_scheme_type(),
+            }),
+        }
     }
 
     /// The key for `scheme`, or an error naming the scheme that is missing.
     pub fn require(&self, scheme: SigningSchemeType) -> Result<&UnifiedPublicSigKey, SigningError> {
         self.get(scheme)
             .ok_or(SigningError::NoVerificationKey(scheme))
-    }
-
-    /// The ECDSA key of the set, or an error if it holds none.
-    pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
-        match self.require(SigningSchemeType::Ecdsa256k1)? {
-            UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
-            // Unreachable: `new` files every key under its own scheme.
-            _ => Err(SigningError::NoVerificationKey(
-                SigningSchemeType::Ecdsa256k1,
-            )),
-        }
     }
 
     /// The identifier of the keys a signature under `schemes` is made with.

@@ -236,7 +236,7 @@ NOTE: You may have multiple custodian contexts. However, the system only makes b
 
 #### Recovery
 
-> **WARNING — validate the `VerfKey` before starting recovery.** Recovery assumes the KMS does not have access to its private storage, so the `VerfKey` in the KMS's public storage is the trust anchor for the whole procedure. Before starting, you **must** verify that this `VerfKey` is byte-equal to the current verification key on the gateway. We do not assume the public storage is safe from modification by an adversary, so skipping this check would let an attacker substitute their own key.
+> **WARNING — validate the operator's backup verification keys before passing on a recovery request.** Recovery assumes the KMS does not have access to its private storage, so the trust anchor for the whole procedure is the set of backup verification keys that `custodian-recovery-init` prints, one per backup signing scheme. These come from the KMS's public storage and recovery material, neither of which we assume is safe from modification by an adversary. Before passing the request on, you **must** check the `Ecdsa256k1` address against the current verification key on the gateway, and every other key digest against your own records, as described in step 1 below. Skipping a check would let an attacker substitute their own key for that scheme.
 > **NOTE — TLS may need be disabled during recovery** In case the loss of private data includes the `SigKey` then it is not possible for the KMS core to initialize TLS (as this key is required). Hence the KMS will boot without TLS. 
 
 The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
@@ -253,6 +253,10 @@ The steps needed are as follows:
   The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
 
   A node that has lost its private storage no longer knows which custodian context it used. Name the one to recover under with `-i <custodian context id>` (expanded parameter `custodian-context-id`) unless its backup vault holds exactly one; the command fails and lists the candidate IDs otherwise. A node that still knows its context refuses any other.
+
+  The recovery request carries the operator's backup verification keys, one per backup signing scheme. A node that has lost its keys takes them from the recovery material in its backup vault, so the command prints each one for you to check: the address for `Ecdsa256k1` and the key digest for the other schemes, alongside the digests `kms-custodian` prints. Check the `Ecdsa256k1` address against the gateway, which holds only that key, and the other digests against your own records before passing the request on: the recovery is exactly as secure as the keys you check, so checking only the ECDSA address leaves it ECDSA-secure. To have the command check them, pass `--expected-operator-key <SCHEME>=<0x value as printed>` once per scheme, e.g. `--expected-operator-key Ecdsa256k1=0x… --expected-operator-key MlDsa87=0x…`. It then fails on any mismatch and outputs no request.
+
+  Neither `custodian-recovery-init` nor `custodian-backup-recovery` reads the cores' public storage, so both work after public storage is lost. A KMS server that boots without its signing key and whose public storage no longer holds its verification key takes its backup verification keys from the recovery material in its backup vault, refusing to boot if the contexts there disagree on them or if any of that material is not validly signed under the keys it names, and logs every one of them for the same check.
 
   As a concrete example:
   ```{bash}
@@ -706,6 +710,7 @@ This can be used when some parties crashed during the DKG process so that __all_
 
 Before executing a new epoch, the TFHE public key material must be present in the public storage of all the parties.
 The kms core locally checks for existence of the public key material, and if it is missing, will attempt to automatically fetch it from its peers.
+When the reshare succeeds, the core stores the fetched key material and CRSes unchanged in its own public storage.
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
@@ -722,9 +727,9 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
  - `previous_keys`: An array (enclosed in square brackets) with the information about the keys to reshare (each key is separated by a semicolon, each information concerning a key is separated by a coma):
     - `key_id <KEY_ID>`: the ID of the key
     - `preproc_id <PREPROC_ID>`: the preprocessing ID used to generate the key.
-    - `server_key_digest <DIGEST>`: the hex-encoded server key digest to use for resharing (if the key is not compressed).
+    - `server_key_digest <DIGEST>`: the hex-encoded server key digest to use for resharing (required if the key is not compressed; mutually exclusive with `xof_key_digest`).
     - `public_key_digest <DIGEST>`: the hex-encoded public key digest to use for resharing (required for both compressed and non-compressed keys).
-    - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (if the key is compressed)
+    - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (required if the key is compressed; mutually exclusive with `server_key_digest`)
  - `previous_crs`: An array (enclosed in square brackets) with the information about the CRSes to re-sign (each CRS is separated by a semicolon, each information concerning a CRS is separated by a coma):
     - `crs_id <CRS_ID>`: The ID of the CRS
     - `digest <DIGEST>`: the hex-encoded CRS digest

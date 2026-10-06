@@ -20,6 +20,8 @@ mod common;
 mod composite_v1;
 mod ecdsa_v0;
 
+// Public so the backward-compatibility fixtures can name the versioned types of the composite layout.
+pub use composite_v1::{CompositeEnvelope, CompositeSigncryptionPayload};
 pub(crate) use ecdsa_v0::insecure_decrypt_ignoring_signature;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -82,13 +84,6 @@ pub trait Unsigncrypt {
         schemes: &[SigningSchemeType],
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError>;
-
-    /// Authenticate a signcrypted message and discard the payload.
-    fn validate_signcryption(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-    ) -> Result<(), CryptographyError>;
 }
 
 pub trait SigncryptFHEPlaintext: Signcrypt {
@@ -475,21 +470,6 @@ impl Unsigncrypt for UnifiedUnsigncryptionKey {
         let msg_vec = self.open_composite(dsep, schemes, cipher)?;
         safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
-    }
-
-    fn validate_signcryption(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-    ) -> Result<(), CryptographyError> {
-        // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
-        let _ = self.open(dsep, signcryption).map_err(|e| {
-            CryptographyError::VerificationError(format!(
-                "failed to decrypt signcryption for validation: {}",
-                e
-            ))
-        })?;
-        Ok(())
     }
 }
 

@@ -16,7 +16,7 @@ use kms_0_15_0::backup::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
         RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
     },
-    BackupCiphertext, BACKUP_PKE_SCHEME,
+    BackupCiphertext, BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
@@ -26,10 +26,15 @@ use kms_0_15_0::cryptography::{
     },
     hybrid_ml_kem::HybridKemCt,
     signatures::{
-        compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
-        SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey,
+        compute_eip712_signature, gen_sig_keys,
+        test_support::{seeded_identity, seeded_verf_key_set},
+        NodeSigningIdentity, RootSigningSeed, SigningSchemeType, StoredTypedSignature,
+        UnifiedPublicSigKey, VerfKeySet,
     },
-    signcryption::{Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey},
+    signcryption::{
+        CompositeEnvelope, CompositeSigncryptionPayload, Signcrypt, UnifiedSigncryption,
+        UnifiedSigncryptionKey,
+    },
 };
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
@@ -101,21 +106,23 @@ use backward_compatibility::parameters::{
     SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
-    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
-    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
-    PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
-    PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
+    ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
+    CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
+    MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
+    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
+    UserDecSignedPayloadTest, VerfKeySetTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -487,6 +494,21 @@ const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P3
     state: 384,
 };
 
+// One fixture per variant that is persisted: ML-KEM-512 for user decryption, MLKEM1024-P384 for
+// the custodian-backup chain.
+const UNIFIED_PRIVATE_ENC_KEY_MLKEM512_TEST: UnifiedPrivateEncKeyTest = UnifiedPrivateEncKeyTest {
+    test_filename: Cow::Borrowed("unified_private_enc_key_mlkem512"),
+    state: 512,
+    pke_type: Cow::Borrowed("MlKem512"),
+};
+
+const UNIFIED_PRIVATE_ENC_KEY_MLKEM1024_P384_TEST: UnifiedPrivateEncKeyTest =
+    UnifiedPrivateEncKeyTest {
+        test_filename: Cow::Borrowed("unified_private_enc_key_mlkem1024_p384"),
+        state: 1384,
+        pke_type: Cow::Borrowed("MlKem1024P384"),
+    };
+
 // KMS test
 const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
     test_filename: Cow::Borrowed("unified_signcryption"),
@@ -689,8 +711,39 @@ const USER_DEC_SIGNED_PAYLOAD_TEST: UserDecSignedPayloadTest = UserDecSignedPayl
     extra_data: Cow::Borrowed(&[0x11, 0x12, 0x13, 0x14]),
 };
 
-/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
-/// [`SCHEME_DIGESTS_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
+// KMS test — the plaintext of a composite signcryption: the message and one signature per scheme.
+const COMPOSITE_ENVELOPE_TEST: CompositeEnvelopeTest = CompositeEnvelopeTest {
+    test_filename: Cow::Borrowed("composite_envelope"),
+    msg: Cow::Borrowed(&[0x21; 40]),
+    schemes: Cow::Borrowed(&[Cow::Borrowed("Ecdsa256k1"), Cow::Borrowed("MlDsa87")]),
+    signature: Cow::Borrowed(&[0x22; 16]),
+};
+
+// KMS test — what every signature of a composite signcryption covers.
+const COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST: CompositeSigncryptionPayloadTest =
+    CompositeSigncryptionPayloadTest {
+        test_filename: Cow::Borrowed("composite_signcryption_payload"),
+        msg: Cow::Borrowed(&[0x31; 40]),
+        receiver_id: Cow::Borrowed(&[0x32; 20]),
+        enc_key_digest: Cow::Borrowed(&[0x33; 32]),
+    };
+
+// KMS test — a key set covering every signing scheme of v0.15.0. The schemes are pinned so
+// that a scheme added later does not change the expected key set.
+const VERF_KEY_SET_TEST: VerfKeySetTest = VerfKeySetTest {
+    test_filename: Cow::Borrowed("verf_key_set"),
+    state: 703,
+    schemes: Cow::Borrowed(&[
+        Cow::Borrowed("Ecdsa256k1"),
+        Cow::Borrowed("Ed25519"),
+        Cow::Borrowed("MlDsa44"),
+        Cow::Borrowed("MlDsa65"),
+        Cow::Borrowed("MlDsa87"),
+    ]),
+};
+
+/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`], [`SCHEME_DIGESTS_TEST`]
+/// and [`VERF_KEY_SET_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
 fn scheme_from_name(name: &str) -> SigningSchemeType {
     match name {
         "Ecdsa256k1" => SigningSchemeType::Ecdsa256k1,
@@ -773,8 +826,7 @@ impl KmsV0_15_0 {
 
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
-        let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
-        let sig_key = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
+        let sig_key = seeded_identity(&mut rng);
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -1087,6 +1139,23 @@ impl KmsV0_15_0 {
         TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
     }
 
+    fn gen_unified_private_enc_key(
+        dir: &PathBuf,
+        test: UnifiedPrivateEncKeyTest,
+    ) -> TestMetadataKMS {
+        let pke_type = match test.pke_type.as_ref() {
+            "MlKem512" => PkeSchemeType::MlKem512,
+            "MlKem1024P384" => PkeSchemeType::MlKem1024P384,
+            other => panic!("no UnifiedPrivateEncKey fixture for the scheme {other}"),
+        };
+        let mut rng = AesRng::seed_from_u64(test.state);
+        let mut encryption = Encryption::new(pke_type, &mut rng);
+        let (private_key, _) = encryption.keygen().unwrap();
+        store_versioned_test!(&private_key, dir, &test.test_filename);
+
+        TestMetadataKMS::UnifiedPrivateEncKey(test)
+    }
+
     fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(BACKUP_CIPHERTEXT_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
@@ -1354,18 +1423,20 @@ impl KmsV0_15_0 {
     fn gen_recovery_material(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(RECOVERY_MATERIAL_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
-        let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
+        let operator_identity = seeded_identity(&mut rng);
+        let operator_verf_key_set =
+            VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
         let mut commitments = BTreeMap::new();
         let mut cts = BTreeMap::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_pk, _) = gen_sig_keys(&mut rng);
+            let custodian_verf_key_set = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let backup_material = BackupMaterial {
                 backup_id,
                 mpc_context_id: kms_grpc_0_15_0::ContextId::from_bytes([9u8; 32]),
-                custodian_pk,
+                custodian_verf_key_set,
                 custodian_role: cus_role,
-                operator_pk: operator_pk.clone(),
+                operator_verf_key_set: operator_verf_key_set.clone(),
                 shares: Vec::new(),
             };
             let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
@@ -1390,7 +1461,7 @@ impl KmsV0_15_0 {
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_dec_key, enc_key) = encryption.keygen().unwrap();
-            let (cus_pk, _) = gen_sig_keys(&mut rng);
+            let cus_pk = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let payload = CustodianSetupMessagePayload {
                 header: "header".to_string(),
                 random_value: [role_j as u8; 32],
@@ -1424,7 +1495,7 @@ impl KmsV0_15_0 {
             cts,
             commitments,
             internal_custodian_context,
-            &operator_sk,
+            &operator_identity,
             kms_grpc_0_15_0::ContextId::from_bytes(RECOVERY_MATERIAL_TEST.mpc_context_id),
         )
         .unwrap();
@@ -1440,7 +1511,7 @@ impl KmsV0_15_0 {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
+        let operator_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut cts = BTreeMap::new();
         for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
             let cur_role = Role::indexed_from_one(role_j as usize);
@@ -1468,7 +1539,7 @@ impl KmsV0_15_0 {
         let mut cus_nodes = BTreeMap::new();
         for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, cus_enc_key) = encryption.keygen().unwrap();
             let mut rnd = [0_u8; 32];
@@ -1684,7 +1755,7 @@ impl KmsV0_15_0 {
     /// Generates the _internal_ custodian setup message
     fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = seeded_identity(&mut rng);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (private_key, public_key) = encryption.keygen().unwrap();
         let custodian = Custodian::new(
@@ -1728,7 +1799,7 @@ impl KmsV0_15_0 {
 
         let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
             .map(|i| {
-                let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+                let signing_key = seeded_identity(&mut rng);
                 let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (private_key, public_key) = encryption.keygen().unwrap();
                 Custodian::new(
@@ -1750,7 +1821,7 @@ impl KmsV0_15_0 {
             .collect();
 
         let operator = {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = std::sync::Arc::new(seeded_identity(&mut rng));
             Operator::new_for_sharing(
                 custodian_messages,
                 signing_key,
@@ -1894,6 +1965,58 @@ impl KmsV0_15_0 {
         store_versioned_test!(&payload, dir, &USER_DEC_SIGNED_PAYLOAD_TEST.test_filename);
 
         TestMetadataKMS::UserDecSignedPayload(USER_DEC_SIGNED_PAYLOAD_TEST)
+    }
+
+    /// `CompositeEnvelope` containing plaintext a composite signcryption encrypts.
+    /// It is only ever held encrypted, so the fixture pins the envelope itself.
+    fn gen_composite_envelope(dir: &PathBuf) -> TestMetadataKMS {
+        let envelope = CompositeEnvelope {
+            msg: COMPOSITE_ENVELOPE_TEST.msg.to_vec(),
+            signatures: COMPOSITE_ENVELOPE_TEST
+                .schemes
+                .iter()
+                .map(|name| StoredTypedSignature {
+                    scheme: scheme_from_name(name),
+                    signature: COMPOSITE_ENVELOPE_TEST.signature.to_vec(),
+                })
+                .collect(),
+        };
+
+        store_versioned_test!(&envelope, dir, &COMPOSITE_ENVELOPE_TEST.test_filename);
+
+        TestMetadataKMS::CompositeEnvelope(COMPOSITE_ENVELOPE_TEST)
+    }
+
+    /// `CompositeSigncryptionPayload` represent the content that the composite signature signs.
+    fn gen_composite_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = CompositeSigncryptionPayload {
+            msg: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.msg.to_vec(),
+            receiver_id: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.receiver_id.to_vec(),
+            enc_key_digest: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.enc_key_digest.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::CompositeSigncryptionPayload(COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST)
+    }
+
+    /// `VerfKeySet` contains the verification keys a party publishes.
+    fn gen_verf_key_set(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(VERF_KEY_SET_TEST.state);
+        let schemes: Vec<SigningSchemeType> = VERF_KEY_SET_TEST
+            .schemes
+            .iter()
+            .map(|name| scheme_from_name(name))
+            .collect();
+        let key_set = seeded_verf_key_set(&mut rng, &schemes);
+
+        store_versioned_test!(&key_set, dir, &VERF_KEY_SET_TEST.test_filename);
+
+        TestMetadataKMS::VerfKeySet(VERF_KEY_SET_TEST)
     }
 }
 
@@ -2128,6 +2251,11 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
+            KmsV0_15_0::gen_unified_private_enc_key(&dir, UNIFIED_PRIVATE_ENC_KEY_MLKEM512_TEST),
+            KmsV0_15_0::gen_unified_private_enc_key(
+                &dir,
+                UNIFIED_PRIVATE_ENC_KEY_MLKEM1024_P384_TEST,
+            ),
             KmsV0_15_0::gen_unified_signcryption(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),
@@ -2152,6 +2280,9 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_crs_signed_payload(&dir),
             KmsV0_15_0::gen_public_dec_signed_payload(&dir),
             KmsV0_15_0::gen_user_dec_signed_payload(&dir),
+            KmsV0_15_0::gen_composite_envelope(&dir),
+            KmsV0_15_0::gen_composite_signcryption_payload(&dir),
+            KmsV0_15_0::gen_verf_key_set(&dir),
         ]
     }
 

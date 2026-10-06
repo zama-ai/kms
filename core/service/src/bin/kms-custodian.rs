@@ -120,7 +120,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let setup_msg: InternalCustodianSetupMessage = base64_deserialize(&params.setup_msg)?;
             let recovered_keys =
                 custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)?;
-            if setup_msg.public_verf_key != recovered_keys.verification_key() {
+            if &setup_msg.public_verf_key != recovered_keys.verification_key_set() {
                 tracing::warn!(
                     "Verification failed: Public verification key does not match the generated key!"
                 );
@@ -175,10 +175,13 @@ async fn main() -> Result<(), anyhow::Error> {
             )?;
             let serialized_res = base64_serialize(&res)?;
             tracing::info!("Verified reencryption successfully.");
-            tracing::warn!(
-                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key address: {:?}",
-                recovery_request.operator_verf_key().address()
-            );
+            let operator_keys = recovery_request.operator_verf_key();
+            // `verify_reencrypt` has already required a key for every backup signing scheme.
+            for fingerprint in operator_keys.all_fingerprints() {
+                tracing::warn!(
+                    "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator {fingerprint}"
+                );
+            }
             // Use println to lower the risk of accidental file logging of the recovery output
             println!("{RECOVERY_OUTPUT_DESC}{serialized_res}");
             tracing::info!("Reencryption successful!");

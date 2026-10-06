@@ -1,0 +1,13 @@
+[keygen]
+# show_existing = true
+
+[public_vault.storage.file]
+path = "./keys"
+
+[private_vault.storage.file]
+path = "./keys"
+
+[threshold]
+my_id = 1                   # which party to generate for (1-indexed)
+tls_subject = "kms-core-1"  # subject of the party's self-signed CA certificate
+# tls_wildcard = false      # optional; set true for a wildcard subject

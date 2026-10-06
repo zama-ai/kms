@@ -137,7 +137,11 @@ The service crate is the main surface area. Key subdirectories under
   and the operator's per-context backup vault key — selected in one place,
   `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
   custodian encryption key, and the operator's own backup key, uses that scheme
-  (`InternalCustodianContext::new` / `validated_nodes`).
+  (`InternalCustodianContext::new` / `validated_nodes`). On the signing side,
+  every signature in the custodian-backup chain is a composite under
+  `backup::BACKUP_SIGNING_SCHEMES` (ECDSA/secp256k1 and ML-DSA-87), and every
+  signature in it must verify. Each party publishes a `VerfKeySet`, and a key
+  set that does not cover these schemes is rejected (`ensure_backup_schemes`).
   User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
   keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
@@ -266,6 +270,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
   the running or succeeded attempt, and redoes a failed one, just like the async
   variants.
+- **Noise-flooded user decryption** — Each party masks its partial decryption
+  to protect its key share before signcrypting the result for the user. The epoch's
+  PRSS setup and each ciphertext's session ID let that party derive the mask locally.
+  This path needs no network session. Public decryption and bit-decomposition user
+  decryption use network sessions.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched via
@@ -273,8 +282,16 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
-  Each party also rejects a key without a non-empty public-key digest and a
+  Each party also rejects a key unless it has a non-empty public-key digest and exactly one
   non-empty server-key or compressed-keyset digest before role dispatch.
+  The resharing session matches the parties of the two contexts by MPC identity.
+  A party with the same MPC identity in both contexts is a `Both` party, and the
+  session connects to it at its set 2 URL. The URL is not compared. The request
+  fails if the contexts give one MPC identity two different signer addresses, or
+  one signer address two different MPC identities. A party without a listed
+  signer address matches by MPC identity alone. A node that changes its signing
+  key is a new party: it needs a new MPC identity, and it runs as a separate
+  core during the reshare.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never
@@ -286,28 +303,33 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
   epoch. The party deletes the epoch data and forgets the epoch only once the
-  epoch holds no key share and no CRS metadata. Public data remains because an
-  epoch change does not affect it. A failed deletion keeps the epoch registered
-  so that deletion can be retried. `DestroyMpcEpoch` erases a whole epoch
-  instead, and covers the material of every request.  `DestroyMpcContext` takes
+  epoch holds no key share and no CRS metadata. The `VerifiedCrsMaterial`
+  constructor checks the expected digest and deserializes the CRS from the same
+  bytes. A reshare retains the exact public bytes that it verifies, and restores
+  missing material during its locked storage phase. A failed reshare deletes only
+  public material that its storage phase created. It deletes that material only
+  after private cleanup succeeds. One lock serializes all reshare storage and
+  rollback on a party. Public material that existed before the storage phase
+  remains unchanged. A failed private deletion keeps the epoch and its public
+  material so cleanup can be retried. `DestroyMpcEpoch` erases a whole epoch
+  instead, and covers the material of every request. `DestroyMpcContext` takes
   a stable snapshot of the context's registered epochs and erases their secret
-  shares before it forgets the context and removes its TLS trust-root
-  references.
-  
-  A trust root remains if another live context uses it. This ensures retiring a
-  party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context.  In-memory lifecycle leases
-  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
-  its target context and epoch through all PRSS, resharing and persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases
-  before taking snapshots or deleting data. A conflicting destruction is refused
-  with `FailedPrecondition`, including while PRSS is still running and the new
-  epoch has not yet been registered in the session maker; callers retry once
-  creation has settled. MPC context updates serialize the existence check with
-  storage and cache or session updates. A failed deletion keeps the in-memory
-  context if its persistent entry remains, which permits a retry before or after
-  restart.
-  
+  shares before it forgets the context and removes its TLS trust-root references.
+
+  A trust root remains if another live context uses it. This order leaves no
+  usable key shares after the party set retires. The kms-connector is the source
+  of truth for which epochs belong to a context. In-memory lifecycle leases
+  serialize creation against destruction. `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing, and persistence work.
+  A reshare also holds shared leases for its source context and epoch.
+  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  taking snapshots or deleting data. A conflicting destruction is refused with
+  `FailedPrecondition`, including while PRSS is still running and the new epoch
+  has not yet been registered in the session maker; callers retry once creation
+  has settled. MPC context updates serialize the existence check with storage and
+  cache or session updates. A failed deletion keeps the in-memory context if its
+  persistent entry remains, which permits a retry before or after restart.
+
   The TLS verifier stores one trust root per context and MPC identity. Different
   trust roots for one identity coexist while their contexts remain active. Each
   root is evaluated with only its context's PCR allowlist, and a handshake
@@ -374,8 +396,9 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique, and unless every
-  custodian encryption key uses `BACKUP_PKE_SCHEME`.
+  encryption key is unique and no two custodians share any verification key, unless every
+  custodian encryption key uses `BACKUP_PKE_SCHEME`, and unless every custodian
+  publishes a verification key for every scheme in `BACKUP_SIGNING_SCHEMES`.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
   custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
   so the phrase does not cap the scheme's security level. A vault written under an
@@ -396,9 +419,12 @@ The `RecoveryValidationMaterial` describing a custodian context — the custodia
 shares of the backup decryption key, plus the commitments and the context itself — lives in the
 **backup vault**, as the one object there that the keychain does not encrypt: it is what recovery
 needs in order to reconstruct that very key, so encrypting it under the key would be circular. Its
-integrity comes from the operator signature it carries, checked at startup once the signing key is
-available, together with a check — applied on every load — that the object is stored under the
-context id its payload names. It sits outside the `<backup_id>/<PrivDataType>/`
+integrity comes from the operator's composite signature under `BACKUP_SIGNING_SCHEMES`, checked at
+startup once the signing key is available, together with a check — applied on every load — that the
+object is stored under the context id its payload names. A node without a root seed cannot derive
+the ML-DSA key, so it fails that startup check as soon as its vault holds any recovery material. The
+material also embeds the operator's backup key set (`operator_verf_keys`), for recovery mode below.
+It sits outside the `<backup_id>/<PrivDataType>/`
 namespace the vault's backup entries use, at `RecoveryMaterial/<context_id>`, so purging a
 context's backups never touches it and vice versa; `vault/storage/mod.rs` holds the accessors.
 
@@ -448,6 +474,21 @@ intermediate state bootable: keysets never sit under an epoch the node does not 
 [boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
 stays in recovery mode, where the restore can be repeated.
 
+A threshold or centralized node without its signing key boots in **recovery mode**. It skips the
+boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
+from public storage. When public storage no longer holds that key, the node takes its backup key set
+from the `operator_verf_keys` that its recovery material embeds. It refuses to boot if the contexts
+in the vault embed different key sets, or if any of that material is not validly signed under the
+key set it embeds. Recovery always uses the embedded non-ECDSA keys: the node also publishes them in
+public storage, but the gateway does not hold them, so a copy there is no more trustworthy than the
+material. These keys authenticate nothing on their own. A recovery is therefore as
+secure as the keys that the operator and the custodians check by hand. The core-client's
+`custodian-recovery-init` prints them, and it refuses a mismatch with `--expected-operator-key`.
+`kms-custodian decrypt` logs the fingerprint of every key, its address text and digest, as a
+warning. After the restore, the node checks the material again
+with its restored identity before it anchors the context. The node stays in recovery mode until it
+restarts.
+
 Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](../core/service/src/client/tests/centralized/custodian_backup_tests.rs)
@@ -468,8 +509,11 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 
 The public half has no epoch. The private half has an epoch and contains one party's material.
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
-accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
-public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+accepts one-sided writes. Resharing normally writes only the private half for the new epoch. A
+party without the public half fetches its raw bytes from a peer and verifies the request digest.
+The party stores those exact bytes before it writes private metadata. An existing public entry
+must match the verified bytes. A `ContextInfo` write stores one request-scoped private entry with
+no public half.
 
 Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
 and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys

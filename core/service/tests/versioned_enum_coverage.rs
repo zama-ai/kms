@@ -48,9 +48,6 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // RecoveryValidationMaterial payload.
     // Covered via RecoveryValidationMaterialTest.
     "UnifiedPublicEncKey",
-    // No fixture carries this wrapper itself; only the keys it wraps.
-    // Covered via MlKem1024P384PrivateKeyTest.
-    "UnifiedPrivateEncKey",
     // Field of UnifiedCipher.
     // Covered via UnifiedCipherTest.
     "PkeSchemeType",
@@ -67,19 +64,8 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // field. Covered (in serialized-and-signcrypted form) via
     // OperatorBackupOutputTest.
     "BackupMaterial",
-    // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
-    // Plaintext that composite_v1::seal safe_serializes into the
-    // UnifiedSigncryption payload.
-    "CompositeEnvelope",
-    // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
-    // What every signature of a composite signcryption covers. Signed, never
-    // stored or transmitted, so no artifact holds it. The generator pins a rev,
-    // so the type has to reach main before a fixture can be produced for it.
-    "CompositeSigncryptionPayload",
-    // The versioned mirror of VerfKeySet; see its `try_convert` there.
-    // TODO(zama-ai/kms-internal#3168): needs its own fixture once the follow-up
-    // actually writes a key set to storage and then VerfKeySetRepr should be made private.
-    // The generator pins a rev, so the type has to reach main before a fixture can be produced for it.
+    // The versioned mirror of VerfKeySet, reached through VerfKeySet's `try_convert`.
+    // Covered via VerfKeySetTest.
     "VerfKeySetRepr",
     // Field of RecoveryValidationMaterial.payload.
     // Covered via RecoveryValidationMaterialTest.

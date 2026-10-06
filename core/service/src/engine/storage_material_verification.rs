@@ -33,6 +33,7 @@
 //! no digest) is checked for presence only. Private context data is deserialized to verify that
 //! each context uses its declared ID as its storage handle.
 
+use crate::backup::BACKUP_SIGNING_SCHEMES;
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signing::composite::{scheme_bound_preimage, verify_scheme_bound_entries};
@@ -40,7 +41,9 @@ use crate::cryptography::signing::ecdsa::{
     PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
 };
 use crate::cryptography::signing::identity::NodeSigningIdentity;
-use crate::cryptography::signing::{SigningSchemeType, StoredTypedSignature, VerfKeySet};
+use crate::cryptography::signing::{
+    Signature, SigningSchemeType, StoredTypedSignature, VerfKeySet, unified_verify,
+};
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
     DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, classify_current_public_material,
@@ -235,18 +238,22 @@ where
     Ok(())
 }
 
-/// Verify all recovery validation material loaded from the backup vault against the node's private
-/// signing key. Recovery mode deliberately does not call this helper: its verification key came
-/// from public storage and would not provide an independent trust root.
+/// Verify all recovery validation material loaded from the backup vault against the node's own
+/// signing identity. Recovery mode deliberately does not call this helper: its verification keys
+/// came from public storage and would not provide an independent trust root.
 fn verify_recovery_material(
     validation_material: &HashMap<RequestId, RecoveryValidationMaterial>,
-    signing_key: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
-    let verf_key = PublicSigKey::from_sk(signing_key);
+    if validation_material.is_empty() {
+        return Ok(());
+    }
+    let verf_keys = VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)
+        .map_err(|e| anyhow::anyhow!("Cannot verify recovery validation material: {e}"))?;
     for (context_id, material) in validation_material {
-        if !material.validate(&verf_key) {
-            anyhow::bail!("Invalid recovery validation material for context ID {context_id}");
-        }
+        material.validate(&verf_keys).map_err(|e| {
+            anyhow::anyhow!("Invalid recovery validation material for context ID {context_id}: {e}")
+        })?;
     }
     Ok(())
 }
@@ -291,7 +298,7 @@ where
             }
             #[expect(deprecated)]
             PubDataType::RecoveryMaterial => {
-                verify_recovery_material(recovery_material, identity.ecdsa())?;
+                verify_recovery_material(recovery_material, identity)?;
             }
             PubDataType::TypedVerfKey => {
                 validate_slots(public_storage, identity, non_legacy_verf_material_slots()).await?;
@@ -1323,7 +1330,9 @@ mod tests {
     use crate::backup::operator::RecoveryValidationMaterial;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-    use crate::cryptography::signatures::{RootSigningSeed, gen_sig_keys};
+    use crate::cryptography::signatures::{
+        RootSigningSeed, gen_sig_keys, test_support::seeded_identity,
+    };
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
     use crate::engine::context::{ContextInfo, SoftwareVersion};
@@ -2130,30 +2139,46 @@ mod tests {
 
     #[test]
     fn recovery_material_signature_verifies_with_private_signing_key() {
-        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(170));
-        let material = test_recovery_material(&signing_key);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(170));
+        let material = test_recovery_material(&identity);
         let context_id = material.custodian_context().context_id;
         let materials = HashMap::from([(context_id, material)]);
 
-        verify_recovery_material(&materials, &signing_key)
+        verify_recovery_material(&materials, &identity)
             .expect("recovery material signed by the node must verify");
     }
 
     #[test]
     fn recovery_material_signature_rejects_wrong_private_signing_key() {
-        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(171));
-        let (_wrong_verf_key, wrong_signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(172));
-        let material = test_recovery_material(&signing_key);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(171));
+        let wrong_identity = seeded_identity(&mut AesRng::seed_from_u64(172));
+        let material = test_recovery_material(&identity);
         let context_id = material.custodian_context().context_id;
         let materials = HashMap::from([(context_id, material)]);
 
-        let err = verify_recovery_material(&materials, &wrong_signing_key)
+        let err = verify_recovery_material(&materials, &wrong_identity)
             .expect_err("recovery material signed by another node must be rejected");
         assert!(
             err.to_string()
                 .contains("Invalid recovery validation material"),
             "expected an invalid recovery material error, got: {err}"
         );
+    }
+
+    /// The same ECDSA key is not enough: without its root seed the node cannot derive the
+    /// ML-DSA key the material is also signed under, so it must not boot past this check.
+    #[test]
+    fn recovery_material_rejects_a_seedless_identity() {
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(174));
+        let material = test_recovery_material(&identity);
+        let context_id = material.custodian_context().context_id;
+        let materials = HashMap::from([(context_id, material)]);
+
+        let seedless = NodeSigningIdentity::ecdsa_only(identity.ecdsa().clone());
+        verify_recovery_material(&materials, &seedless)
+            .expect_err("a seedless node must not accept composite recovery material");
+        verify_recovery_material(&HashMap::new(), &seedless)
+            .expect("a seedless node without recovery material must still boot");
     }
 
     #[test]
@@ -2284,9 +2309,8 @@ mod tests {
     #[test]
     fn private_metadata_scheme_signatures_are_verified() {
         let mut rng = AesRng::seed_from_u64(177);
-        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
-        let identity =
-            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let identity = seeded_identity(&mut rng);
+        let signing_key = identity.ecdsa().clone();
         let schemes = [
             SigningSchemeType::Ecdsa256k1,
             SigningSchemeType::Ed25519,
@@ -2422,7 +2446,7 @@ mod tests {
             &storage,
             &entries,
             &crs_entries,
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
@@ -2443,7 +2467,7 @@ mod tests {
             &storage,
             &entries,
             &HashMap::new(),
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
@@ -2488,7 +2512,7 @@ mod tests {
             &storage,
             &entries,
             &crs_entries,
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
@@ -3035,17 +3059,7 @@ mod tests {
         )
     }
 
-    /// Recovery validation material signed by `signing_key`, keyed by its own context ID, so
-    /// end-to-end tests can pass the recovery check and isolate what they are actually testing.
-    fn recovery_material_for(
-        signing_key: &PrivateSigKey,
-    ) -> HashMap<RequestId, RecoveryValidationMaterial> {
-        let material = test_recovery_material(signing_key);
-        let context_id = material.custodian_context().context_id;
-        HashMap::from([(context_id, material)])
-    }
-
-    fn test_recovery_material(signing_key: &PrivateSigKey) -> RecoveryValidationMaterial {
+    fn test_recovery_material(identity: &NodeSigningIdentity) -> RecoveryValidationMaterial {
         let mut rng = AesRng::seed_from_u64(173);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_decryption_key, backup_enc_key) = encryption
@@ -3062,7 +3076,7 @@ mod tests {
             BTreeMap::new(),
             BTreeMap::new(),
             context,
-            signing_key,
+            identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .expect("test recovery material construction must succeed")

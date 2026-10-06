@@ -15,9 +15,13 @@ pub use crate::cryptography::signing::ecdsa::{
     recover_address_from_ext_signature,
 };
 pub use crate::cryptography::signing::identity::NodeSigningIdentity;
-pub use crate::cryptography::signing::seed::{RootSigningSeed, RootSigningSeedVersions};
+pub use crate::cryptography::signing::seed::{
+    ROOT_SEED_LEN, RootSigningSeed, RootSigningSeedVersions,
+};
+#[cfg(any(test, feature = "testing"))]
+pub use crate::cryptography::signing::test_support;
 pub use crate::cryptography::signing::{
-    HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
+    HasSigningScheme, KeyFingerprint, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
     SigningSchemeTypeVersions, StoredTypedSignature, StoredTypedSignatureVersions,
     UnifiedPublicSigKey, UnifiedPublicSigKeyVersions, VerfKeySet, canonical_schemes,
 };

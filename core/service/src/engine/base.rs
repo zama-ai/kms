@@ -1830,9 +1830,9 @@ pub(crate) mod tests {
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
-    use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{
-        Signature, SigningSchemeType, composite::scheme_bound_preimage, unified_verify,
+        Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
+        test_support::seeded_identity, unified_verify,
     };
     use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
     use crate::{
@@ -1911,8 +1911,8 @@ pub(crate) mod tests {
     #[test]
     fn decryption_scheme_signatures_round_trip() {
         let mut rng = AesRng::seed_from_u64(0xABCD);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let sk = seeded_identity(&mut rng);
+        let pk = sk.verf_key();
         let domain = dummy_domain();
         let handles = vec![vec![0xAAu8; 32]];
         let extra_data = b"extra";
@@ -2018,8 +2018,7 @@ pub(crate) mod tests {
     #[test]
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let sk = seeded_identity(&mut rng);
         let domain = dummy_domain();
 
         let crs_id = RequestId::new_random(&mut rng);
@@ -2097,8 +2096,7 @@ pub(crate) mod tests {
     #[test]
     fn keygen_result_signatures_sign_the_payload() {
         let mut rng = AesRng::seed_from_u64(0x4E67);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let sk = seeded_identity(&mut rng);
         let domain = dummy_domain();
 
         let prep_id = RequestId::new_random(&mut rng);

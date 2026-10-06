@@ -744,6 +744,31 @@ impl TestType for MlKem1024P384PrivateKeyTest {
     }
 }
 
+/// Test metadata for `UnifiedPrivateEncKey` backward compatibility.
+///
+/// `pke_type` is the `Display` name of the `PkeSchemeType` the key is generated under, which
+/// selects the variant the fixture stores.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedPrivateEncKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+    pub pke_type: Cow<'static, str>,
+}
+
+impl TestType for UnifiedPrivateEncKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedPrivateEncKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnifiedSigncryptionTest {
@@ -1248,6 +1273,77 @@ impl TestType for UserDecSignedPayloadTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CompositeEnvelopeTest {
+    pub test_filename: Cow<'static, str>,
+    pub msg: Cow<'static, [u8]>,
+    /// Signing-scheme names, in the order the signatures appear in the envelope.
+    pub schemes: Cow<'static, [Cow<'static, str>]>,
+    /// Signature bytes stored for every scheme in `schemes`.
+    pub signature: Cow<'static, [u8]>,
+}
+
+impl TestType for CompositeEnvelopeTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CompositeEnvelope".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CompositeSigncryptionPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    pub msg: Cow<'static, [u8]>,
+    pub receiver_id: Cow<'static, [u8]>,
+    pub enc_key_digest: Cow<'static, [u8]>,
+}
+
+impl TestType for CompositeSigncryptionPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CompositeSigncryptionPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct VerfKeySetTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+    /// Signing-scheme names that the key set holds a verification key for.
+    pub schemes: Cow<'static, [Cow<'static, str>]>,
+}
+
+impl TestType for VerfKeySetTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "VerfKeySet".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -1270,6 +1366,7 @@ pub enum TestMetadataKMS {
     EpochData(EpochDataTest),
     MlKem1024P384PublicKey(MlKem1024P384PublicKeyTest),
     MlKem1024P384PrivateKey(MlKem1024P384PrivateKeyTest),
+    UnifiedPrivateEncKey(UnifiedPrivateEncKeyTest),
     UnifiedSigncryption(UnifiedSigncryptionTest),
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
@@ -1290,6 +1387,9 @@ pub enum TestMetadataKMS {
     CrsSignedPayload(CrsSignedPayloadTest),
     PublicDecSignedPayload(PublicDecSignedPayloadTest),
     UserDecSignedPayload(UserDecSignedPayloadTest),
+    CompositeEnvelope(CompositeEnvelopeTest),
+    CompositeSigncryptionPayload(CompositeSigncryptionPayloadTest),
+    VerfKeySet(VerfKeySetTest),
 }
 
 /// KMS-grpc metadata

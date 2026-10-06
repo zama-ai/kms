@@ -2196,12 +2196,12 @@ mod tests {
     /// of the list, a request that also asked for ECDSA needs the ECDSA entry too, and
     /// the list may be a superset of what was asked for.
     #[test]
-    fn test_public_decrypt_signatures_per_scheme() {
-        use crate::cryptography::signatures::RootSigningSeed;
+    fn test_public_decrypt_signatures_without_an_eip712_domain() {
+        use crate::cryptography::signatures::test_support::seeded_identity;
 
         let mut rng = AesRng::seed_from_u64(77);
-        let (vk, sk) = gen_sig_keys(&mut rng);
-        let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let identity = seeded_identity(&mut rng);
+        let vk = identity.verf_key();
         let extra_data = vec![9u8; 4];
 
         let payload = PublicDecryptionResponsePayload {

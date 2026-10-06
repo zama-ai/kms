@@ -663,9 +663,9 @@ mod kms_custodian_binary_tests {
     use assert_cmd::Command;
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
-        backup::BACKUP_PKE_SCHEME,
         backup::{
-            KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC,
+            BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
+            SEED_PHRASE_DESC,
             custodian::{
                 InternalCustodianContext, InternalCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
@@ -676,13 +676,15 @@ mod kms_custodian_binary_tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-            signatures::gen_sig_keys,
+            signatures::{VerfKeySet, test_support::seeded_identity},
         },
-        engine::base::derive_request_id,
-        engine::utils::{base64_deserialize, base64_serialize},
+        engine::{
+            base::derive_request_id,
+            utils::{base64_deserialize, base64_serialize},
+        },
     };
     use rand::SeedableRng;
-    use std::{collections::BTreeMap, thread};
+    use std::{collections::BTreeMap, sync::Arc, thread};
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
@@ -829,7 +831,7 @@ mod kms_custodian_binary_tests {
                 cur_res,
                 bc2wrap::serialize(&backup_dec_key).unwrap(),
                 "Decryption did not match expected data for operator {}",
-                operator.verification_key().address(),
+                operator.verification_key().ecdsa().unwrap().address(),
             );
         }
     }
@@ -881,13 +883,13 @@ mod kms_custodian_binary_tests {
         let amount_custodians = setup_msgs.len();
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_identity = Arc::new(seeded_identity(&mut rng));
 
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new_for_sharing(
             setup_msgs.clone(),
-            signing_key.clone(),
+            signing_identity.clone(),
             threshold,
             setup_msgs.len(),
         )
@@ -919,7 +921,7 @@ mod kms_custodian_binary_tests {
             ct_map.clone(),
             commitments.clone(),
             custodian_context,
-            &signing_key,
+            &signing_identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
@@ -931,7 +933,7 @@ mod kms_custodian_binary_tests {
         }
         let recovery_request = InternalRecoveryRequest::new(
             ephemeral_pub_key.clone(),
-            verification_key.clone(),
+            VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES).unwrap(),
             ciphertexts,
         )
         .unwrap();
