@@ -8,7 +8,6 @@ import urllib.request
 
 FAILED = {"failure", "timed_out", "startup_failure"}
 EMOJI = {
-    "success": ":white_check_mark:",
     "cancelled": ":no_entry_sign:",
     "in_progress": ":hourglass_flowing_sand:",
     "queued": ":hourglass_flowing_sand:",
@@ -40,11 +39,7 @@ def outcome(job: dict) -> str:
 
 def rank(result: str) -> int:
     """Returns the sort rank of a job outcome, so failed jobs come first."""
-    if result in FAILED:
-        return 0
-    if result == "success":
-        return 2
-    return 1
+    return 0 if result in FAILED else 1
 
 
 def escape(text: str) -> str:
@@ -53,33 +48,38 @@ def escape(text: str) -> str:
 
 
 def build_payload(jobs: list[dict], run_url: str, own_runner: str) -> dict:
-    """Returns the Slack attachment for the non-skipped jobs in `jobs`.
+    """Returns the Slack attachment that summarizes `jobs`.
 
-    The unfinished job on `own_runner` is the job that posts the summary, so
-    it is left out. Other unfinished jobs are reported as not succeeded.
+    The header counts succeeded, not succeeded and skipped jobs. Below it,
+    every job that did not succeed gets one line, failed jobs first. The
+    unfinished job on `own_runner` is the job that posts the summary, so it is
+    left out. Other unfinished jobs count as not succeeded.
     """
+    skipped = sum(1 for job in jobs if job.get("conclusion") == "skipped")
     reported = [
         job
         for job in jobs
         if job.get("conclusion") != "skipped"
         and not (job.get("conclusion") is None and job.get("runner_name") == own_runner)
     ]
-    reported.sort(key=lambda job: (rank(outcome(job)), short_name(job["name"])))
-    failed = sum(1 for job in reported if outcome(job) != "success")
-    if failed:
-        header = f"<{run_url}|Nightly run>: {failed} of {len(reported)} jobs did not succeed."
-    else:
-        header = f"<{run_url}|Nightly run>: all {len(reported)} jobs succeeded."
-    lines = [header, ""]
-    for job in reported:
+    unsuccessful = sorted(
+        (job for job in reported if outcome(job) != "success"),
+        key=lambda job: (rank(outcome(job)), short_name(job["name"])),
+    )
+    succeeded = len(reported) - len(unsuccessful)
+    counts = (
+        f"{succeeded} succeeded, {len(unsuccessful)} did not succeed, {skipped} skipped"
+    )
+    lines = [f"<{run_url}|Nightly run>: {counts}."]
+    if unsuccessful:
+        lines.append("")
+    for job in unsuccessful:
         result = outcome(job)
         emoji = EMOJI.get(result, ":x:" if result in FAILED else ":grey_question:")
-        line = f"{emoji} <{job['html_url']}|{escape(short_name(job['name']))}>"
-        if result != "success":
-            line += f" ({result})"
-        lines.append(line)
+        name = escape(short_name(job["name"]))
+        lines.append(f"{emoji} <{job['html_url']}|{name}> ({result})")
     return {
-        "color": "danger" if failed or not reported else "good",
+        "color": "danger" if unsuccessful or not reported else "good",
         "title": "Nightly Tests Result",
         "text": "\n".join(lines),
         "mrkdwn_in": ["text"],

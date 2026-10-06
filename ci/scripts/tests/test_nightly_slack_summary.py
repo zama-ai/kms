@@ -48,13 +48,14 @@ class ShortNameTest(unittest.TestCase):
 
 
 class BuildPayloadTest(unittest.TestCase):
-    def test_lists_failures_first_and_omits_skipped_and_own_job(self):
+    def test_lists_unsuccessful_jobs_failures_first(self):
         payload = summary.build_payload(
             [
                 job("main/a", "success"),
                 job("main/b", "cancelled"),
                 job("main/c", "skipped"),
                 job("main/d", "failure"),
+                job("main/late", None, "in_progress", "runner-2"),
                 job("main/notify", None, "in_progress", "own-runner"),
             ],
             RUN_URL,
@@ -64,50 +65,37 @@ class BuildPayloadTest(unittest.TestCase):
         self.assertEqual(
             payload["text"].splitlines(),
             [
-                f"<{RUN_URL}|Nightly run>: 2 of 3 jobs did not succeed.",
+                f"<{RUN_URL}|Nightly run>: 1 succeeded, 3 did not succeed, 1 skipped.",
                 "",
                 ":x: <https://job/main/d|d> (failure)",
                 ":no_entry_sign: <https://job/main/b|b> (cancelled)",
-                ":white_check_mark: <https://job/main/a|a>",
+                ":hourglass_flowing_sand: <https://job/main/late|late> (in_progress)",
             ],
-        )
-
-    def test_reports_unfinished_job_on_other_runner(self):
-        payload = summary.build_payload(
-            [
-                job("main/a", "success"),
-                job("main/late", None, "in_progress", "runner-2"),
-                job("main/notify", None, "in_progress", "own-runner"),
-            ],
-            RUN_URL,
-            "own-runner",
-        )
-        self.assertEqual(payload["color"], "danger")
-        self.assertEqual(
-            payload["text"].splitlines()[2],
-            ":hourglass_flowing_sand: <https://job/main/late|late> (in_progress)",
         )
 
     def test_escapes_reserved_characters_in_name(self):
         payload = summary.build_payload(
-            [job("main/a <b> & c", "success")], RUN_URL, "own-runner"
+            [job("main/a <b> & c", "failure")], RUN_URL, "own-runner"
         )
         self.assertIn("|a &lt;b&gt; &amp; c>", payload["text"])
 
-    def test_all_success_is_good(self):
+    def test_all_success_is_one_good_line(self):
         payload = summary.build_payload(
-            [job("main/a", "success")], RUN_URL, "own-runner"
+            [job("main/a", "success"), job("main/b", "skipped")], RUN_URL, "own-runner"
         )
         self.assertEqual(payload["color"], "good")
-        self.assertTrue(
-            payload["text"].startswith(
-                f"<{RUN_URL}|Nightly run>: all 1 jobs succeeded."
-            )
+        self.assertEqual(
+            payload["text"],
+            f"<{RUN_URL}|Nightly run>: 1 succeeded, 0 did not succeed, 1 skipped.",
         )
 
     def test_no_reported_jobs_is_danger(self):
         payload = summary.build_payload([], RUN_URL, "own-runner")
         self.assertEqual(payload["color"], "danger")
+        self.assertEqual(
+            payload["text"],
+            f"<{RUN_URL}|Nightly run>: 0 succeeded, 0 did not succeed, 0 skipped.",
+        )
 
 
 if __name__ == "__main__":

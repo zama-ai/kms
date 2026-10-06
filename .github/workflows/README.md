@@ -144,7 +144,7 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 | `test-wasm` | `kms` | core-service / CI changes; calls `wasm-testing.yml` |
 | `test-reporter` | — | always; aggregates JUnit reports after PR test jobs complete |
 | `docker-build` | — | PR labeled `docker`; calls `docker-build.yml` |
-| `notify-nightly` | — | scheduled; posts one Slack message with the result of every job in the run, failed jobs first (`ci/scripts/nightly_slack_summary.py`) |
+| `notify-nightly` | — | scheduled; posts one Slack message with job counts and one line per job that did not succeed, failed jobs first (`ci/scripts/nightly_slack_summary.py`); posts a short notice with the run link if the summary fails |
 
 ### `test-core-service` matrix
 

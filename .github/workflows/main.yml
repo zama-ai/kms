@@ -341,9 +341,10 @@ jobs:
 
   ############################################################################
   # Nightly Slack summary
-  # Posts one message with the result of every job in the scheduled run,
-  # failed jobs first. The jobs API also lists the matrix and reusable
-  # workflow jobs, which `needs.<job>.result` only aggregates.
+  # Posts one message with job counts and one line per job that did not
+  # succeed. The jobs API also lists the matrix and reusable workflow jobs,
+  # which `needs.<job>.result` only aggregates. If the summary step fails, a
+  # short notice with the run link takes its place.
   ############################################################################
   notify-nightly:
     name: main/notify-nightly
@@ -376,3 +377,12 @@ jobs:
         run: |
           gh api --paginate --slurp "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" > "${RUNNER_TEMP}/jobs.json"
           python3 ci/scripts/nightly_slack_summary.py "${RUNNER_TEMP}/jobs.json" "${RUN_URL}"
+      - name: Post a notice if the summary failed
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          jq -n --arg text "Nightly test summary failed. See <${RUN_URL}|the run>." '{text: $text}' \
+            | curl --fail-with-body --silent --show-error --max-time 30 \
+                -X POST -H 'Content-type: application/json' --data @- "${SLACK_WEBHOOK}"
