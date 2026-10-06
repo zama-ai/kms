@@ -96,7 +96,7 @@ impl Broadcast for MaliciousBroadcastSender {
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter().await;
-        let mut rng = AesRng::from_entropy();
+        let mut rng = AesRng::seed_from_u64(42);
         match (my_message.clone(), is_sender) {
             (Some(message), true) => {
                 bcast_data.insert(my_role, message.clone());
@@ -226,7 +226,7 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter().await;
-        let mut rng = AesRng::from_entropy();
+        let mut rng = AesRng::seed_from_u64(42);
         let random_message = BroadcastValue::from(Z::sample(&mut rng));
         match (my_message.clone(), is_sender) {
             (Some(message), true) => {
@@ -513,7 +513,7 @@ impl Broadcast for MaliciousBroadcastDoubleVote {
         // "answering", so honest parties keep counting our echoes and votes. ----
         let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter().await;
-        let mut rng = AesRng::from_entropy();
+        let mut rng = AesRng::seed_from_u64(42);
         match (my_message, is_sender) {
             (Some(message), true) => {
                 round1_contributions.insert(my_role, message);
