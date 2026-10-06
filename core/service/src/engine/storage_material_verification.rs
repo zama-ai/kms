@@ -547,6 +547,28 @@ where
         )?;
     }
 
+    // Distinct from a record that carries only an ECDSA entry, which is the
+    // ordinary shape. Every record this release writes or upgrades carries at
+    // least that entry.
+    if signatures.is_empty() {
+        tracing::warn!(
+            "Current {metadata_kind} metadata for id={metadata_id} carries no signatures at all; \
+             nothing but its EIP-712 signature stands behind it"
+        );
+        return Ok(());
+    }
+
+    // The set is derived from the stored entries rather than requested from
+    // outside: at boot there is no request to measure against.
+    let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
+    let canonical = crate::cryptography::signing::composite::canonical_schemes(&stored_schemes)?;
+    if stored_schemes != canonical {
+        anyhow::bail!(
+            "Private {metadata_kind} metadata for id={metadata_id} lists its signatures out of \
+             order or repeats a scheme: has {stored_schemes:?}, expected {canonical:?}"
+        );
+    }
+
     let mut scheme_entries = Vec::new();
     for stored in signatures {
         if stored.scheme != SigningSchemeType::Ecdsa256k1 {
@@ -566,9 +588,6 @@ where
         return Ok(());
     }
 
-    // The set is derived from the stored entries rather than requested from
-    // outside: at boot there is no request to measure against.
-    let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
     let preimage = scheme_bound_preimage(&stored_schemes, payload)?;
     for (scheme, signature) in scheme_entries {
         let keys = VerfKeySet::from_identity(identity, &[scheme]).map_err(|e| {
@@ -2177,6 +2196,81 @@ mod tests {
             .expect_err("a seedless node must not accept composite recovery material");
         verify_recovery_material(&HashMap::new(), &seedless)
             .expect("a seedless node without recovery material must still boot");
+    }
+
+    /// Removing one entry from a multi-scheme record is caught, because the entries
+    /// that survive attest to the set the removed one belonged to. Reordering or
+    /// repeating entries is caught too, so the list a record shows is the list its
+    /// signatures were made over.
+    #[test]
+    fn private_keygen_metadata_rejects_a_tampered_scheme_list() {
+        let mut rng = AesRng::seed_from_u64(177);
+        let identity = seeded_identity(&mut rng);
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let schemes = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            &identity,
+            &schemes,
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("standard keygen metadata construction must succeed");
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(&key_id, inner, &identity)
+            .expect("the record must verify as written");
+        assert_eq!(inner.signatures.len(), 2, "both entries must be present");
+
+        // Dropping the post-quantum entry leaves only the ECDSA one, which signs
+        // the EIP-712 hash and therefore binds no scheme set. This is a residual
+        // gap on `verify_metadata_signatures`, and it still verifies.
+        let mut stripped = inner.clone();
+        stripped
+            .signatures
+            .retain(|entry| entry.scheme == SigningSchemeType::Ecdsa256k1);
+        verify_keygen_metadata_signature(&key_id, &stripped, &identity)
+            .expect("known gap: a record reduced to its ECDSA entry alone still verifies");
+
+        // The strip the binding does catch: the entry that survives is a bound one,
+        // and it attests to a set that no longer matches what the record lists.
+        let mut ecdsa_dropped = inner.clone();
+        ecdsa_dropped
+            .signatures
+            .retain(|entry| entry.scheme != SigningSchemeType::Ecdsa256k1);
+        let err = verify_keygen_metadata_signature(&key_id, &ecdsa_dropped, &identity)
+            .expect_err("a record stripped of its ECDSA entry must not verify as complete");
+        assert!(
+            err.to_string().contains("has been removed"),
+            "the error should name a removed entry as a cause, got: {err}"
+        );
+
+        // Repeating an entry changes the list without changing any signature.
+        let mut repeated = inner.clone();
+        repeated.signatures.push(inner.signatures[0].clone());
+        let err = verify_keygen_metadata_signature(&key_id, &repeated, &identity)
+            .expect_err("a repeated scheme must be rejected");
+        assert!(
+            err.to_string().contains("repeats a scheme"),
+            "the error should name the repeated scheme, got: {err}"
+        );
+
+        // So does listing them out of canonical order.
+        let mut reordered = inner.clone();
+        reordered.signatures.reverse();
+        let err = verify_keygen_metadata_signature(&key_id, &reordered, &identity)
+            .expect_err("an out-of-order scheme list must be rejected");
+        assert!(
+            err.to_string().contains("out of order"),
+            "the error should name the ordering, got: {err}"
+        );
     }
 
     #[test]
