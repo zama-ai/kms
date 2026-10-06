@@ -5,10 +5,9 @@
 //! vectors and the keys that derive from a fixed seed depend on that stream.
 
 use rand::{CryptoRng, Error, RngCore, SeedableRng};
-use tfhe_csprng::generators::aes_ctr::{AesCtrParams, BYTES_PER_BATCH};
+use tfhe_csprng::generators::aes_ctr::BYTES_PER_BATCH;
 use tfhe_csprng::generators::{RandomGenerator, SoftwareRandomGenerator};
-use tfhe_csprng::seeders::{Seed, SeedKind};
-use zeroize::Zeroizing;
+use tfhe_csprng::seeders::Seed;
 
 // TODO(#3255): use a 256-bit seed when `tfhe-csprng` has an audited AES-256 generator.
 /// Size in bytes of the seed of [`AesRng`].
@@ -27,8 +26,6 @@ const _: () = {
 /// `tfhe-csprng` generators do not wipe it.
 pub struct AesRng {
     generator: SoftwareRandomGenerator,
-    // Only `clone` reads the seed.
-    seed: Zeroizing<[u8; SEED_SIZE]>,
     // Number of bytes drawn from the current batch of `BYTES_PER_BATCH` bytes.
     used_bytes: usize,
 }
@@ -64,7 +61,6 @@ impl SeedableRng for AesRng {
         Self {
             // The generator takes the little-endian bytes of a `Seed` as the AES key.
             generator: SoftwareRandomGenerator::new(Seed(u128::from_le_bytes(seed))),
-            seed: Zeroizing::new(seed),
             used_bytes: 0,
         }
     }
@@ -100,26 +96,6 @@ impl Drop for AesRng {
         for _ in 0..BYTES_PER_BATCH {
             // `next`, not `next_byte`: a drop must not panic.
             let _ = self.generator.next();
-        }
-    }
-}
-
-/// A clone returns the same stream as its origin.
-impl Clone for AesRng {
-    fn clone(&self) -> Self {
-        // The generator is not `Clone`: start one from the seed at the same index.
-        let first_index = self
-            .generator
-            .next_table_index()
-            // See `next_byte`: the generator does not reach its bound.
-            .expect("AES-CTR generator reached its output bound");
-        Self {
-            generator: SoftwareRandomGenerator::new(AesCtrParams {
-                seed: SeedKind::Ctr(Seed(u128::from_le_bytes(*self.seed))),
-                first_index,
-            }),
-            seed: self.seed.clone(),
-            used_bytes: self.used_bytes,
         }
     }
 }
@@ -190,33 +166,22 @@ mod tests {
             (128, 128, 128),
             (129, 129, 129),
         ] {
-            let mut rng = AesRng::from_seed(SEED);
-            rng.fill_bytes(&mut vec![0; drawn]);
+            let advanced = || {
+                let mut rng = AesRng::from_seed(SEED);
+                rng.fill_bytes(&mut vec![0; drawn]);
+                rng
+            };
             assert_eq!(
-                rng.clone().next_u64().to_le_bytes(),
+                advanced().next_u64().to_le_bytes(),
                 bytes[u64_offset..u64_offset + 8],
                 "u64 after {drawn} bytes"
             );
             assert_eq!(
-                rng.next_u32().to_le_bytes(),
+                advanced().next_u32().to_le_bytes(),
                 bytes[u32_offset..u32_offset + 4],
                 "u32 after {drawn} bytes"
             );
         }
-    }
-
-    #[test]
-    fn clone_continues_the_same_stream() {
-        let mut rng = AesRng::from_seed(SEED);
-        rng.fill_bytes(&mut [0; 5]);
-        rng.next_u32();
-        let mut clone = rng.clone();
-
-        let (mut expected, mut actual) = ([0u8; 300], [0u8; 300]);
-        rng.fill_bytes(&mut expected);
-        clone.fill_bytes(&mut actual);
-        assert_eq!(expected, actual);
-        assert_eq!(rng.next_u64(), clone.next_u64());
     }
 
     #[test]

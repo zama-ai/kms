@@ -244,12 +244,13 @@ mod tests {
             ChaCha20Rng::seed_from_u64(43),
         )));
         let other_handle = Arc::clone(&source);
-        let mut child = source.fork_rng_128();
-        let mut child_before = child.clone();
+        // A source with the same seeds that does the same fork and no reseed.
         let untouched = RngSource::from_rngs(TaskRngs::new(
-            source.rng_128.lock().unwrap().clone(),
-            source.rng_256.lock().unwrap().clone(),
+            AesRng::seed_from_u64(42),
+            ChaCha20Rng::seed_from_u64(43),
         ));
+        let mut child = source.fork_rng_128();
+        let mut expected_child = untouched.fork_rng_128();
 
         source.reseed().unwrap();
 
@@ -257,7 +258,7 @@ mod tests {
             other_handle.fork_rng_128().next_u64(),
             untouched.fork_rng_128().next_u64()
         );
-        assert_eq!(child.next_u64(), child_before.next_u64());
+        assert_eq!(child.next_u64(), expected_child.next_u64());
     }
 
     #[test]
@@ -323,19 +324,20 @@ mod tests {
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
         let sessions = SessionMaker::new(networking, None, base.rng_source());
-        let mut before_refresh = AesRng::seed_from_u64(42);
-        sessions.reseed_rng().unwrap();
-        assert_ne!(
-            source.rng_128.lock().unwrap().next_u64(),
-            before_refresh.next_u64()
-        );
 
-        let mut expected_parent = source.rng_128.lock().unwrap().clone();
+        // Both instances fork from the one parent, one after the other.
+        let mut expected_parent = AesRng::seed_from_u64(42);
         let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
         assert_eq!(sibling.new_rng().next_u64(), expected.next_u64());
         expected_parent.fill_bytes(&mut [0u8; DISCARD_BYTES]);
         let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
         assert_eq!(base.new_rng().next_u64(), expected.next_u64());
+        expected_parent.fill_bytes(&mut [0u8; DISCARD_BYTES]);
+
+        // A reseed through the session maker changes the next fork of an instance.
+        sessions.reseed_rng().unwrap();
+        let mut without_reseed = AesRng::from_rng(&mut expected_parent).unwrap();
+        assert_ne!(base.new_rng().next_u64(), without_reseed.next_u64());
     }
 
     #[cfg(feature = "insecure")]

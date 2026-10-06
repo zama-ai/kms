@@ -115,19 +115,37 @@ impl<Z: Zero + Clone> PRSSPrimitives<Z> for MaliciousPrssDrop {
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// such that it does the [`PrssInit`] robust version and check honestly BUT lies in all the Next()
 /// The output of the Next functions is derived from the internal rng of this struct.
-#[derive(Clone)]
 pub struct MaliciousPrssHonestInitRobustThenRandom<
     A,
     V,
     Bcast: Broadcast,
     Z: Default + Clone + Serialize,
 > {
+    // Seed of `rng`.
+    seed: u64,
     rng: AesRng,
     agree_random: A,
     vss: V,
     broadcast: Bcast,
     prss_setup: Option<PRSSSetup<Z>>,
     prss_state: Option<PRSSState<Z, Bcast>>,
+}
+
+// `AesRng` is not `Clone`: a clone starts the stream again from the seed.
+impl<A: Clone, V: Clone, Bcast: Broadcast, Z: Default + Clone + Serialize> Clone
+    for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+{
+    fn clone(&self) -> Self {
+        Self {
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
+            agree_random: self.agree_random.clone(),
+            vss: self.vss.clone(),
+            broadcast: self.broadcast.clone(),
+            prss_setup: self.prss_setup.clone(),
+            prss_state: self.prss_state.clone(),
+        }
+    }
 }
 
 impl<
@@ -153,9 +171,11 @@ impl<A: Default, V: Default, Bcast: Broadcast + Default, Z: Default + Clone + Se
     for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     fn default() -> Self {
+        // Fixed seed to make all tests deterministic
+        let seed = 42;
         Self {
-            // Fixed seed to make all tests deterministic
-            rng: AesRng::seed_from_u64(42),
+            seed,
+            rng: AesRng::seed_from_u64(seed),
             agree_random: A::default(),
             vss: V::default(),
             broadcast: Bcast::default(),
@@ -191,7 +211,8 @@ impl<
 
         // Just clone the strategies, and add the new state
         Ok(Self {
-            rng: self.rng.clone(),
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
@@ -225,7 +246,8 @@ impl<
         };
 
         Self {
-            rng: self.rng.clone(),
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
@@ -395,9 +417,9 @@ impl<
         // Deterministically derive seed from sid by xoring the MSB to the LSB
         // of the session id
         let seed = ((sid_u128 >> 64) as u64) ^ (sid_u128 as u64);
-        let rng = AesRng::seed_from_u64(seed);
         MaliciousPrssHonestInitRobustThenRandom {
-            rng,
+            seed,
+            rng: AesRng::seed_from_u64(seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
