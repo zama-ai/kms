@@ -4,6 +4,7 @@ use kms_grpc::{ContextId, EpochId};
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
+use std::sync::Arc;
 use tfhe::FheTypes;
 use tonic::Request;
 use tonic::Response;
@@ -38,7 +39,7 @@ pub trait Kms: BaseKms {
     #[expect(clippy::too_many_arguments)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        identity: &NodeSigningIdentity,
+        identity: Arc<NodeSigningIdentity>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         ct_type: FheTypes,

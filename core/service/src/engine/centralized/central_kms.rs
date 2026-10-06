@@ -532,7 +532,7 @@ pub async fn async_user_decrypt<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    identity: &NodeSigningIdentity,
+    identity: &Arc<NodeSigningIdentity>,
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
@@ -565,7 +565,7 @@ pub async fn async_user_decrypt<
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
-            identity,
+            Arc::clone(identity),
             rng,
             high_level_ct,
             fhe_type,
@@ -878,7 +878,7 @@ impl<
 
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        identity: &NodeSigningIdentity,
+        identity: Arc<NodeSigningIdentity>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheTypes,
@@ -888,7 +888,7 @@ impl<
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
         let signcryption_key = UnifiedSigncryptionKey::new(
-            Arc::new(identity.clone()),
+            identity,
             client_enc_key.clone(),
             client_id.to_vec(),
         );
@@ -1909,7 +1909,7 @@ pub(crate) mod tests {
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            &kms.base_kms.signing_identity().unwrap(),
+            kms.base_kms.signing_identity().unwrap(),
             &mut rng,
             &ct,
             fhe_type,

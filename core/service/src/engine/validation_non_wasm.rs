@@ -2196,7 +2196,7 @@ mod tests {
     /// of the list, a request that also asked for ECDSA needs the ECDSA entry too, and
     /// the list may be a superset of what was asked for.
     #[test]
-    fn test_public_decrypt_signatures_without_an_eip712_domain() {
+    fn test_public_decrypt_signatures_follow_the_requested_schemes() {
         use crate::cryptography::signatures::test_support::seeded_identity;
 
         let mut rng = AesRng::seed_from_u64(77);
