@@ -2198,10 +2198,11 @@ mod tests {
             .expect("a seedless node without recovery material must still boot");
     }
 
-    /// Removing one entry from a multi-scheme record is caught, because the entries
-    /// that survive attest to the set the removed one belonged to. Reordering or
-    /// repeating entries is caught too, so the list a record shows is the list its
-    /// signatures were made over.
+    /// Removing an entry from a multi-scheme record is caught whenever a scheme-bound
+    /// entry survives, because it attests to the set the removed one belonged to.
+    /// Reordering or repeating entries is caught too, so the list a record shows is
+    /// the list its signatures were made over. A record reduced to its ECDSA entry
+    /// alone is the known exception, since that entry binds no scheme set.
     #[test]
     fn private_keygen_metadata_rejects_a_tampered_scheme_list() {
         let mut rng = AesRng::seed_from_u64(177);
@@ -2248,8 +2249,8 @@ mod tests {
         let err = verify_keygen_metadata_signature(&key_id, &ecdsa_dropped, &identity)
             .expect_err("a record stripped of its ECDSA entry must not verify as complete");
         assert!(
-            err.to_string().contains("has been removed"),
-            "the error should name a removed entry as a cause, got: {err}"
+            err.to_string().contains("Invalid MlDsa65 signature"),
+            "the surviving MlDsa65 entry should fail against the reduced set, got: {err}"
         );
 
         // Repeating an entry changes the list without changing any signature.

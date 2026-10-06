@@ -426,8 +426,8 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("party 1")
-                && err.contains("no party published a Ed25519 verification key"),
+            err.contains("party 1 published no verification keys")
+                && err.contains("Ed25519 signature cannot be checked"),
             "the error does not name the missing key: {err}"
         );
     }
