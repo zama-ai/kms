@@ -24,7 +24,6 @@ use crate::runtime::sessions::small_session::SmallSession;
 use crate::small_execution::offline::Preprocessing;
 use crate::tfhe_internals::parameters::DKGParams;
 use crate::tfhe_internals::parameters::TUniformBound;
-use aes_prng::AesRng;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -37,8 +36,9 @@ use algebra::{
 };
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 use tonic::async_trait;
@@ -284,9 +284,18 @@ where
             Z::ONE,
             &mut rng,
         )?[&my_role];
-        for _ in 0..amount {
-            let bit = rng.get_bit() == 1;
-            let secret = if bit { my_share_one } else { my_share_zero };
+        // Each `u64` gives 64 bits, least significant bit first.
+        let mut bits = 0;
+        for i in 0..amount {
+            if i % 64 == 0 {
+                bits = rng.next_u64();
+            }
+            let secret = if bits & 1 == 1 {
+                my_share_one
+            } else {
+                my_share_zero
+            };
+            bits >>= 1;
             res.push(secret);
         }
         self.bit_ctr += amount as u64;

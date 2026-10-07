@@ -131,8 +131,8 @@ impl Visitor<'_> for Ed25519VerfKeyVisitor {
 mod tests {
     use super::*;
     use crate::cryptography::signing::test_support::{exercise_backend, random_seed};
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"EDDSATST";
 

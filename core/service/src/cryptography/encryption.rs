@@ -640,7 +640,6 @@ impl UnifiedCipher {
 #[cfg(test)]
 mod tests {
     use crate::vault::storage::tests::TestType;
-    use aes_prng::AesRng;
     use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
     use kms_lib::cryptography::encryption::{
         Decrypt, Encrypt, Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
@@ -648,6 +647,7 @@ mod tests {
     };
     use kms_lib::cryptography::error::CryptographyError;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn nested_pke_sunshine() {

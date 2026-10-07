@@ -428,12 +428,12 @@ mod tests {
         },
         randomness_check::execute_all_randomness_tests_tight,
     };
-    use aes_prng::AesRng;
     use num_traits::FromPrimitive;
     use paste::paste;
     use proptest::prelude::*;
     use rand::SeedableRng;
     use std::num::Wrapping;
+    use threshold_types::rng::AesRng;
 
     /// Ensures reserved capacity prevents reallocation while adding shares.
     #[test]

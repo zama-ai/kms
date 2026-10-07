@@ -1008,10 +1008,10 @@ mod tests {
         },
         engine::base::derive_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
+    use threshold_types::rng::AesRng;
 
     /// A wire recovery request naming `operator_verf_key` and carrying one backup ciphertext.
     fn recovery_request_naming(

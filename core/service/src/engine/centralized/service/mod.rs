@@ -62,9 +62,9 @@ mod tests {
         engine::centralized::central_kms::RealCentralizedKms,
         vault::storage::ram::RamStorage,
     };
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(

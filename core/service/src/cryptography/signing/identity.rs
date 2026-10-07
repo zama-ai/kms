@@ -150,9 +150,9 @@ mod tests {
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::cryptography::signing::{HasSigningScheme, unified_verify};
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"IDNTTEST";
 

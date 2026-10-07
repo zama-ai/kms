@@ -22,11 +22,11 @@ use crate::{
     },
     engine::base::derive_request_id,
 };
-use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 /// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
 ///

@@ -15,7 +15,6 @@
 //! with element count. * `syndrome_ring` — the per-element unit: committee setup plus compute + decode for one ring
 //! element, by error count.
 
-use aes_prng::AesRng;
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
@@ -25,6 +24,7 @@ use threshold_algebra::{
     sharing::shamir::{InputOp, ShamirSharings},
     structure_traits::Sample,
 };
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 /// Share a random secret at `(n, t)` and corrupt `e` shares. Returns the sharing and the (ordered) party roles that own
