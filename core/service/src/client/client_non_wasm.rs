@@ -196,7 +196,7 @@ async fn read_all_verf_keys<S: StorageReader>(storage: &S) -> anyhow::Result<Opt
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{
-        NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
+        NodeSigningIdentity, compute_eip712_signature, test_support::seeded_identity,
     };
     use crate::cryptography::signing::SigningError;
     use crate::cryptography::signing::composite::sign_result_entries;
@@ -218,12 +218,6 @@ mod tests {
             crs_digest: vec![7u8; 32],
             extra_data: vec![],
         }
-    }
-
-    fn seeded_identity(seed: u64) -> NodeSigningIdentity {
-        let mut rng = AesRng::seed_from_u64(seed);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng))
     }
 
     /// The result the ECDSA entry of every test signature list covers.
@@ -316,7 +310,7 @@ mod tests {
     /// signature to fall back on either.
     #[test]
     fn a_result_with_no_signature_at_all_is_rejected() {
-        let identity = seeded_identity(2);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(2));
         let client = client_for(&identity, &[]);
 
         let err = verify(&client, &[], &payload()).unwrap_err().to_string();
@@ -331,7 +325,7 @@ mod tests {
     /// otherwise any server could drop a requested scheme and still be accepted.
     #[test]
     fn the_legacy_fallback_does_not_satisfy_a_post_quantum_request() {
-        let identity = seeded_identity(13);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(13));
         let client = client_requesting(
             &identity,
             true,
@@ -356,7 +350,7 @@ mod tests {
     /// and covers the payload it was signed over and nothing else.
     #[test]
     fn each_non_ecdsa_entry_is_attributed_and_bound_to_its_payload() {
-        let identity = seeded_identity(3);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(3));
 
         for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
             // Ask for exactly the scheme under test, so a rejection can only come from
@@ -383,7 +377,7 @@ mod tests {
     /// since no signature under it could ever be checked. ECDSA needs no key.
     #[test]
     fn set_signing_schemes_needs_a_key_for_every_non_ecdsa_scheme() {
-        let identity = seeded_identity(21);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(21));
         let composite = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         client_for(&identity, &[])
@@ -410,7 +404,7 @@ mod tests {
     /// that was checked.
     #[test]
     fn an_entry_with_no_known_key_is_rejected() {
-        let identity = seeded_identity(7);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(7));
         let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519];
         // ECDSA identifies the party before Ed25519 encounters its missing key.
         let client = client_requesting(&identity, false, &requested);
@@ -436,7 +430,7 @@ mod tests {
     /// entries and the legacy signature verify.
     #[test]
     fn requested_schemes_cannot_be_stripped() {
-        let identity = seeded_identity(10);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(10));
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
         let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
         // A current node always sends the legacy external signature alongside the
@@ -486,7 +480,7 @@ mod tests {
     /// legacy field beside a valid list entry is not checked at all.
     #[test]
     fn invalid_ecdsa_signatures_are_rejected() {
-        let identity = seeded_identity(18);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(18));
         let client = client_for(&identity, &[]);
         let valid = legacy_external_signature(&identity);
         let other_message = CrsgenVerification::new(&RequestId::zeros(), 65, vec![7u8; 32], vec![]);
@@ -497,7 +491,7 @@ mod tests {
             ("malformed", vec![0u8; 65]),
             (
                 "wrong signer",
-                legacy_external_signature(&seeded_identity(19)),
+                legacy_external_signature(&seeded_identity(&mut AesRng::seed_from_u64(19))),
             ),
             ("wrong message", wrong_message),
         ];
