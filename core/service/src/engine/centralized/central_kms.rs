@@ -55,6 +55,7 @@ use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
+use kms_grpc::rpc_types::PlaintextReceiver;
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
@@ -537,7 +538,7 @@ pub async fn async_user_decrypt<
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
     client_enc_key_bytes: &[u8],
-    client_address: &alloy_primitives::Address,
+    client_address: &PlaintextReceiver,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
@@ -572,7 +573,7 @@ pub async fn async_user_decrypt<
             ct_format,
             req_digest,
             &client_enc_key,
-            client_address.as_ref(),
+            client_address.as_bytes(),
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
             fhe_type: fhe_type as i32,
