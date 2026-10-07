@@ -4,16 +4,13 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::PublicSigKey,
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
     signing::SigningSchemeType,
 };
-use crate::engine::signed_payload::user_dec_payload;
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, ExpectedSigner,
-    RejectedUserDecResponse, ResponseSignatures, SignedPayloads, UserDecRejectReason,
-    UserDecTrustedValidationContext, UserDecryptionInvariants, user_decrypt_eip712_hash,
-    validate_user_decrypt_responses, verify_response_signatures,
+    DSEP_USER_DECRYPTION, Eip712VerificationParams, RejectedUserDecResponse, UserDecRejectReason,
+    UserDecTrustedValidationContext, UserDecryptionInvariants,
+    authenticate_user_decrypt_and_check_meta_data, validate_user_decrypt_responses,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -237,56 +234,29 @@ impl Client {
             )));
         }
 
-        let stored_server_addrs = &self.get_server_addrs();
+        let stored_server_addrs = self.get_server_addrs();
         if stored_server_addrs.len() != 1 {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
-
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)?;
-
-        // NOTE: ID starts at 1
-        let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != cur_verf_key.address() {
-                return Err(anyhow_error_and_log("server address is not consistent"));
-            }
-            server_addr
-        } else {
-            return Err(anyhow_error_and_log("missing server address at ID 1"));
-        };
-
-        // The response must echo the request's extra data whichever signature we go
-        // on to verify below. The EIP-712 signature covers `extraData`, but the raw
-        // ECDSA one does not, so this check has to happen outside the branch.
-        if resp.extra_data != request.extra_data() {
-            return Err(anyhow_error_and_log(
-                ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-            ));
-        }
-
-        let response_bytes = bc2wrap::serialize(&payload)?;
-        verify_response_signatures(
-            &ResponseSignatures {
-                internal: &resp.signature,
-                external: &resp.external_signature,
-                list: &resp.signatures,
-            },
-            &SignedPayloads {
-                dsep: &DSEP_USER_DECRYPTION,
-                internal_bytes: &response_bytes,
-                payload: &user_dec_payload(&response_bytes, &resp.extra_data),
-                eip712_hash: user_decrypt_eip712_hash(&payload, request, eip712_domain)?,
-            },
-            request.signing_schemes(),
-            &ExpectedSigner::Known {
-                // This path handles a single response, whose address was looked up at
-                // party id 1 just above, so that is the party its keys live under too.
-                party_id: 1,
-                address: *expected_server_addr,
-                verf_key: &cur_verf_key,
-            },
+        // A single server, so no other response can outvote it.
+        let trusted_ctx = UserDecTrustedValidationContext::new(
+            &stored_server_addrs,
             &self.scheme_verf_keys,
-        )
-        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
+            request,
+            eip712_domain,
+            Some(0),
+        )?;
+        let (cur_verf_key, _role) = authenticate_user_decrypt_and_check_meta_data(
+            &trusted_ctx,
+            &payload,
+            &resp.signature,
+            &resp.signatures,
+            &Eip712VerificationParams {
+                response_external_signature: &resp.external_signature,
+                response_extra_data: &resp.extra_data,
+                trusted_eip712_domain: eip712_domain,
+            },
+        )?;
 
         let receiver_id = self.client_address.to_vec();
         let unsign_key = UnifiedUnsigncryptionKey::new(
