@@ -640,21 +640,56 @@ fn compute_prss<Z: Ring + PRSSConversions>(
     prss_ctr: u128,
     amount: usize,
 ) -> anyhow::Result<Vec<Z>> {
-    // Independent per-counter elements, assembled in parallel. Element `idx`
-    // uses `ctr = prss_ctr + idx`.
-    (0..amount)
+    // Encrypt eight consecutive counters under each subset key, then accumulate each output separately.
+    // This gives the AES backend more independent blocks without changing the counter encoding or output order.
+    let groups = amount.div_ceil(8);
+    // Rayon counts groups, while the setting counts output values. With the default 1024-value minimum,
+    // each Rayon piece needs at least 128 groups.
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8);
+    (0..groups)
         .into_par_iter()
-        .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
-        .map(|idx| {
+        .with_min_len(min_groups)
+        .flat_map_iter(|group| {
+            let idx = group * 8;
+            let count = (amount - idx).min(8);
             let ctr = prss_ctr + idx as u128;
-            let mut res = Z::ZERO;
-            for (psi_key, f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
-                let psi = psi(psi_key, ctr)?;
-                res += *f_a_at_role * psi;
-            }
-            Ok(res)
+            let result = (|| -> anyhow::Result<[Z; 8]> {
+                let mut sums = [Z::ZERO; 8];
+                for (psi_key, &f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
+                    if count == 8 {
+                        let random =
+                            crate::small_execution::prf::psi_counters::<Z, 8>(psi_key, ctr)?;
+                        for (sum, random) in sums.iter_mut().zip(random) {
+                            *sum += f_a_at_role * random;
+                        }
+                    } else {
+                        // A short final group evaluates only requested counters. Padding could evaluate past
+                        // psi's counter limit.
+                        for (offset, sum) in sums[..count].iter_mut().enumerate() {
+                            *sum += f_a_at_role
+                                * crate::small_execution::prf::psi_iter(
+                                    psi_key,
+                                    ctr + offset as u128,
+                                )?;
+                        }
+                    }
+                }
+                Ok(sums)
+            })();
+            // Stack arrays avoid a Vec allocation per group. Yield one error on failure; otherwise retain
+            // counter order in the final Vec.
+            let (values, error) = match result {
+                Ok(sums) => (Some(sums), None),
+                Err(error) => (None, Some(error)),
+            };
+            values
+                .into_iter()
+                .flatten()
+                .take(count)
+                .map(Ok)
+                .chain(error.map(Err))
         })
-        .collect::<anyhow::Result<Vec<_>>>()
+        .collect()
 }
 
 fn compute_przs<Z: Ring + PRSSConversions>(
@@ -678,21 +713,51 @@ fn compute_przs<Z: Ring + PRSSConversions>(
         }
     }
 
-    (0..amount)
+    // Batch counters at each threshold index; each output keeps its own accumulator and the same subset order.
+    let groups = amount.div_ceil(8);
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8);
+    (0..groups)
         .into_par_iter()
-        .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
-        .map(|idx| {
+        .with_min_len(min_groups)
+        .flat_map_iter(|group| {
+            let idx = group * 8;
+            let count = (amount - idx).min(8);
             let ctr = przs_ctr + idx as u128;
-            let mut res = Z::ZERO;
-            for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold)) {
-                for (j_idx, fa_alpha_j) in coefficients.iter().enumerate() {
-                    let chi = chi(chi_aes, ctr, (j_idx + 1) as u8)?;
-                    res += *fa_alpha_j * chi;
+            let result = (|| -> anyhow::Result<[Z; 8]> {
+                let mut sums = [Z::ZERO; 8];
+                for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold))
+                {
+                    for (j_idx, &fa_alpha_j) in coefficients.iter().enumerate() {
+                        let j = (j_idx + 1) as u8;
+                        if count == 8 {
+                            let random =
+                                crate::small_execution::prf::chi_counters::<Z, 8>(chi_aes, ctr, j)?;
+                            for (sum, random) in sums.iter_mut().zip(random) {
+                                *sum += fa_alpha_j * random;
+                            }
+                        } else {
+                            // Do not pad a short final group: an unused counter could exceed chi's 2^104 limit.
+                            for (offset, sum) in sums[..count].iter_mut().enumerate() {
+                                *sum += fa_alpha_j * chi(chi_aes, ctr + offset as u128, j)?;
+                            }
+                        }
+                    }
                 }
-            }
-            Ok(res)
+                Ok(sums)
+            })();
+            // As in PRSS, keep each group's outputs on the stack and preserve their order in the final vector.
+            let (values, error) = match result {
+                Ok(sums) => (Some(sums), None),
+                Err(error) => (None, Some(error)),
+            };
+            values
+                .into_iter()
+                .flatten()
+                .take(count)
+                .map(Ok)
+                .chain(error.map(Err))
         })
-        .collect::<anyhow::Result<Vec<_>>>()
+        .collect()
 }
 
 #[async_trait]
@@ -1386,6 +1451,214 @@ mod tests {
             }
         }
 
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    // Scalar reference keeps the per-counter traversal independent of the batched implementation.
+    fn compute_prss_scalar<Z: Ring + PRSSConversions>(
+        psi_keys: &[PsiAes],
+        f_a_at_role: &[Z],
+        prss_ctr: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
+        (0..amount)
+            .into_par_iter()
+            .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
+            .map(|idx| {
+                let ctr = prss_ctr + idx as u128;
+                let mut res = Z::ZERO;
+                for (psi_key, f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
+                    let psi = psi(psi_key, ctr)?;
+                    res += *f_a_at_role * psi;
+                }
+                Ok(res)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+    }
+
+    fn compute_przs_scalar<Z: Ring + PRSSConversions>(
+        prfs: &SessionPrfs<Z>,
+        threshold: u8,
+        przs_ctr: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        let threshold = threshold as usize;
+        // No chi evaluations at threshold zero; chunks_exact requires a nonzero size.
+        if threshold == 0 {
+            return Ok(vec![Z::ZERO; amount]);
+        }
+        // Per-set invariants, computed once instead of per element: the products
+        // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
+        // Store one row per subset in a single allocation, in the same order as chi.
+        let mut fa_alpha = Vec::with_capacity(prfs.f_a_at_role.len() * threshold);
+        for f_a_at_role in &prfs.f_a_at_role {
+            for alpha_j in &prfs.alpha_powers[1..threshold + 1] {
+                fa_alpha.push(*f_a_at_role * *alpha_j);
+            }
+        }
+
+        (0..amount)
+            .into_par_iter()
+            .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
+            .map(|idx| {
+                let ctr = przs_ctr + idx as u128;
+                let mut res = Z::ZERO;
+                for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold))
+                {
+                    for (j_idx, fa_alpha_j) in coefficients.iter().enumerate() {
+                        let chi = chi(chi_aes, ctr, (j_idx + 1) as u8)?;
+                        res += *fa_alpha_j * chi;
+                    }
+                }
+                Ok(res)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+    }
+
+    #[tokio::test]
+    async fn test_prepared_batched_matches_scalar() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let initial = setup
+                    .new_prss_session_state(SessionId::from(42), role)
+                    .unwrap();
+                let limit = 1_u128 << 112;
+                // Full groups, every tail length, Rayon splitting, and counter exhaustion. Nonzero starts also
+                // exercise byte carries in AES inputs.
+                for (start, amount) in [
+                    (255, 0),
+                    (255, 1),
+                    (255, 2),
+                    (255, 3),
+                    (255, 4),
+                    (255, 5),
+                    (255, 6),
+                    (255, 7),
+                    (255, 8),
+                    (255, 15),
+                    (255, 16),
+                    (255, 2049),
+                    (limit - 8, 8),
+                    (limit - 8, 9),
+                    (limit - 4, 4),
+                    (limit - 7, 7),
+                    (limit - 3, 4),
+                    (limit - 4, 5),
+                    (limit, 0),
+                    (limit, 1),
+                ] {
+                    let mut scalar = initial.clone();
+                    let mut batched = initial.clone();
+                    scalar.counters.prss_ctr = start;
+                    batched.counters.prss_ctr = start;
+                    let expected = compute_prss_scalar(
+                        &scalar.prfs.psi,
+                        &scalar.prfs.f_a_at_role,
+                        start,
+                        amount,
+                    );
+                    if expected.is_ok() {
+                        scalar.counters.prss_ctr += amount as u128;
+                    }
+                    let actual = batched.prss_next_vec(role, amount).await;
+                    match (expected, actual) {
+                        (Ok(expected), Ok(actual)) => assert_eq!(actual, expected),
+                        (Err(_), Err(_)) => assert_eq!(batched.counters.prss_ctr, start),
+                        mismatch => panic!("start={start}, amount={amount}: {mismatch:?}"),
+                    }
+                    assert_eq!(batched.counters.prss_ctr, scalar.counters.prss_ctr);
+                    assert_eq!(batched.counters.przs_ctr, scalar.counters.przs_ctr);
+                    assert_eq!(batched.counters.mask_ctr, scalar.counters.mask_ctr);
+                }
+                let mut batched = initial.clone();
+                for amount in [0, 4] {
+                    assert!(
+                        AssertUnwindSafe(batched.prss_next_vec(Role::indexed_from_one(2), amount))
+                            .catch_unwind()
+                            .await
+                            .is_err()
+                    );
+                    assert_eq!(batched.counters.prss_ctr, 0);
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    #[tokio::test]
+    async fn test_przs_batched_matches_scalar() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let initial = setup
+                    .new_prss_session_state(SessionId::from(42), role)
+                    .unwrap();
+                let limit = 1_u128 << 104;
+                // Threshold zero must keep producing zero shares without evaluating chi, even at its counter limit.
+                for requested_threshold in 0..=threshold as u8 {
+                    for (start, amount) in [
+                        (255, 0),
+                        (255, 1),
+                        (255, 2),
+                        (255, 3),
+                        (255, 4),
+                        (255, 5),
+                        (255, 6),
+                        (255, 7),
+                        (255, 8),
+                        (255, 15),
+                        (255, 16),
+                        (255, 2049),
+                        (limit - 8, 8),
+                        (limit - 8, 9),
+                        (limit - 4, 4),
+                        (limit - 7, 7),
+                        (limit - 3, 4),
+                        (limit - 4, 5),
+                        (limit, 0),
+                        (limit, 1),
+                    ] {
+                        let mut batched = initial.clone();
+                        batched.counters.przs_ctr = start;
+                        let expected =
+                            compute_przs_scalar(&batched.prfs, requested_threshold, start, amount);
+                        let expected_ctr = if expected.is_ok() {
+                            start + amount as u128
+                        } else {
+                            start
+                        };
+                        let actual = batched
+                            .przs_next_vec(role, requested_threshold, amount)
+                            .await;
+                        match (expected, actual) {
+                            (Ok(expected), Ok(actual)) => assert_eq!(actual, expected),
+                            (Err(_), Err(_)) => {}
+                            mismatch => panic!(
+                                "threshold={requested_threshold}, start={start}, amount={amount}: {mismatch:?}"
+                            ),
+                        }
+                        assert_eq!(batched.counters.przs_ctr, expected_ctr);
+                        assert_eq!(batched.counters.prss_ctr, initial.counters.prss_ctr);
+                        assert_eq!(batched.counters.mask_ctr, initial.counters.mask_ctr);
+                    }
+                }
+            }
+        }
         check::<ResiduePolyF4Z64>().await;
         check::<ResiduePolyF4Z128>().await;
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;

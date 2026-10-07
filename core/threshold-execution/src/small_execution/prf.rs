@@ -158,9 +158,8 @@ pub(crate) fn phi_range(
     Ok(res)
 }
 
-/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi. Sized to the AES-NI /
-/// ARMv8 parallel width so a single batch covers the common degree-8 case, while a stack buffer
-/// (rather than a per-call heap allocation) holds the blocks.
+/// Number of AES blocks encrypted per `encrypt_blocks` call in scalar psi/chi.
+/// One stack buffer covers the degree-eight case; the backend chooses how to parallelize these blocks.
 const AES_BATCH: usize = 8;
 
 #[inline(always)]
@@ -212,6 +211,88 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     }))
 }
 
+/// Evaluates one counter, converting encrypted blocks directly into fixed-size ring coefficients.
+pub(crate) fn psi_iter<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
+    // These rings use one AES block per coefficient. Other shapes use the general encoding and conversion.
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        return psi(pa, ctr);
+    }
+    if ctr >= 1 << 112 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {ctr}."
+        )));
+    }
+
+    // Four or eight coefficients fit in one stack buffer and one encrypt_blocks call.
+    let mut blocks = [AesBlock::default(); AES_BATCH];
+    let blocks = &mut blocks[..Z::EXTENSION_DEGREE];
+    for (coefficient, block) in blocks.iter_mut().enumerate() {
+        block.copy_from_slice(&ctr.to_le_bytes());
+        block[14] = coefficient as u8;
+        block[15] = 0;
+    }
+    pa.aes.encrypt_blocks(blocks);
+
+    // Fill the ring's coefficient array directly, without allocating a conversion buffer.
+    Ok(Z::from_u128_iter(
+        blocks
+            .iter()
+            .map(|block| u128::from_le_bytes((*block).into())),
+    ))
+}
+
+/// Evaluates consecutive counters under one key, preserving the encoding of individual calls to [`psi`].
+/// Returns an error if any counter reaches 2^112. Panics if `COUNTERS` is zero.
+pub(crate) fn psi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    pa: &PsiAes,
+    ctr: u128,
+) -> anyhow::Result<[Z; COUNTERS]> {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    let limit = 1_u128 << 112;
+    if ctr >= limit || COUNTERS as u128 > limit - ctr {
+        let invalid = ctr.max(limit);
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {invalid}."
+        )));
+    }
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        let mut values = [Z::ZERO; COUNTERS];
+        for (offset, value) in values.iter_mut().enumerate() {
+            *value = psi(pa, ctr + offset as u128)?;
+        }
+        return Ok(values);
+    }
+
+    // Nested arrays allow a const counter count without generic const arithmetic. Only the first
+    // COUNTERS * degree blocks are used; both encryption and conversion use stack storage.
+    let mut storage = [[AesBlock::default(); 8]; COUNTERS];
+    let degree = Z::EXTENSION_DEGREE;
+    let blocks = &mut storage.as_flattened_mut()[..COUNTERS * degree];
+    for (offset, output_blocks) in blocks.chunks_exact_mut(degree).enumerate() {
+        for (coefficient, block) in output_blocks.iter_mut().enumerate() {
+            block.copy_from_slice(&(ctr + offset as u128).to_le_bytes());
+            block[14] = coefficient as u8;
+            block[15] = 0;
+        }
+    }
+    // Give the backend the complete group so it can interleave independent AES round chains.
+    // Four counters supply 16 blocks for F4 and 32 for F8.
+    pa.aes.encrypt_blocks(blocks);
+    Ok(std::array::from_fn(|offset| {
+        let first = offset * degree;
+        Z::from_u128_iter(
+            blocks[first..first + degree]
+                .iter()
+                .map(|block| u128::from_le_bytes((*block).into())),
+        )
+    }))
+}
+
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
 pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
@@ -230,11 +311,131 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
     }))
 }
 
+/// Evaluates consecutive PRZS counters at one threshold index, preserving individual [`chi`] encodings.
+/// Returns an error if any counter reaches 2^104. Panics if `COUNTERS` is zero.
+pub(crate) fn chi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    pa: &ChiAes,
+    ctr: u128,
+    j: u8,
+) -> anyhow::Result<[Z; COUNTERS]> {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    let limit = 1_u128 << 104;
+    if ctr >= limit || COUNTERS as u128 > limit - ctr {
+        let invalid = ctr.max(limit);
+        return Err(anyhow_error_and_log(format!(
+            "ctr in chi must be smaller than 2^104 but was {invalid}."
+        )));
+    }
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        let mut values = [Z::ZERO; COUNTERS];
+        for (offset, value) in values.iter_mut().enumerate() {
+            *value = chi(pa, ctr + offset as u128, j)?;
+        }
+        return Ok(values);
+    }
+
+    // Nested arrays allow a const counter count without generic const arithmetic. Only the first
+    // COUNTERS * degree blocks are used; both encryption and conversion use stack storage.
+    let mut storage = [[AesBlock::default(); 8]; COUNTERS];
+    let degree = Z::EXTENSION_DEGREE;
+    let blocks = &mut storage.as_flattened_mut()[..COUNTERS * degree];
+    for (offset, output_blocks) in blocks.chunks_exact_mut(degree).enumerate() {
+        for (coefficient, block) in output_blocks.iter_mut().enumerate() {
+            block.copy_from_slice(&(ctr + offset as u128).to_le_bytes());
+            block[13] = j;
+            block[14] = coefficient as u8;
+            block[15] = 0;
+        }
+    }
+    // Give the backend the complete group so it can interleave independent AES round chains.
+    // Four counters supply 16 blocks for F4 and 32 for F8.
+    pa.aes.encrypt_blocks(blocks);
+    Ok(std::array::from_fn(|offset| {
+        let first = offset * degree;
+        Z::from_u128_iter(
+            blocks[first..first + degree]
+                .iter()
+                .map(|block| u128::from_le_bytes((*block).into())),
+        )
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+
+    #[test]
+    fn four_counters_match_scalar_encoding() {
+        fn check<Z: Ring + PRSSConversions>() {
+            let limit = 1_u128 << 112;
+            for sid in [0, 42] {
+                let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                for start in [0, 255, (1_u128 << 64) - 1, limit - 4] {
+                    let expected = std::array::from_fn(|offset| {
+                        psi::<Z>(&key, start + offset as u128).unwrap()
+                    });
+                    assert_eq!(psi_counters::<Z, 4>(&key, start).unwrap(), expected);
+                    for (offset, expected) in expected.into_iter().enumerate() {
+                        assert_eq!(
+                            psi_iter::<Z>(&key, start + offset as u128).unwrap(),
+                            expected
+                        );
+                    }
+                }
+                assert_eq!(
+                    psi_iter::<Z>(&key, limit - 1).unwrap(),
+                    psi::<Z>(&key, limit - 1).unwrap()
+                );
+                for start in [limit - 3, limit - 1, limit, u128::MAX] {
+                    assert!(psi_counters::<Z, 4>(&key, start).is_err());
+                }
+                for start in [limit, u128::MAX] {
+                    assert!(psi_iter::<Z>(&key, start).is_err());
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>();
+        check::<ResiduePolyF4Z128>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
+        // Degree three uses the scalar fallback, which must retain the same encoding and counter bounds.
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
+
+    #[test]
+    fn four_chi_counters_match_scalar_encoding() {
+        fn check<Z: Ring + PRSSConversions>() {
+            let limit = 1_u128 << 104;
+            for sid in [0, 42] {
+                let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                for j in [1, 4, 255] {
+                    for start in [0, 255, (1_u128 << 64) - 1, limit - 4] {
+                        let expected = std::array::from_fn(|offset| {
+                            chi::<Z>(&key, start + offset as u128, j).unwrap()
+                        });
+                        assert_eq!(chi_counters::<Z, 4>(&key, start, j).unwrap(), expected);
+                    }
+                    for start in [limit - 3, limit - 1, limit, u128::MAX] {
+                        assert!(chi_counters::<Z, 4>(&key, start, j).is_err());
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>();
+        check::<ResiduePolyF4Z128>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
+        // Other extension degrees use the scalar fallback with the same threshold byte and counter bounds.
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
 
     /// Single-value convenience wrapper over [`phi_range`] used by the phi tests.
     fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
