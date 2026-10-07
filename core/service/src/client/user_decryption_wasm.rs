@@ -25,11 +25,9 @@ use algebra::{
     structure_traits::{BaseRing, ErrorCorrect, Ring},
 };
 use alloy_sol_types::Eip712Domain;
-use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse};
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
-use kms_grpc::solidity_types::UserDecryptionLinker;
+use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
 use std::num::Wrapping;
 use std::sync::Arc;
 use tfhe::FheTypes;
@@ -294,7 +292,7 @@ impl Client {
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
 
-        let receiver_id = self.client_address.to_vec();
+        let receiver_id = self.client_address.as_bytes().to_vec();
         let unsign_key = UnifiedUnsigncryptionKey::new(
             Arc::new(dec_key.clone()),
             enc_key.clone(),
@@ -691,7 +689,7 @@ impl Client {
             };
         let num_parties = trusted_ctx.num_parties();
 
-        let client_id = self.client_address.to_vec();
+        let client_id = self.client_address.as_bytes().to_vec();
         // Shared across the loop below so the private key is not copied per
         // response.
         let dec_key = Arc::new(dec_key.clone());
@@ -844,7 +842,7 @@ impl Client {
 pub struct TestingUserDecryptionTranscript {
     // client
     pub(crate) server_addrs: std::collections::HashMap<u32, alloy_primitives::Address>,
-    pub(crate) client_address: alloy_primitives::Address,
+    pub(crate) client_address: PlaintextReceiver,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
     pub(crate) params: threshold_execution::tfhe_internals::parameters::DKGParams,
@@ -903,7 +901,7 @@ pub(crate) struct StableExpectedPlaintext {
 pub(crate) struct StableUserDecryptionTestVector {
     /// FHE parameter name accepted by `new_client` (`"test"` or `"default"`).
     pub fhe_parameter: String,
-    /// Client (wallet) address, EIP-55 checksummed.
+    /// Client (wallet) address: EIP-55 checksummed, or base58 for a Solana key.
     pub client_address: String,
     /// KMS server identities.
     pub server_addrs: Vec<StableServerIdAddr>,
@@ -1002,7 +1000,7 @@ impl TestingUserDecryptionTranscript {
 
         Ok(StableUserDecryptionTestVector {
             fhe_parameter: fhe_parameter.to_string(),
-            client_address: self.client_address.to_checksum(None),
+            client_address: self.client_address.to_string(),
             server_addrs,
             threshold: (self.degree > 0).then_some(self.degree),
             request: ParsedUserDecryptionRequestHex::from(&parsed),
@@ -1030,7 +1028,7 @@ impl CiphertextHandle {
 pub struct ParsedUserDecryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     signature: Option<alloy_primitives::Signature>,
-    client_address: alloy_primitives::Address,
+    client_address: PlaintextReceiver,
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
@@ -1054,7 +1052,7 @@ impl ParsedUserDecryptionRequest {
     #[cfg(test)]
     pub(crate) fn new(
         signature: Option<alloy_primitives::Signature>,
-        client_address: alloy_primitives::Address,
+        client_address: impl Into<PlaintextReceiver>,
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
@@ -1063,7 +1061,7 @@ impl ParsedUserDecryptionRequest {
     ) -> Self {
         Self {
             signature,
-            client_address,
+            client_address: client_address.into(),
             enc_key,
             ciphertext_handles,
             eip712_verifying_contract,
@@ -1120,9 +1118,8 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
             .map(|buf| alloy_primitives::Signature::try_from(buf.as_slice()))
             .transpose()
             .map_err(|e| JsError::new(&e.to_string()))?;
-        let client_address =
-            alloy_primitives::Address::parse_checksummed(&req_hex.client_address, None)
-                .map_err(|e| JsError::new(&e.to_string()))?;
+        let client_address = PlaintextReceiver::parse(&req_hex.client_address)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
                 .map_err(|e| JsError::new(&e.to_string()))?;
@@ -1170,7 +1167,7 @@ impl From<&ParsedUserDecryptionRequest> for ParsedUserDecryptionRequestHex {
                 .signature
                 .as_ref()
                 .map(|sig| hex::encode(sig.as_bytes())),
-            client_address: value.client_address.to_checksum(None),
+            client_address: value.client_address.to_string(),
             enc_key: hex::encode(&value.enc_key),
             ciphertext_handles: value
                 .ciphertext_handles
@@ -1241,8 +1238,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
 
-        let client_address =
-            alloy_primitives::Address::parse_checksummed(&value.client_address, None)?;
+        let client_address = PlaintextReceiver::parse(&value.client_address)?;
 
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
@@ -1266,37 +1262,19 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
     }
 }
 
-/// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
+/// Computes the link of `req` under `domain`, as
+/// [PlaintextReceiver::user_decryption_link] defines it.
 /// TODO(#2781) move to signatures module
 pub fn compute_link(
     req: &ParsedUserDecryptionRequest,
     domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    // check consistency
-    let handles = req
-        .ciphertext_handles
-        .iter()
-        .enumerate()
-        .map(|(idx, c)| {
-            if c.0.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {idx} too long: {} bytes (max 32)",
-                    c.0.len()
-                );
-            }
-            Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(&c.0))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let linker = UserDecryptionLinker {
-        publicKey: req.enc_key.clone().into(),
-        handles,
-        userAddress: req.client_address,
-    };
     // TODO(#2781) ensure s is normalized!!!
-    let link = linker.eip712_signing_hash(domain).to_vec();
-
-    Ok(link)
+    req.client_address.user_decryption_link(
+        &req.enc_key,
+        req.ciphertext_handles.iter().map(|c| c.0.as_slice()),
+        domain,
+    )
 }
 
 /// Helper method for combining reconstructed messages after decryption.
