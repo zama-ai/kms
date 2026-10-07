@@ -1247,7 +1247,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_bad_n_t() {
+    fn custodian_validation_new_fails_with_bad_n_t() {
         // 1 is not less than 2/2
         let result = validate_custodian_messages(vec![], 1, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
@@ -1261,21 +1261,21 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_zero_t() {
+    fn custodian_validation_new_fails_with_zero_t() {
         let result = validate_custodian_messages(vec![], 0, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("t cannot be 0"));
     }
 
     #[test]
-    fn operator_new_fails_with_zero_n() {
+    fn custodian_validation_new_fails_with_zero_n() {
         let result = validate_custodian_messages(vec![], 1, 0, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("n cannot be 0"));
     }
 
     #[test]
-    fn operator_new_fails_with_insufficient_messages() {
+    fn custodian_validation_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_header() {
+    fn custodian_validation_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1321,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_timestamp_past() {
+    fn custodian_validation_timestamp_in_the_past() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1349,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_timestamp_future() {
+    fn custodian_validation_timestamp_in_the_future() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1378,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_timestamp_validation() {
+    fn custodian_validation_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1403,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_role() {
+    fn custodian_validation_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1434,7 +1434,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_duplicate_roles() {
+    fn custodian_validation_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
