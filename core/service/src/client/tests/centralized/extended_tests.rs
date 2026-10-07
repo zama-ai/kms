@@ -1,6 +1,7 @@
 use crate::client::tests::centralized::crs_gen_tests::crs_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::decryption_centralized;
 use crate::client::tests::centralized::user_decryption_tests::user_decryption_centralized;
+use crate::client::tests::common::TestUser;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::engine::base::derive_request_id;
@@ -112,6 +113,7 @@ async fn default_user_decryption_centralized(
         },
         parallelism,
         secure,
+        TestUser::Evm,
     )
     .await
 }
@@ -150,6 +152,7 @@ async fn default_user_decryption_centralized_precompute_sns(
         },
         parallelism,
         secure,
+        TestUser::Evm,
     )
     .await
 }
