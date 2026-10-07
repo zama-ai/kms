@@ -147,11 +147,11 @@ pub fn get_batch_param_glwe_key_gen(
 mod tests {
     use std::collections::HashMap;
 
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use num_integer::Integer;
     use rand::SeedableRng;
     use tfhe::shortint::parameters::{GlweDimension, PolynomialSize};
+    use threshold_types::rng::AesRng;
 
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
     use crate::{

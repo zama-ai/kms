@@ -488,13 +488,13 @@ pub(crate) async fn key_gen_background<
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeyGenPreprocRequest},
         rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use std::collections::HashMap;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         cryptography::signatures::PublicSigKey,

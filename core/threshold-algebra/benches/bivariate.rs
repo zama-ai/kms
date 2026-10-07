@@ -1,10 +1,10 @@
-use aes_prng::AesRng;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_algebra::{
     bivariate::BivariatePoly, galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Sample,
 };
+use threshold_types::rng::AesRng;
 
 const DEGREES: [usize; 3] = [1, 4, 13];
 

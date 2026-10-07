@@ -27,8 +27,6 @@ use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum;
 #[cfg(any(test, feature = "testing"))]
 use crate::{runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions};
-#[cfg(any(test, feature = "testing"))]
-use aes_prng::AesRng;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -57,6 +55,8 @@ use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
 use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use thread_handles::spawn_compute_bound;
+#[cfg(any(test, feature = "testing"))]
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
@@ -1351,7 +1351,6 @@ mod tests {
         runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         tests::ensure_test_data_setup,
     };
-    use aes_prng::AesRng;
     use algebra::{
         base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
@@ -1370,6 +1369,7 @@ mod tests {
         prelude::{FheEncrypt, SquashNoise},
     };
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
 

@@ -31,7 +31,6 @@ use crate::keygen::{
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
-use aes_prng::AesRng;
 use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use core::str;
@@ -68,6 +67,7 @@ use strum::VariantNames;
 use strum_macros::{Display, EnumString};
 use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
+use threshold_types::rng::AesRng;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;

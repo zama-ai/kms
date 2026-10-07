@@ -107,9 +107,9 @@ pub async fn init_impl<
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::RequestId;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use super::*;
     use crate::{

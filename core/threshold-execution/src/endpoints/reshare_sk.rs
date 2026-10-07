@@ -912,7 +912,6 @@ mod tests {
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
     };
-    use aes_prng::AesRng;
     use algebra::{
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
@@ -928,6 +927,7 @@ mod tests {
     use tfhe::prelude::Tagged;
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     /// The reshare-test keyset, generated once (deterministically) and shared by
