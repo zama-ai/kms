@@ -17,7 +17,6 @@ use super::requests::{
 };
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
-use aes_prng::AesRng;
 use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::structure_traits::{
@@ -86,6 +85,7 @@ use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter};
 use threshold_networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 use threshold_types::{

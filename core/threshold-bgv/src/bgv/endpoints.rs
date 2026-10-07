@@ -8,7 +8,6 @@ use crate::bgv::runtime::BGVTestRuntime;
 use crate::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
-use aes_prng::AesRng;
 use algebra::sharing::share::Share;
 use hashing::serialize_hash_element;
 use itertools::Itertools;
@@ -21,6 +20,7 @@ use threshold_execution::runtime::sessions::{
     small_session::SmallSession,
 };
 use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use threshold_types::session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES, SessionId};
 

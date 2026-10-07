@@ -719,8 +719,8 @@ where
                 |(chunk_idx, out)| -> anyhow::Result<()> {
                     let lo = chunk_idx * chunk;
                     for (subset, phi_aes) in prfs.prss_subsets.iter().zip(prfs.phi.iter()) {
-                        // Reuse a local coefficient across the output loop. Reading
-                        // subset.f_a there made LLVM reload it for every output.
+                        // Reuse a local coefficient across the output loop to stop the compiler reloading `subset.f_a`
+                        // for every output.
                         let f_a = subset.f_a;
                         // One pipelined AES call for the chunk's counter range. Element `idx`
                         // consumes two distinct phi counters, matching one scalar mask_next().
@@ -1263,7 +1263,6 @@ mod tests {
         },
         small_execution::agree_random::{AbortSecureAgreeRandom, DummyAgreeRandom},
     };
-    use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         randomness_check::execute_all_randomness_tests_loose,
@@ -1281,6 +1280,7 @@ mod tests {
     use std::sync::Arc;
     use test_utils::read_element;
     use tfhe::{FheUint8, set_server_key};
+    use threshold_types::rng::AesRng;
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 
     use tokio::task::JoinSet;
@@ -1659,7 +1659,7 @@ mod tests {
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key));
         runtime.setup_sks(key_shares);
 
-        let mut seed = [0_u8; aes_prng::SEED_SIZE];
+        let mut seed = [0_u8; threshold_types::rng::SEED_SIZE];
         // create sessions for each prss party
         let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = join_all(roles.iter().map(|p| {
             seed[0] = p.one_based() as u8;

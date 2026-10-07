@@ -769,7 +769,6 @@ mod tests {
         util::meta_store::EntryState,
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
-    use aes_prng::AesRng;
     use kms_grpc::{RequestId, kms::v1::SigningSchemeType};
     use kms_grpc::{
         kms::v1::TypedCiphertext,
@@ -779,6 +778,7 @@ mod tests {
     use threshold_execution::{
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
+    use threshold_types::rng::AesRng;
 
     use super::*;
 

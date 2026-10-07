@@ -1,9 +1,9 @@
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
 use std::sync::Arc;
+use threshold_types::rng::AesRng;
 
 const B_SWITCH_SQUASH: u128 = 1u128 << 70;
 use threshold_execution::{

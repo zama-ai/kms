@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
-use aes_prng::AesRng;
 use hashing::hash_element;
 use kms_grpc::{
     ContextId, RequestId,
@@ -18,6 +17,7 @@ use kms_lib::backup::{
     operator::InternalRecoveryRequest,
 };
 use kms_lib::cryptography::signatures::{SigningSchemeType, VerfKeySet};
+use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -294,12 +294,12 @@ pub(crate) fn report_operator_keys(
 mod tests {
     use super::{DSEP_ATTESTED_BACKUP_PK, check_attested_backup_pk};
     use super::{normalized_key_text, parse_expected_operator_keys, report_operator_keys};
-    use aes_prng::AesRng;
     use hashing::hash_element;
     use kms_lib::backup::BACKUP_SIGNING_SCHEMES;
     use kms_lib::cryptography::signatures::{SigningSchemeType, test_support::seeded_verf_key_set};
     use rand::SeedableRng;
     use std::collections::BTreeMap;
+    use threshold_types::rng::AesRng;
 
     /// A key whose digest is pinned by [`REFERENCE_DIGEST`].
     fn reference_public_key() -> Vec<u8> {

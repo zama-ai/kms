@@ -1884,7 +1884,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::engine::rng_source::test_rng_source;
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
@@ -1900,6 +1899,7 @@ mod tests {
         small_execution::prss::PRSSSetup,
     };
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},

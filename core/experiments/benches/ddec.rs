@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use algebra::{
     galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
     structure_traits::Ring,
@@ -19,6 +18,7 @@ use threshold_execution::{
     },
 };
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

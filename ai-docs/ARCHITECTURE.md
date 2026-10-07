@@ -189,10 +189,13 @@ The service crate is the main surface area. Key subdirectories under
 ### Task randomness
 
 [`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
-RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. `AesRng`
+([rng.rs](../core/threshold-types/src/rng.rs)) runs AES-128 in counter mode through
+`tfhe-csprng` and wipes its key on drop. A fork never
 carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
 wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
-through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each
+through `Arc`. Each task receives an owned RNG with a separate seed. After a fork, the parent
+discards 256 bytes of output, so the seed does not stay in its buffer. Initialization seeds each
 parent from an independent draw, which combines OS entropy with entropy from the configured
 security module. Refresh also mixes output from the existing parents. Entropy failures return
 errors and leave both parents unchanged. Refresh logs report success or failure without seed
@@ -270,6 +273,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
   the running or succeeded attempt, and redoes a failed one, just like the async
   variants.
+- **Noise-flooded user decryption** — Each party masks its partial decryption
+  to protect its key share before signcrypting the result for the user. The epoch's
+  PRSS setup and each ciphertext's session ID let that party derive the mask locally.
+  This path needs no network session. Public decryption and bit-decomposition user
+  decryption use network sessions.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched via
