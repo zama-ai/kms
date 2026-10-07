@@ -477,7 +477,7 @@ mod tests {
 
     /// ECDSA signatures must parse and authenticate the expected signer and message, both
     /// as the list entry and, for a node from before the list, as the legacy field. A
-    /// legacy field beside a valid list entry is not checked at all.
+    /// legacy field beside a valid list entry has to equal that entry.
     #[test]
     fn invalid_ecdsa_signatures_are_rejected() {
         let identity = seeded_identity(&mut AesRng::seed_from_u64(18));
@@ -525,14 +525,38 @@ mod tests {
             .to_string();
         assert!(err.contains("belongs to no known party"), "{err}");
 
+        // Beside a valid list entry, the legacy field has to be a copy of that entry.
+        assert_eq!(
+            verify_with_legacy(&client, &list(valid.clone()), &valid, &payload())
+                .unwrap()
+                .0,
+            PARTY
+        );
         for (case, signature) in &invalid {
-            assert_eq!(
-                verify_with_legacy(&client, &list(valid.clone()), signature, &payload())
-                    .unwrap()
-                    .0,
-                PARTY,
-                "a bad {case} legacy field beside a valid list entry"
+            let err = verify_with_legacy(&client, &list(valid.clone()), signature, &payload())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("differs from its ECDSA entry"),
+                "a bad {case} legacy field beside a valid list entry: {err}"
             );
         }
+    }
+
+    /// Entries have to agree on one signing party.
+    #[test]
+    fn mixed_party_entries_are_rejected() {
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(8));
+        let other = seeded_identity(&mut AesRng::seed_from_u64(9));
+        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let client = client_requesting(&identity, true, &requested);
+
+        // Both lists are signed under the whole requested set, so what is left
+        // for the verifier to object to is the two parties
+        let mine = signatures_for(&identity, &requested, &payload());
+        let theirs = signatures_for(&other, &requested, &payload());
+        let signatures = vec![mine[0].clone(), theirs[1].clone()];
+
+        assert!(verify(&client, &signatures, &payload()).is_err());
     }
 }

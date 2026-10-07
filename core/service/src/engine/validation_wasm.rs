@@ -183,9 +183,9 @@ pub(crate) fn user_decrypt_eip712_hash(
 
 /// The signatures one server response carries, whatever kind of result it is.
 ///
-/// A node from 0.15 on carries every signature in `list`, and the deprecated fields
-/// are then ignored. They are only checked for a node from before `list`, which sends
-/// it empty.
+/// A node from 0.15 on carries every signature in `list`. The deprecated fields are
+/// only verified for a node from before `list`, which sends it empty. Beside a
+/// verified ECDSA entry of `list`, a non-empty `external` has to equal that entry.
 pub(crate) struct ResponseSignatures<'a> {
     /// The deprecated raw ECDSA signature over the serialized response payload. Only a
     /// decryption response carries one; every other result kind leaves this empty.
@@ -284,7 +284,8 @@ fn agree(signer: (u32, Address), found: (u32, Address)) -> anyhow::Result<()> {
 ///    Only when `list` is empty, as a node from before it sends, may a deprecated
 ///    field meet a requested ECDSA instead.
 /// 3. When ECDSA was requested: the ECDSA entry of `list`, or for a node from before
-///    `list`, the deprecated fields. Both need the EIP-712 domain.
+///    `list`, the deprecated fields. Both need the EIP-712 domain. Beside an ECDSA
+///    entry, a non-empty `external_signature` has to equal that entry.
 /// 4. Every other requested entry of `list`, against the keys of the party that
 ///    signed. These entries are bound to the scheme set `list` presents, which may be
 ///    a superset of `requested` and may name schemes this release does not know.
@@ -294,7 +295,8 @@ fn agree(signer: (u32, Address), found: (u32, Address)) -> anyhow::Result<()> {
 /// the response is rejected.
 ///
 /// A signature nobody requested carries no weight either way: it is not checked,
-/// whether it is an entry of `list` or one of the deprecated fields.
+/// whether it is an entry of `list` or one of the deprecated fields. The deprecated
+/// internal signature is not checked beside an ECDSA entry of `list` either.
 ///
 /// # Errors
 ///
@@ -393,7 +395,7 @@ fn requested_entries<'a>(
     (ecdsa, scheme_bound)
 }
 
-/// Step 3: ECDSA, as the ECDSA entry of `list` or, for a node from before `list`, the
+/// Step 3: ECDSA, as the ECDSA entry of `list` and, for a node from before `list`, the
 /// deprecated fields. Returns the party that signed.
 fn verify_ecdsa<T>(
     sigs: &ResponseSignatures,
@@ -404,6 +406,12 @@ fn verify_ecdsa<T>(
     let Some((&first, rest)) = ecdsa_entries.split_first() else {
         return verify_legacy_ecdsa(sigs, payloads, expected);
     };
+    if !sigs.external.is_empty() && !ecdsa_entries.contains(&sigs.external) {
+        return Err(anyhow_tracked(
+            "the deprecated external signature of the response differs from its ECDSA entry"
+                .to_string(),
+        ));
+    }
     let recover = |signature: &[u8]| -> anyhow::Result<(u32, Address)> {
         expected.attribute(recover_address_from_eip712_hash(
             &payloads.eip712_hash,
