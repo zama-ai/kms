@@ -48,7 +48,6 @@ jobs:
           {
             echo "PRSS_ARTIFACT_DIR=$artifact_dir"
             echo "CRITERION_HOME=$artifact_dir/criterion"
-            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
           } >> "$GITHUB_ENV"
           lscpu --json > "$artifact_dir/cpu.json"
           uname -a > "$artifact_dir/kernel.txt"
@@ -57,16 +56,20 @@ jobs:
           cargo -V > "$artifact_dir/cargo.txt"
           cp .github/workflows/prss-batching.yml .github/scripts/prepare-prss-batching.sh \
             .github/benchmarks/prss_batching.rs "$artifact_dir/"
+          cp -R .github/benchmarks/prss-patches "$artifact_dir/"
           jq -n --arg flags "$RUSTFLAGS" --arg min "$MPC_PRSS_PAR_MIN_CHUNK" \
-            '{rustflags: $flags, minimum_output_values: $min, rayon_threads: [1,56], variants: ["scalar","group2","group4","group8"], samples: 20, warmup_seconds: 1, measurement_seconds: 3}' \
+            --rawfile variants "$artifact_dir/variants.txt" \
+            '{rustflags: $flags, minimum_output_values: $min, rayon_threads: [1,56], variants: ($variants | split("\n") | map(select(length > 0))), samples: 20, warmup_seconds: 1, measurement_seconds: 3}' \
             > "$artifact_dir/settings.json"
           cargo install critcmp --version 0.1.8 --locked
-      - name: Validate, build and preserve all four executables before timing
+      - name: Validate, build and preserve all executables before timing
         shell: bash
         run: |
           set -euo pipefail
-          for variant in scalar group2 group4 group8; do
+          while IFS= read -r variant; do
             manifest="$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.toml"
+            # Archived workspaces share package identities. Separate targets prevent reuse of another variant's crates.
+            export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/prss-batching/$variant"
             cargo test --manifest-path "$manifest" -p threshold-execution --lib --features testing \
               small_execution::pr -- --test-threads=4 > "$PRSS_ARTIFACT_DIR/$variant-tests.log" 2>&1
             cargo bench --locked --manifest-path "$manifest" -p threshold-execution \
@@ -82,7 +85,7 @@ jobs:
               > "$PRSS_ARTIFACT_DIR/$variant-dependency-features.txt"
             cmp "$PRSS_ARTIFACT_DIR/sources/scalar/Cargo.lock" "$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.lock"
             tar -czf "$PRSS_ARTIFACT_DIR/$variant-source.tar.gz" -C "$PRSS_ARTIFACT_DIR/sources" "$variant"
-          done
+          done < "$PRSS_ARTIFACT_DIR/variants.txt"
           sha256sum "$PRSS_ARTIFACT_DIR/"*-bench > "$PRSS_ARTIFACT_DIR/executables.sha256"
       - name: Measure saved binaries sequentially
         shell: bash
@@ -91,16 +94,17 @@ jobs:
           sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
           date -u '+%Y-%m-%dT%H:%M:%SZ' > "$PRSS_ARTIFACT_DIR/started-at.txt"
           for threads in 1 56; do
-            for variant in scalar group2 group4 group8; do
+            baselines=()
+            while IFS= read -r variant; do
               baseline="x86-$variant-t$threads"
+              baselines+=("$baseline")
               RAYON_NUM_THREADS="$threads" "$PRSS_ARTIFACT_DIR/$variant-bench" --bench \
                 --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline "$baseline" \
                 '^prss/f4_z(64|128)/parties_(4_threshold_1|13_threshold_4)/(prss_next/30000|przs_next/10000|triple_inputs/10000)$' \
                 > "$PRSS_ARTIFACT_DIR/$baseline.log" 2>&1
               critcmp --target-dir "$PRSS_ARTIFACT_DIR" --export "$baseline" > "$PRSS_ARTIFACT_DIR/$baseline.json"
-            done
-            critcmp --target-dir "$PRSS_ARTIFACT_DIR" "x86-scalar-t$threads" "x86-group2-t$threads" \
-              "x86-group4-t$threads" "x86-group8-t$threads" > "$PRSS_ARTIFACT_DIR/comparison-t$threads.txt"
+            done < "$PRSS_ARTIFACT_DIR/variants.txt"
+            critcmp --target-dir "$PRSS_ARTIFACT_DIR" "${baselines[@]}" > "$PRSS_ARTIFACT_DIR/comparison-t$threads.txt"
           done
           sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
           date -u '+%Y-%m-%dT%H:%M:%SZ' > "$PRSS_ARTIFACT_DIR/completed-at.txt"
@@ -114,7 +118,9 @@ jobs:
           host=$(rustc -Vv | sed -n 's/^host: //p')
           llvm_bin="$(rustc --print sysroot)/lib/rustlib/$host/bin"
           "$llvm_bin/llvm-objdump" --version > "$PRSS_ARTIFACT_DIR/disassembler.txt"
-          for variant in scalar group2 group4 group8; do
+          # Preparation can fail before the variant list exists; preserve any earlier failure without another error.
+          if [[ ! -f "$PRSS_ARTIFACT_DIR/variants.txt" ]]; then exit 0; fi
+          while IFS= read -r variant; do
             executable="$PRSS_ARTIFACT_DIR/$variant-bench"
             if [[ ! -f "$executable" ]]; then continue; fi
             "$llvm_bin/llvm-nm" --demangle --numeric-sort --print-size "$executable" \
@@ -122,7 +128,7 @@ jobs:
             "$llvm_bin/llvm-objdump" --disassemble --demangle --no-show-raw-insn "$executable" \
               | gzip > "$PRSS_ARTIFACT_DIR/$variant-disassembly.asm.gz"
             sha256sum "$executable" > "$PRSS_ARTIFACT_DIR/$variant-disassembly.sha256"
-          done
+          done < "$PRSS_ARTIFACT_DIR/variants.txt"
           if [[ -f "$PRSS_ARTIFACT_DIR/executables.sha256" ]]; then
             sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
           fi
