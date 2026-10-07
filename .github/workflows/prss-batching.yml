@@ -1,0 +1,136 @@
+# TEMP: REMOVE BEFORE MERGE. PRSS/PRZS counter-group investigation, not a permanent benchmark workflow.
+name: prss-batching
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  compare:
+    permissions:
+      contents: read
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache
+    timeout-minutes: 240
+    env:
+      # Same flags for all variants; record the compiler and generated instructions rather than assume AES-NI selection.
+      RUSTFLAGS: '-C debuginfo=0'
+      CARGO_BUILD_JOBS: '16'
+      CARGO_INCREMENTAL: '0'
+      MPC_PRSS_PAR_MIN_CHUNK: '1024'
+      RAYON_NUM_THREADS: '56'
+    steps:
+      - uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read pinned toolchain
+        shell: bash
+        run: |
+          version=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: llvm-tools-preview
+          rust-cache: 'false'
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: prss-batching
+      - name: Prepare sources and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-batching"
+          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir"
+          {
+            echo "PRSS_ARTIFACT_DIR=$artifact_dir"
+            echo "CRITERION_HOME=$artifact_dir/criterion"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+          } >> "$GITHUB_ENV"
+          lscpu --json > "$artifact_dir/cpu.json"
+          uname -a > "$artifact_dir/kernel.txt"
+          rustc -Vv > "$artifact_dir/compiler.txt"
+          rustc --print cfg > "$artifact_dir/rustc-cfg.txt"
+          cargo -V > "$artifact_dir/cargo.txt"
+          cp .github/workflows/prss-batching.yml .github/scripts/prepare-prss-batching.sh \
+            .github/benchmarks/prss_batching.rs "$artifact_dir/"
+          jq -n --arg flags "$RUSTFLAGS" --arg min "$MPC_PRSS_PAR_MIN_CHUNK" \
+            '{rustflags: $flags, minimum_output_values: $min, rayon_threads: [1,56], variants: ["scalar","group2","group4","group8"], samples: 20, warmup_seconds: 1, measurement_seconds: 3}' \
+            > "$artifact_dir/settings.json"
+          cargo install critcmp --version 0.1.8 --locked
+      - name: Validate, build and preserve all four executables before timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in scalar group2 group4 group8; do
+            manifest="$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.toml"
+            cargo test --manifest-path "$manifest" -p threshold-execution --lib --features testing \
+              small_execution::pr -- --test-threads=4 > "$PRSS_ARTIFACT_DIR/$variant-tests.log" 2>&1
+            cargo bench --locked --manifest-path "$manifest" -p threshold-execution \
+              --features testing --bench prss_batching --no-run --message-format=json \
+              > "$PRSS_ARTIFACT_DIR/$variant-build.jsonl" 2> "$PRSS_ARTIFACT_DIR/$variant-build.log"
+            executable=$(jq -ser '[.[] | select(.reason == "compiler-artifact" and .target.name == "prss_batching")
+              | .executable | select(. != null)] | unique
+              | if length == 1 then .[0] else error("expected one benchmark executable") end' \
+              "$PRSS_ARTIFACT_DIR/$variant-build.jsonl")
+            cp "$executable" "$PRSS_ARTIFACT_DIR/$variant-bench"
+            "$PRSS_ARTIFACT_DIR/$variant-bench" --test > "$PRSS_ARTIFACT_DIR/$variant-smoke.log" 2>&1
+            cargo tree --locked --manifest-path "$manifest" -p threshold-execution -F testing -e features \
+              > "$PRSS_ARTIFACT_DIR/$variant-dependency-features.txt"
+            cmp "$PRSS_ARTIFACT_DIR/sources/scalar/Cargo.lock" "$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.lock"
+            tar -czf "$PRSS_ARTIFACT_DIR/$variant-source.tar.gz" -C "$PRSS_ARTIFACT_DIR/sources" "$variant"
+          done
+          sha256sum "$PRSS_ARTIFACT_DIR/"*-bench > "$PRSS_ARTIFACT_DIR/executables.sha256"
+      - name: Measure saved binaries sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > "$PRSS_ARTIFACT_DIR/started-at.txt"
+          for threads in 1 56; do
+            for variant in scalar group2 group4 group8; do
+              baseline="x86-$variant-t$threads"
+              RAYON_NUM_THREADS="$threads" "$PRSS_ARTIFACT_DIR/$variant-bench" --bench \
+                --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline "$baseline" \
+                '^prss/f4_z(64|128)/parties_(4_threshold_1|13_threshold_4)/(prss_next/30000|przs_next/10000|triple_inputs/10000)$' \
+                > "$PRSS_ARTIFACT_DIR/$baseline.log" 2>&1
+              critcmp --target-dir "$PRSS_ARTIFACT_DIR" --export "$baseline" > "$PRSS_ARTIFACT_DIR/$baseline.json"
+            done
+            critcmp --target-dir "$PRSS_ARTIFACT_DIR" "x86-scalar-t$threads" "x86-group2-t$threads" \
+              "x86-group4-t$threads" "x86-group8-t$threads" > "$PRSS_ARTIFACT_DIR/comparison-t$threads.txt"
+          done
+          sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > "$PRSS_ARTIFACT_DIR/completed-at.txt"
+      - name: Disassemble the exact measured binaries
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRSS_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts/prss-batching"
+          if [[ ! -d "$PRSS_ARTIFACT_DIR" ]]; then exit 0; fi
+          host=$(rustc -Vv | sed -n 's/^host: //p')
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$host/bin"
+          "$llvm_bin/llvm-objdump" --version > "$PRSS_ARTIFACT_DIR/disassembler.txt"
+          for variant in scalar group2 group4 group8; do
+            executable="$PRSS_ARTIFACT_DIR/$variant-bench"
+            if [[ ! -f "$executable" ]]; then continue; fi
+            "$llvm_bin/llvm-nm" --demangle --numeric-sort --print-size "$executable" \
+              > "$PRSS_ARTIFACT_DIR/$variant-symbols.txt"
+            "$llvm_bin/llvm-objdump" --disassemble --demangle --no-show-raw-insn "$executable" \
+              | gzip > "$PRSS_ARTIFACT_DIR/$variant-disassembly.asm.gz"
+            sha256sum "$executable" > "$PRSS_ARTIFACT_DIR/$variant-disassembly.sha256"
+          done
+          if [[ -f "$PRSS_ARTIFACT_DIR/executables.sha256" ]]; then
+            sha256sum --check "$PRSS_ARTIFACT_DIR/executables.sha256"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: prss-batching-${{ github.run_id }}
+          path: |
+            artifacts/prss-batching/**
+            !artifacts/prss-batching/sources/**
+          if-no-files-found: error

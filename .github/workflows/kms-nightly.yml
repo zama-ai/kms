@@ -2,6 +2,12 @@ name: kms-nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      # TEMP: REMOVE BEFORE MERGE. Dispatch the isolated benchmark through an existing default-branch workflow.
+      prss-batching:
+        description: 'TEMP: run only the PRSS/PRZS batching and x86 assembly investigation'
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       CGR_USERNAME:
@@ -16,7 +22,15 @@ concurrency:
 permissions: {}
 
 jobs:
+  # TEMP: REMOVE BEFORE MERGE, together with the input and the two guards below.
+  prss-batching:
+    if: ${{ inputs.prss-batching }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/prss-batching.yml
+
   generate-test-material:
+    if: ${{ !inputs.prss-batching }} # TEMP: REMOVE BEFORE MERGE
     name: kms-nightly/generate-test-material
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
@@ -28,6 +42,7 @@ jobs:
     uses: ./.github/workflows/generate-test-material.yml
 
   kms-nightly:
+    if: ${{ !inputs.prss-batching }} # TEMP: REMOVE BEFORE MERGE
     name: kms-nightly/p${{ matrix.partition }}
     needs: [generate-test-material]
     permissions:
