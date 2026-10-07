@@ -427,46 +427,13 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// Verify every signature a public-decryption response carries, and check that
 /// they belong to `party_id`.
 ///
-/// This function is **infallible with respect to the (untrusted) response
-/// content**: any malformed field is treated exactly like a mismatch and yields
-/// `false`, never an error. This is what lets
+/// Any malformed field of the (untrusted) response is an `Err`. This is what lets
 /// [`partition_public_decrypt_responses`] tolerate up to `t` Byzantine responses
 /// without a single one being able to abort the whole validation.
 ///
 /// # What makes a response authentic
 ///
 /// [`verify_response_signatures`] decides that, as it does for every other result kind.
-#[expect(clippy::too_many_arguments)]
-fn verify_public_decrypt_signatures(
-    trusted_ctx: &PublicDecTrustedValidationContext,
-    response: &PublicDecryptionResponsePayload,
-    party_id: u32,
-    verification_key: &PublicSigKey,
-    signature: &[u8],
-    external_signature: &[u8],
-    signatures: &[TypedSignature],
-    response_extra_data: &[u8],
-) -> bool {
-    match check_public_decrypt_signatures(
-        trusted_ctx,
-        response,
-        party_id,
-        verification_key,
-        signature,
-        external_signature,
-        signatures,
-        response_extra_data,
-    ) {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
-            false
-        }
-    }
-}
-
-/// The fallible body of [`verify_public_decrypt_signatures`], which turns every error
-/// here into `false`.
 #[expect(clippy::too_many_arguments)]
 fn check_public_decrypt_signatures(
     trusted_ctx: &PublicDecTrustedValidationContext,
@@ -711,10 +678,10 @@ fn authenticate_public_decrypt_response(
 
     // Verify the signature(s) carried by the response. This is pure authenticity and does not
     // depend on the (not-yet-established) consensus.
-    // The deprecated internal `signature` and `external_signature` fields are checked alongside
-    // `signatures`, as user decryption checks them, so a response stays verifiable without an
-    // EIP-712 domain. TODO(0.16): drop the two fields and their arguments.
-    if !verify_public_decrypt_signatures(
+    // The deprecated internal `signature` and `external_signature` fields are only checked for a
+    // node from before `signatures`, which sends that list empty. TODO(0.16): drop the two fields
+    // and their arguments.
+    if let Err(e) = check_public_decrypt_signatures(
         trusted_ctx,
         cur_payload,
         signing_party,
@@ -724,7 +691,7 @@ fn authenticate_public_decrypt_response(
         &cur_resp.signatures,
         &cur_resp.extra_data,
     ) {
-        tracing::warn!("Some server did not provide a properly signed response!");
+        tracing::warn!("A public decryption response of party {signing_party} is rejected: {e}");
         return Err(PublicRejectReason::SignatureMismatch);
     }
 
@@ -1226,8 +1193,8 @@ mod tests {
     use super::{
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
         ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        PublicDecTrustedValidationContext, TypedSignature, unpack_public_decrypt_req,
-        unpack_user_decrypt_req, verify_max_num_bits, verify_public_decrypt_signatures,
+        PublicDecTrustedValidationContext, TypedSignature, check_public_decrypt_signatures,
+        unpack_public_decrypt_req, unpack_user_decrypt_req, verify_max_num_bits,
         verify_user_decrypt_eip712,
     };
 
@@ -2109,7 +2076,7 @@ mod tests {
         let ctx = PublicDecTrustedValidationContext::new(&server_pks, &scheme_verf_keys, &request)
             .unwrap();
         let verify = |internal: &[u8], external: &[u8], list: &[TypedSignature]| {
-            verify_public_decrypt_signatures(
+            check_public_decrypt_signatures(
                 &ctx,
                 &pivot,
                 1,
@@ -2119,6 +2086,7 @@ mod tests {
                 list,
                 &extra_data,
             )
+            .is_ok()
         };
 
         // an empty list, with no internal field to fall back on
@@ -2163,16 +2131,19 @@ mod tests {
             &alloy_domain,
         )
         .signatures;
-        assert!(!verify_public_decrypt_signatures(
-            &ctx,
-            &bad_value,
-            1,
-            &fresh_vk,
-            &[],
-            &[],
-            &bad_signatures,
-            &extra_data,
-        ));
+        assert!(
+            check_public_decrypt_signatures(
+                &ctx,
+                &bad_value,
+                1,
+                &fresh_vk,
+                &[],
+                &[],
+                &bad_signatures,
+                &extra_data,
+            )
+            .is_err()
+        );
 
         // A node from before the list is authenticated by `external_signature`.
         assert!(verify(&[], &signed.external_signature, &[]));
@@ -2249,7 +2220,7 @@ mod tests {
         // This response carries no deprecated internal field, so the post-quantum
         // entry of `signatures` is the only thing that can authenticate it.
         let verify = |ctx: &PublicDecTrustedValidationContext, response_extra_data: &[u8]| {
-            verify_public_decrypt_signatures(
+            check_public_decrypt_signatures(
                 ctx,
                 &payload,
                 1,
@@ -2259,6 +2230,7 @@ mod tests {
                 &signatures,
                 response_extra_data,
             )
+            .is_ok()
         };
 
         let pq_only = request_for(vec![kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32]);
@@ -2301,7 +2273,8 @@ mod tests {
         .map(TypedSignature::from)
         .collect();
         let verify_list = |ctx: &PublicDecTrustedValidationContext, list: &[TypedSignature]| {
-            verify_public_decrypt_signatures(ctx, &payload, 1, &vk, &[], &[], list, &extra_data)
+            check_public_decrypt_signatures(ctx, &payload, 1, &vk, &[], &[], list, &extra_data)
+                .is_ok()
         };
         assert!(verify_list(&pq_ctx, &superset_signatures));
 
