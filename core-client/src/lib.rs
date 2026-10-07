@@ -939,6 +939,7 @@ pub struct NewTestingMpcContextFileParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
+    /// The request ID of the original request whose result is being fetched.
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
     /// Context ID the original request was made with, used to derive the `extra_data` the

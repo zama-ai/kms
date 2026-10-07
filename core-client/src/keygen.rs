@@ -843,11 +843,7 @@ pub(crate) async fn do_partial_preproc(
 
 /// Check every signature each preprocessing response carries, under every scheme
 /// the client requested, and that each was produced by a known KMS party.
-///
-/// The result-only command cannot see the request that produced these responses,
-/// so the context and epoch it was made under come from the caller and have to
-/// match — the same contract a keygen or CRS result carries. `None` skips the
-/// check, which is what `--no-verify` asks for.
+/// If `verify` is `None`, the check is skipped.
 pub(crate) fn check_preproc_responses(
     internal_client: &Client,
     request_id: &RequestId,

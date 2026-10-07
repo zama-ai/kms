@@ -390,6 +390,9 @@ impl Custodian {
         })
     }
 
+    /// Obtain the operator ephemeral public key for reencryption,
+    /// unsigncrypt the signcryption encrypted under the custodian's public key
+    /// and then signcrypt it it under the operator's public key
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
