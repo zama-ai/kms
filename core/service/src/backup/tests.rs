@@ -288,33 +288,28 @@ fn full_flow_drop_msg() {
     }
 }
 
+/// An operator cannot be set up for sharing with fewer than `threshold + 1` valid custodian
+/// setup messages.
 #[test]
-#[should_panic]
 fn full_flow_malicious_custodian_not_enough() {
     let mut rng = AesRng::seed_from_u64(1337);
-    let backup_id = derive_request_id(std::stringify!(full_flow_malicious_custodian)).unwrap();
-    let operator_count = 4usize;
     let custodian_count = 5usize;
     let custodian_threshold = 2usize;
 
-    let (setup_msgs, _mnemonics) = generate_setup_messages(&mut rng, custodian_count);
-    // Change one custodian's setup messages to an invalid one
-
-    let mut setup_msgs_malicious = setup_msgs.clone();
-    // Remove 2nd setup message
-    setup_msgs_malicious.remove(1);
-    // Remove 3nd setup message
-    setup_msgs_malicious.remove(1);
-    // Remove 4nd setup message
-    setup_msgs_malicious.remove(1);
-    // Should panic because we need at least 3 custodians.
-    let _ = operator_handle_init(
-        &mut rng,
-        &setup_msgs_malicious,
-        &backup_id,
-        operator_count,
+    let (mut setup_msgs, _mnemonics) = generate_setup_messages(&mut rng, custodian_count);
+    // Keep only the first and the last of five messages, one short of the three needed.
+    setup_msgs.drain(1..4);
+    let Err(err) = Operator::new_for_sharing(
+        setup_msgs,
+        Arc::new(seeded_identity(&mut rng)),
         custodian_threshold,
         custodian_count,
+    ) else {
+        panic!("an operator was set up with too few custodian setup messages");
+    };
+    assert!(
+        matches!(&err, BackupError::SetupError(msg) if msg.contains("Not enough custodian setup messages")),
+        "{err}"
     );
 }
 
