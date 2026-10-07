@@ -424,8 +424,9 @@ pub(crate) fn verify_user_decrypt_eip712(
     Ok(domain)
 }
 
-/// Verify the signatures of a public-decryption response that meet the schemes of
-/// `trusted_ctx.request`, and check that they belong to `party_id`.
+/// Verify the signatures of a public-decryption response, namely the entries that meet
+/// the schemes of `trusted_ctx.request` and the deprecated fields, and check that they
+/// belong to `party_id`.
 ///
 /// A malformed or invalid field of the (untrusted) response is an `Err`. The caller
 /// turns that `Err` into a rejection of this one response, so that
@@ -678,10 +679,9 @@ fn authenticate_public_decrypt_response(
 
     // Verify the signature(s) carried by the response. This is pure authenticity and does not
     // depend on the (not-yet-established) consensus.
-    // The deprecated internal `signature` and `external_signature` fields are only verified for a
-    // node from before `signatures`, which sends that list empty. Beside an ECDSA entry of the
-    // list, `external_signature` has to equal that entry. TODO(0.16): drop the two fields and
-    // their arguments.
+    // The deprecated internal `signature` and `external_signature` fields are checked alongside
+    // `signatures`, as user decryption checks them, so a response stays verifiable without an
+    // EIP-712 domain. TODO(0.16): drop the two fields and their arguments.
     if let Err(e) = check_public_decrypt_signatures(
         trusted_ctx,
         cur_payload,
@@ -2155,19 +2155,25 @@ mod tests {
         // unverified.
         assert!(!verify(&signed.signature, &[], &[]));
 
-        // For a node from before the list, a corrupt internal signature is a rejection
-        // even beside a valid `external_signature`...
+        // A corrupt internal signature is a rejection, beside a valid
+        // `external_signature` and beside a valid list alike.
         let mut bad_internal = signed.signature.clone();
         bad_internal[0] ^= 1;
         assert!(!verify(&bad_internal, &signed.external_signature, &[]));
-        // ...but once the list carries ECDSA, the internal signature is not checked.
-        assert!(verify(&bad_internal, &[], &signatures));
+        assert!(!verify(&bad_internal, &[], &signatures));
 
         // Beside the ECDSA entry, `external_signature` has to be a copy of that entry.
         assert!(verify(&[], &signed.external_signature, &signatures));
         let mut bad_external = signed.external_signature.clone();
         bad_external[0] ^= 1;
         assert!(!verify(&[], &bad_external, &signatures));
+
+        // A response as the server sends it, with all three forms, verifies.
+        assert!(verify(
+            &signed.signature,
+            &signed.external_signature,
+            &signatures
+        ));
     }
 
     /// A request that asked only for a post-quantum scheme is satisfied by that entry

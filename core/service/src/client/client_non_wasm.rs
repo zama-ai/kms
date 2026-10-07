@@ -543,6 +543,39 @@ mod tests {
         }
     }
 
+    /// The legacy signature is checked *alongside* the list, not instead of it, and
+    /// whatever the client requested. A result whose list verifies but whose deprecated
+    /// field does not is still rejected: the two are statements about the same result,
+    /// and a caller can forward either.
+    #[test]
+    fn a_bad_legacy_signature_is_rejected_even_when_the_list_verifies() {
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(16));
+        let stranger = legacy_external_signature(&seeded_identity(&mut AesRng::seed_from_u64(17)));
+
+        for requested in [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65] {
+            let client = client_requesting(&identity, true, &[requested]);
+            let signatures = signatures_for(&identity, &[requested], &payload());
+
+            // Both present and valid is the honest case.
+            let (party_id, _address) = verify_with_legacy(
+                &client,
+                &signatures,
+                &legacy_external_signature(&identity),
+                &payload(),
+            )
+            .unwrap();
+            assert_eq!(party_id, PARTY, "{requested}");
+
+            // A garbage legacy signature is a rejection, and so is one of another party.
+            for bad in [vec![0xAA; 65], stranger.clone()] {
+                assert!(
+                    verify_with_legacy(&client, &signatures, &bad, &payload()).is_err(),
+                    "{requested}"
+                );
+            }
+        }
+    }
+
     /// Entries have to agree on one signing party.
     #[test]
     fn mixed_party_entries_are_rejected() {

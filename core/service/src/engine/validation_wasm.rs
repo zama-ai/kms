@@ -183,9 +183,9 @@ pub(crate) fn user_decrypt_eip712_hash(
 
 /// The signatures one server response carries, whatever kind of result it is.
 ///
-/// A node from 0.15 on carries every signature in `list`. The deprecated fields are
-/// only verified for a node from before `list`, which sends it empty. Beside a
-/// verified ECDSA entry of `list`, a non-empty `external` has to equal that entry.
+/// A node from 0.15 on carries every signature in `list`. A node from before `list`
+/// sends it empty. The deprecated fields are verified whenever they are present, and
+/// beside an ECDSA entry of `list`, a non-empty `external` has to equal that entry.
 pub(crate) struct ResponseSignatures<'a> {
     /// The deprecated raw ECDSA signature over the serialized response payload. Only a
     /// decryption response carries one; every other result kind leaves this empty.
@@ -281,22 +281,23 @@ fn agree(signer: (u32, Address), found: (u32, Address)) -> anyhow::Result<()> {
 /// 1. `requested` names at least one scheme; an empty request is a rejection rather
 ///    than a lenient one.
 /// 2. Before any cryptography, `list` carries an entry for every requested scheme.
-///    Only when `list` is empty, as a node from before it sends, may a deprecated
-///    field meet a requested ECDSA instead.
-/// 3. When ECDSA was requested: the ECDSA entry of `list`, or for a node from before
-///    `list`, the deprecated fields. Both need the EIP-712 domain. Beside an ECDSA
-///    entry, a non-empty `external_signature` has to equal that entry.
+///    Only when `list` is empty, as a node from before it sends, may
+///    `external_signature` meet a requested ECDSA instead.
+/// 3. When ECDSA was requested: the ECDSA entries of `list`. Beside an ECDSA entry, a
+///    non-empty `external_signature` has to equal that entry.
 /// 4. Every other requested entry of `list`, against the keys of the party that
 ///    signed. These entries are bound to the scheme set `list` presents, which may be
 ///    a superset of `requested` and may name schemes this release does not know.
-/// 5. Every signature agreed on one party.
+/// 5. The deprecated `external_signature` and internal `signature`, whenever they are
+///    present, whatever was requested.
+/// 6. Every signature agreed on one party.
 ///
-/// Steps 2 to 4 leave no requested scheme unverified: each one is either verified or
+/// Steps 2 to 5 leave no requested scheme unverified: each one is either verified or
 /// the response is rejected.
 ///
-/// A signature nobody requested carries no weight either way: it is not checked,
-/// whether it is an entry of `list` or one of the deprecated fields. The deprecated
-/// internal signature is not checked beside an ECDSA entry of `list` either.
+/// An entry of `list` for a scheme nobody requested carries no weight: it is not
+/// checked. The deprecated fields are different. Every server fills them in until
+/// 0.16, and a caller can forward them, so a present field always has to verify.
 ///
 /// # Errors
 ///
@@ -315,16 +316,18 @@ where
     // 1–2. Something was requested, and the list carries all of it.
     ensure_requested_present(requested, sigs.list)?;
     let (ecdsa_entries, scheme_entries) = requested_entries(sigs.list, requested);
-    // 3. ECDSA in each form it is carried in, when it was requested.
+    // 3. The ECDSA entries of the list, when ECDSA was requested.
     let signer = if requested.contains(&SigningSchemeType::Ecdsa256k1) {
-        Some(verify_ecdsa(sigs, &ecdsa_entries, payloads, expected)?)
+        verify_ecdsa(sigs, &ecdsa_entries, payloads, expected)?
     } else {
         None
     };
     // 4. Every other requested scheme, against the keys of the party that signed.
     let signer =
         verify_scheme_entries(&scheme_entries, sigs.list, payloads, expected, keys, signer)?;
-    // `requested` is not empty, so step 3 or step 4 identified the signer.
+    // 5. The deprecated fields, whenever they are present.
+    let signer = verify_deprecated_fields(sigs, payloads, expected, signer)?;
+    // `requested` is not empty, so step 3, 4 or 5 identified the signer.
     signer.ok_or_else(|| {
         anyhow_tracked(
             "no signature of the response could be checked, so it identified no party".to_string(),
@@ -395,16 +398,31 @@ fn requested_entries<'a>(
     (ecdsa, scheme_bound)
 }
 
-/// Step 3: ECDSA, as the ECDSA entry of `list` and, for a node from before `list`, the
-/// deprecated fields. Returns the party that signed.
+/// Step 3: the ECDSA entries of `list`, which have to recover to one party. Returns
+/// that party.
+///
+/// A server signs `external_signature` and the ECDSA entry of `list` over the same
+/// EIP-712 hash with deterministic ECDSA, so the two are byte-identical. Beside an
+/// ECDSA entry, a non-empty `external_signature` therefore has to equal that entry.
+///
+/// A node from before `list` sends it empty. For such a node, `external_signature`
+/// meets ECDSA instead. Step 5 verifies it, so this step returns `None`.
 fn verify_ecdsa<T>(
     sigs: &ResponseSignatures,
     ecdsa_entries: &[&[u8]],
     payloads: &SignedPayloads<T>,
     expected: &ExpectedSigner,
-) -> anyhow::Result<(u32, Address)> {
+) -> anyhow::Result<Option<(u32, Address)>> {
+    // Step 2 rejected a non-empty `list` without a requested ECDSA entry, so no entry
+    // here means that `list` is empty.
     let Some((&first, rest)) = ecdsa_entries.split_first() else {
-        return verify_legacy_ecdsa(sigs, payloads, expected);
+        if sigs.external.is_empty() {
+            let ecdsa = SigningSchemeType::Ecdsa256k1;
+            return Err(anyhow_tracked(format!(
+                "the response carries no verified {ecdsa} signature"
+            )));
+        }
+        return Ok(None);
     };
     if !sigs.external.is_empty() && !ecdsa_entries.contains(&sigs.external) {
         return Err(anyhow_tracked(
@@ -422,38 +440,42 @@ fn verify_ecdsa<T>(
     for &signature in rest {
         agree(signer, recover(signature)?)?;
     }
-    Ok(signer)
+    Ok(Some(signer))
 }
 
-/// The deprecated fields of a node from before `list`. `external_signature` is the
-/// EIP-712 signature that meets ECDSA, so it is required. The internal `signature`,
-/// which a decryption response carries, covers the payload alone, so it is checked
-/// when present but cannot meet ECDSA on its own.
+/// Step 5: the deprecated fields, whenever the response carries them, held to the
+/// party `signer` that the earlier steps identified, if any. Returns the party.
+///
+/// `external_signature` recovers its signer from the EIP-712 hash. The internal
+/// `signature`, which only a decryption response carries, covers the serialized
+/// payload alone. It cannot meet ECDSA on its own.
 ///
 /// TODO(0.16): remove together with the fields.
-fn verify_legacy_ecdsa<T>(
+fn verify_deprecated_fields<T>(
     sigs: &ResponseSignatures,
     payloads: &SignedPayloads<T>,
     expected: &ExpectedSigner,
-) -> anyhow::Result<(u32, Address)> {
-    if sigs.external.is_empty() {
-        let ecdsa = SigningSchemeType::Ecdsa256k1;
-        return Err(anyhow_tracked(format!(
-            "the response carries no verified {ecdsa} signature, but {ecdsa} was requested"
-        )));
+    mut signer: Option<(u32, Address)>,
+) -> anyhow::Result<Option<(u32, Address)>> {
+    if !sigs.external.is_empty() {
+        let found = expected.attribute(recover_address_from_eip712_hash(
+            &payloads.eip712_hash,
+            sigs.external,
+        )?)?;
+        if let Some(signer) = signer {
+            agree(signer, found)?;
+        }
+        signer = Some(found);
     }
-    let signer = expected.attribute(recover_address_from_eip712_hash(
-        &payloads.eip712_hash,
-        sigs.external,
-    )?)?;
     if sigs.internal.is_empty() {
         return Ok(signer);
     }
     // The raw signature is not recoverable, so it is checked against the key the
-    // caller established rather than used to find one. `attribute` held
-    // `external_signature` to that same party.
+    // caller established rather than used to find one.
     let ExpectedSigner::Known {
-        party_id, verf_key, ..
+        party_id,
+        address,
+        verf_key,
     } = expected
     else {
         return Err(anyhow_tracked(
@@ -478,7 +500,11 @@ fn verify_legacy_ecdsa<T>(
             "the deprecated internal signature of party {party_id} did not verify: {e}"
         ))
     })?;
-    Ok(signer)
+    let found = (*party_id, *address);
+    if let Some(signer) = signer {
+        agree(signer, found)?;
+    }
+    Ok(Some(found))
 }
 
 /// Step 4: every requested non-ECDSA entry, against the keys of the party that signed,
