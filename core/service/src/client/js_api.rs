@@ -83,7 +83,7 @@ use bc2wrap::deserialize_slice;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
-use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use kms_grpc::rpc_types::{PlaintextReceiver, protobuf_to_alloy_domain};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use threshold_execution::endpoints::decryption::DecryptionMode;
@@ -154,15 +154,15 @@ pub fn new_server_id_addr(id: u32, addr: String) -> Result<ServerIdAddr, JsError
 /// * `server_addrs` - a list of KMS server ID with EIP-55 addresses,
 /// the elements in the list can be created using [new_server_id_addr].
 ///
-/// * `client_address_hex` - the client (wallet) address in hex,
-/// must be prefixed with "0x".
+/// * `client_address` - the client (wallet) address: an EVM address in EIP-55 hex prefixed
+/// with "0x", or a Solana public key in base58.
 ///
 /// * `fhe_parameter` - the parameter choice, which can be either `"test"` or `"default"`.
 /// The "default" parameter choice is selected if no matching string is found.
 #[wasm_bindgen]
 pub fn new_client(
     server_addrs: Vec<ServerIdAddr>,
-    client_address_hex: &str,
+    client_address: &str,
     fhe_parameter: &str,
 ) -> Result<Client, JsError> {
     console_error_panic_hook::set_once();
@@ -175,8 +175,8 @@ pub fn new_client(
         None => BC_PARAMS_SNS,
     };
 
-    let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let client_address =
+        PlaintextReceiver::parse(client_address).map_err(|e| JsError::new(&e.to_string()))?;
 
     let expected_server_count = server_addrs.len();
     let addrs_hash_map = HashMap::from_iter(
@@ -225,8 +225,7 @@ pub fn get_client_secret_key(client: &Client) -> Option<PrivateSigKey> {
 
 #[wasm_bindgen]
 pub fn get_client_address(client: &Client) -> String {
-    let checksummed = client.client_address.to_checksum_buffer(None);
-    checksummed.to_string()
+    client.client_address.to_string()
 }
 
 #[wasm_bindgen]
@@ -340,7 +339,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 /// * `request` - the initial user_decryption request JS object.
 /// It can be set to null if `verify` is false.
 /// Otherwise the caller needs to give the following JS object.
-/// Note that `client_address` and `eip712_verifying_contract` follow EIP-55.
+/// Note that `eip712_verifying_contract` follows EIP-55, and so does `client_address` for an EVM
+/// user. For a Solana user, `client_address` is the user's base58 public key.
 /// The signature field is not needed.
 /// ```
 /// {

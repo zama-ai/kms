@@ -62,7 +62,7 @@ impl Client {
                     .expect("Failed to serialize ephemeral encryption key");
                     buf
                 },
-                client_address: self.client_address.to_checksum(None),
+                client_address: self.client_address.to_string(),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
