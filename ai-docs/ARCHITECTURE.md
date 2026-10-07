@@ -346,6 +346,15 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 EIP-712 signature validation on user-decryption requests is shared between
 the server and in-browser verifiers via the `validation_wasm` build.
 
+The `client_address` of a user-decryption request names the user, who is on
+an EVM host chain or on Solana. `PlaintextReceiver` in `kms-grpc` parses it:
+`0x` and EIP-55 hex is a 20-byte EVM address, and base58 of 32 bytes is a
+Solana public key. The receiver picks the struct that links the response to
+the request, `UserDecryptionLinker` or `SolanaUserDecryptionLinker`, and the
+bytes that signcryption binds the result to. The rest of the user-decryption
+path is the same for both kinds of user. The KMS does not read the host chain
+from the handles; the caller checks that the handles and the user match.
+
 ## Deployment modes
 
 Mode is selected in the server TOML config — a party runs in threshold mode
