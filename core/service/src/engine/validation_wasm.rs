@@ -563,7 +563,7 @@ fn identify_party(
 ///
 /// Returns the (verified) role and verification key it deserialized, so the caller can reuse it without
 /// parsing the raw bytes a second time.
-fn authenticate_user_decrypt_and_check_meta_data(
+pub(crate) fn authenticate_user_decrypt_and_check_meta_data(
     trusted_ctx: &UserDecTrustedValidationContext,
     response: &UserDecryptionResponsePayload,
     signature: &[u8],

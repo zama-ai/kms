@@ -2378,6 +2378,7 @@ mod tests {
                 change_digest,
             )
         };
+        #[allow(clippy::type_complexity)]
         let cases: [(&str, &dyn Fn(bool, bool) -> anyhow::Result<()>); 3] = [
             ("standard keygen", &verify_standard),
             ("compressed keygen", &verify_compressed),

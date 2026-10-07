@@ -1566,7 +1566,9 @@ mod tests {
     use crate::{
         backup::{
             BACKUP_SIGNING_SCHEMES,
-            custodian::{Custodian, CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
+            custodian::{
+                Custodian, CustodianSetupMessagePayload, HEADER, InternalCustodianContext,
+            },
         },
         cryptography::{
             signatures::{
