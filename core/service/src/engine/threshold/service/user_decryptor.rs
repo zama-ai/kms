@@ -58,7 +58,6 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
         signing::SigningSchemeType,
-        signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
     },
     engine::{
@@ -172,7 +171,6 @@ impl<
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
         signcryption_key: UnifiedSigncryptionKey,
-        identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
             HashMap<(RequestId, EpochId), ThresholdFheKeys>,
@@ -382,11 +380,11 @@ impl<
             .threshold(&context_id)
             .await
             .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
+        let identity = Arc::clone(&signcryption_key.identity);
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
-            verification_key: signcryption_key
-                .signing_key()
+            verification_key: identity
                 .verf_key()
                 .to_legacy_bytes()
                 .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
@@ -548,7 +546,7 @@ impl<
             )
         })?;
         let signcryption_key =
-            UnifiedSigncryptionKey::new(identity.clone(), client_enc_key, client_address.to_vec());
+            UnifiedSigncryptionKey::new(identity, client_enc_key, client_address.to_vec());
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
@@ -592,7 +590,6 @@ impl<
                 typed_ciphertexts,
                 link,
                 signcryption_key,
-                identity,
                 client_enc_key_bytes_orig,
                 fhe_keys_rlock,
                 dec_mode,
@@ -704,7 +701,7 @@ mod tests {
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::gen_sig_keys,
+            signatures::{NodeSigningIdentity, gen_sig_keys},
         },
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
