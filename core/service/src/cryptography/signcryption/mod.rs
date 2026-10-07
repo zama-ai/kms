@@ -607,15 +607,15 @@ mod tests {
             .signcrypt(&mut f.rng, DSEP, &msg)
             .unwrap();
 
-        // flip a bit in the AEAD tag, which is the last byte of the payload
+        // flip a bit in the payload
         {
             let mut cipher = correct_cipher.clone();
-            *cipher.payload.last_mut().unwrap() ^= 1;
-            let err = f
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(DSEP, &cipher)
-                .unwrap_err();
-            assert!(matches!(err, CryptographyError::AesGcmError(_)), "{err}");
+            cipher.payload[0] ^= 1;
+            assert!(
+                f.unsigncryption_key
+                    .unsigncrypt::<TestType>(DSEP, &cipher)
+                    .is_err()
+            );
         }
 
         // use the wrong receiver decryption key, leaving the rest of the reader

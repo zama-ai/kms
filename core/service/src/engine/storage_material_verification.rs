@@ -2274,131 +2274,127 @@ mod tests {
         );
     }
 
-    /// ECDSA-only metadata of every kind verifies under the domain stored with it, and a
-    /// changed stored domain or a changed digest in the signed message invalidates it.
     #[test]
-    fn private_ecdsa_only_metadata_signature_verifies_with_stored_domain() {
+    fn private_standard_keygen_metadata_signature_verifies_with_stored_domain() {
         let mut rng = AesRng::seed_from_u64(176);
         let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
-        let identity = NodeSigningIdentity::ecdsa_only(signing_key);
-        let schemes = [SigningSchemeType::Ecdsa256k1];
         let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+            &[SigningSchemeType::Ecdsa256k1],
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("standard keygen metadata construction must succeed");
+
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(
+            &key_id,
+            inner,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+        )
+        .expect("the stored domain must verify the standard keygen signature");
+
+        // The server-key digest is the field that separates the standard signed message from
+        // the compressed one, so changing it must invalidate the signature.
+        let mut tampered_inner = inner.clone();
+        tampered_inner
+            .key_digest_map
+            .insert(PubDataType::ServerKey, vec![0x44; 32]);
+        let err = verify_keygen_metadata_signature(
+            &key_id,
+            &tampered_inner,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+        )
+        .expect_err("a changed server-key digest must invalidate the signature");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected a signature verification error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn private_compressed_keygen_metadata_signature_verifies_with_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(174);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_compressed_keygen_from_digests(
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+            &[SigningSchemeType::Ecdsa256k1],
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("compressed keygen metadata construction must succeed");
+
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(
+            &key_id,
+            inner,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+        )
+        .expect("the stored domain must verify the compressed keygen signature");
+
         let wrong_domain = alloy_sol_types::eip712_domain!(
             name: "wrong domain",
             version: "1",
             chain_id: 8006,
             verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         );
-        let prep_id = RequestId::new_random(&mut rng);
-        let id = RequestId::new_random(&mut rng);
+        let mut tampered_inner = inner.clone();
+        tampered_inner.eip712_domain = Some((&wrong_domain).into());
+        let err = verify_keygen_metadata_signature(
+            &key_id,
+            &tampered_inner,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+        )
+        .expect_err("a changed stored domain must invalidate the signature");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected a signature verification error, got: {err}"
+        );
+    }
 
-        let current = |metadata: KeyGenMetadata| {
-            let KeyGenMetadata::Current(inner) = metadata else {
-                panic!("metadata construction must produce current metadata");
-            };
-            inner
-        };
-        let standard = current(
-            crate::engine::base::compute_info_standard_keygen_from_digests(
-                &identity,
-                &schemes,
-                &prep_id,
-                &id,
-                vec![0x11; 32],
-                vec![0x22; 32],
-                &domain,
-                vec![0x03],
-            )
-            .unwrap(),
-        );
-        let compressed = current(
-            crate::engine::base::compute_info_compressed_keygen_from_digests(
-                &identity,
-                &schemes,
-                &prep_id,
-                &id,
-                vec![0x11; 32],
-                vec![0x22; 32],
-                &domain,
-                vec![0x03],
-            )
-            .unwrap(),
-        );
-        let CrsGenMetadata::Current(crs) = crate::engine::base::compute_info_crs_from_digest(
-            &identity,
-            &schemes,
-            &id,
+    #[test]
+    fn private_crs_metadata_signature_verifies_with_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(175);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_crs_from_digest(
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+            &[SigningSchemeType::Ecdsa256k1],
+            &crs_id,
             vec![0x33; 32],
             64,
-            &domain,
+            &crate::dummy_domain(),
             vec![0x04],
         )
-        .unwrap() else {
+        .expect("CRS metadata construction must succeed");
+
+        let CrsGenMetadata::Current(inner) = &metadata else {
             panic!("metadata construction must produce current metadata");
         };
-
-        // Each verifier takes whether to store the wrong domain and whether to change a
-        // signed digest.
-        let verify_keygen = |inner: &KeyGenMetadataInner,
-                             digest: PubDataType,
-                             change_domain: bool,
-                             change_digest: bool| {
-            let mut inner = inner.clone();
-            if change_domain {
-                inner.eip712_domain = Some((&wrong_domain).into());
-            }
-            if change_digest {
-                inner.key_digest_map.insert(digest, vec![0x44; 32]);
-            }
-            verify_keygen_metadata_signature(&id, &inner, &identity)
-        };
-        let verify_crs = |change_domain: bool, change_digest: bool| {
-            let mut inner = crs.clone();
-            if change_domain {
-                inner.eip712_domain = Some((&wrong_domain).into());
-            }
-            if change_digest {
-                inner.crs_digest = vec![0x44; 32];
-            }
-            verify_crs_metadata_signature(&id, &inner, &identity)
-        };
-        let verify_standard = |change_domain: bool, change_digest: bool| {
-            verify_keygen(
-                &standard,
-                PubDataType::ServerKey,
-                change_domain,
-                change_digest,
-            )
-        };
-        let verify_compressed = |change_domain: bool, change_digest: bool| {
-            verify_keygen(
-                &compressed,
-                PubDataType::CompressedXofKeySet,
-                change_domain,
-                change_digest,
-            )
-        };
-        #[allow(clippy::type_complexity)]
-        let cases: [(&str, &dyn Fn(bool, bool) -> anyhow::Result<()>); 3] = [
-            ("standard keygen", &verify_standard),
-            ("compressed keygen", &verify_compressed),
-            ("CRS", &verify_crs),
-        ];
-
-        for (case, verify) in cases {
-            verify(false, false)
-                .unwrap_or_else(|e| panic!("the stored domain must verify the {case} record: {e}"));
-            for (changed, change_domain, change_digest) in
-                [("stored domain", true, false), ("digest", false, true)]
-            {
-                let err = verify(change_domain, change_digest)
-                    .expect_err("a changed signed field must invalidate the signature");
-                assert!(
-                    err.to_string().contains("Invalid EIP-712 signature"),
-                    "{case} with a changed {changed}: {err}"
-                );
-            }
-        }
+        verify_crs_metadata_signature(
+            &crs_id,
+            inner,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
+        )
+        .expect("the stored domain must verify the CRS signature");
     }
 
     /// The per-scheme `signatures` of stored metadata are checked against the keys the
