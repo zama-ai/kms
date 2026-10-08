@@ -1855,6 +1855,26 @@ mod tests {
     }
 
     #[test]
+    fn only_the_0x_prefix_picks_an_evm_address() {
+        // Unprefixed hex that decodes as base58 to 32 bytes is a Solana key.
+        let key = alloy_primitives::hex!(
+            "000000000000000176b15ce4528b47dd92bce9b26b6aa48510db94dd8a323416"
+        );
+        assert_eq!(
+            "1111111bACC8fFCBB1b5ACD9EbdaB555b1ebaA7F"
+                .parse::<ClientAddress>()
+                .unwrap(),
+            ClientAddress::Solana(key)
+        );
+        // `0x` and the hex of 32 bytes is a malformed EVM address, not a Solana key.
+        let error = format!("0x{}", "11".repeat(32))
+            .parse::<ClientAddress>()
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("error parsing checksummed address"));
+    }
+
+    #[test]
     fn test_abi_encoding_fhevm() {
         // a batch with a single plaintext
         let pts_16: Vec<TypedPlaintext> = vec![TypedPlaintext::from_u16(16)];
