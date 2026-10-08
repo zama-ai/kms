@@ -2383,7 +2383,7 @@ mod tests {
             &identity,
             &[scheme],
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
@@ -2459,7 +2459,7 @@ mod tests {
             &identity,
             &superset,
             &DSEP_PUBLIC_DECRYPTION,
-            &[0u8; 32],
+            &alloy_primitives::B256::ZERO,
             &signed,
         )
         .unwrap()
