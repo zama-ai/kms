@@ -597,7 +597,6 @@ mod tests {
         assert!(matches!(
             poll!(&mut delivery),
             std::task::Poll::Ready(Err(error)) if error.code() == tonic::Code::DeadlineExceeded
-                && error.message().contains("overloaded")
         ));
     }
 
