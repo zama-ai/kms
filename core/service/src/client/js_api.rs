@@ -83,7 +83,7 @@ use bc2wrap::deserialize_slice;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
-use kms_grpc::rpc_types::{PlaintextReceiver, protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::{ClientAddress, protobuf_to_alloy_domain};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use threshold_execution::endpoints::decryption::DecryptionMode;
@@ -175,8 +175,9 @@ pub fn new_client(
         None => BC_PARAMS_SNS,
     };
 
-    let client_address =
-        PlaintextReceiver::parse(client_address).map_err(|e| JsError::new(&e.to_string()))?;
+    let client_address = client_address
+        .parse::<ClientAddress>()
+        .map_err(|e| JsError::new(&e.to_string()))?;
 
     let expected_server_count = server_addrs.len();
     let addrs_hash_map = HashMap::from_iter(

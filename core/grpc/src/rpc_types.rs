@@ -180,18 +180,26 @@ const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 
 /// The user a user-decryption result is signcrypted to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum PlaintextReceiver {
+pub enum ClientAddress {
     /// An EVM address, written EIP-55.
     Evm(Address),
     /// A Solana public key, written base58.
     Solana([u8; 32]),
 }
 
-impl PlaintextReceiver {
-    /// Reads a client address in either format: `0x` followed by EIP-55 hex is an EVM address, and
-    /// anything else must be the base58 encoding of a 32-byte Solana public key. The `0x` prefix
-    /// decides, because no base58 string starts with `0`.
-    pub fn parse(client_address: &str) -> anyhow::Result<Self> {
+/// Reads a client address. Its format picks the kind of user, and so the EIP-712 link struct:
+///
+/// - `0x` and EIP-55 hex is an EVM address, linked with
+///   [`UserDecryptionLinker`](crate::solidity_types::UserDecryptionLinker).
+/// - Any other string must be the base58 encoding of a 32-byte Solana public key, linked with
+///   [`SolanaUserDecryptionLinker`](crate::solidity_types::SolanaUserDecryptionLinker).
+///
+/// The `0x` prefix decides, because no base58 string starts with `0`. A hex string without the
+/// prefix is read as base58, so one that decodes to 32 bytes is a Solana key.
+impl std::str::FromStr for ClientAddress {
+    type Err = anyhow::Error;
+
+    fn from_str(client_address: &str) -> Result<Self, Self::Err> {
         if client_address.starts_with("0x") {
             Self::parse_evm(client_address)
         } else {
@@ -202,7 +210,9 @@ impl PlaintextReceiver {
             })
         }
     }
+}
 
+impl ClientAddress {
     fn parse_evm(client_address: &str) -> anyhow::Result<Self> {
         Address::parse_checksummed(client_address, None)
             .map(Self::Evm)
@@ -238,7 +248,7 @@ impl PlaintextReceiver {
     }
 
     /// Returns the link that binds a user-decryption response to its request: the EIP-712 hash,
-    /// under the gateway `domain`, of the linker struct for this receiver's kind of address.
+    /// under the gateway `domain`, of the EIP-712 link struct for this kind of client address.
     ///
     /// Each handle is left-padded to 32 bytes. Fails if there is no handle or a handle is longer
     /// than 32 bytes.
@@ -270,13 +280,13 @@ impl PlaintextReceiver {
     }
 }
 
-impl From<Address> for PlaintextReceiver {
+impl From<Address> for ClientAddress {
     fn from(address: Address) -> Self {
         Self::Evm(address)
     }
 }
 
-impl fmt::Display for PlaintextReceiver {
+impl fmt::Display for ClientAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Evm(address) => write!(f, "{}", address.to_checksum(None)),
@@ -724,25 +734,25 @@ impl crate::kms::v1::UserDecryptionRequest {
     /// Returns the link, the domain and the parsed client address.
     pub fn compute_link_checked(
         &self,
-    ) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain, PlaintextReceiver)> {
+    ) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain, ClientAddress)> {
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!(ERR_DOMAIN_NOT_FOUND))?,
         )?;
 
-        let receiver = PlaintextReceiver::parse(&self.client_address)?;
+        let client_address: ClientAddress = self.client_address.parse()?;
         let verifying_contract = domain
             .verifying_contract
             .ok_or_else(|| anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
 
-        if let PlaintextReceiver::Evm(client_address) = receiver
-            && client_address == verifying_contract
+        if let ClientAddress::Evm(evm_address) = client_address
+            && evm_address == verifying_contract
         {
-            anyhow::bail!("{ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR}: {client_address}");
+            anyhow::bail!("{ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR}: {evm_address}");
         }
 
-        let link = receiver.user_decryption_link(
+        let link = client_address.user_decryption_link(
             &self.enc_key,
             self.typed_ciphertexts
                 .iter()
@@ -750,7 +760,7 @@ impl crate::kms::v1::UserDecryptionRequest {
             &domain,
         )?;
 
-        Ok((link, domain, receiver))
+        Ok((link, domain, client_address))
     }
 }
 
@@ -1787,40 +1797,40 @@ mod tests {
     }
 
     #[test]
-    fn the_client_address_format_picks_the_receiver() {
+    fn the_client_address_format_picks_the_kind_of_user() {
         let evm_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
         let solana_key = [0x11u8; 32];
         let solana_address = bs58::encode(solana_key).into_string();
 
-        let evm = PlaintextReceiver::parse(evm_address).unwrap();
+        let evm = evm_address.parse::<ClientAddress>().unwrap();
         assert_eq!(
             evm,
-            PlaintextReceiver::Evm(Address::parse_checksummed(evm_address, None).unwrap())
+            ClientAddress::Evm(Address::parse_checksummed(evm_address, None).unwrap())
         );
-        let solana = PlaintextReceiver::parse(&solana_address).unwrap();
-        assert_eq!(solana, PlaintextReceiver::Solana(solana_key));
-        for receiver in [evm, solana] {
+        let solana = solana_address.parse::<ClientAddress>().unwrap();
+        assert_eq!(solana, ClientAddress::Solana(solana_key));
+        for client_address in [evm, solana] {
             assert_eq!(
-                PlaintextReceiver::parse(&receiver.to_string()).unwrap(),
-                receiver
+                client_address.to_string().parse::<ClientAddress>().unwrap(),
+                client_address
             );
         }
         assert_eq!(evm.as_bytes().len(), 20);
         assert_eq!(solana.as_bytes(), solana_key.as_slice());
         // Each leading zero byte of a key is a leading `1` in base58.
         assert_eq!(
-            PlaintextReceiver::parse(&"1".repeat(32)).unwrap(),
-            PlaintextReceiver::Solana([0; 32])
+            "1".repeat(32).parse::<ClientAddress>().unwrap(),
+            ClientAddress::Solana([0; 32])
         );
         let mut leading_zero_key = [0xffu8; 32];
         leading_zero_key[0] = 0;
-        let leading_zero = PlaintextReceiver::Solana(leading_zero_key);
+        let leading_zero = ClientAddress::Solana(leading_zero_key);
         assert_eq!(
-            PlaintextReceiver::parse(&leading_zero.to_string()).unwrap(),
+            leading_zero.to_string().parse::<ClientAddress>().unwrap(),
             leading_zero
         );
 
-        let error = |address: &str| PlaintextReceiver::parse(address).unwrap_err().to_string();
+        let error = |address: &str| address.parse::<ClientAddress>().unwrap_err().to_string();
         assert!(
             error("0xd8da6BF26964aF9D7eEd9e03E53415D37aA96045")
                 .starts_with("error parsing checksummed address")

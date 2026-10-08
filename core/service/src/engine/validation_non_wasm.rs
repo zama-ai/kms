@@ -28,7 +28,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, TypedSignature, UserDecryptionRequest,
     },
-    rpc_types::{PlaintextReceiver, optional_protobuf_to_alloy_domain},
+    rpc_types::{ClientAddress, optional_protobuf_to_alloy_domain},
 };
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
@@ -227,7 +227,7 @@ pub(crate) fn validate_user_decrypt_req(
         Vec<TypedCiphertext>,
         Vec<u8>,
         Vec<u8>,
-        PlaintextReceiver,
+        ClientAddress,
         RequestId,
         KeyId,
         ContextId,
@@ -256,7 +256,7 @@ fn unpack_user_decrypt_req(
         Vec<TypedCiphertext>,
         Vec<u8>,
         Vec<u8>,
-        PlaintextReceiver,
+        ClientAddress,
         RequestId,
         KeyId,
         ContextId,

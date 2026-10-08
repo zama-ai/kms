@@ -10,7 +10,7 @@ use alloy_primitives::{U256, hex};
 use alloy_sol_types::SolStruct;
 use kms_grpc::{
     kms::v1::{Eip712DomainMsg, TypedCiphertext, UserDecryptionRequest},
-    rpc_types::PlaintextReceiver,
+    rpc_types::ClientAddress,
     solidity_types::{SolanaUserDecryptionLinker, UserDecryptionLinker},
 };
 
@@ -96,20 +96,20 @@ fn linker_type_strings_are_frozen() {
 
 #[test]
 fn evm_link_is_byte_frozen() {
-    let (link, _, receiver) = evm_request()
+    let (link, _, client_address) = evm_request()
         .compute_link_checked()
         .expect("the frozen EVM request must validate");
 
     assert_eq!(hex::encode(&link), EVM_LINK_GOLDEN);
-    assert!(matches!(receiver, PlaintextReceiver::Evm(_)));
+    assert!(matches!(client_address, ClientAddress::Evm(_)));
 }
 
 #[test]
 fn solana_link_is_byte_frozen() {
-    let (link, _, receiver) = solana_request()
+    let (link, _, client_address) = solana_request()
         .compute_link_checked()
         .expect("the frozen Solana request must validate");
 
     assert_eq!(hex::encode(&link), SOLANA_LINK_GOLDEN);
-    assert_eq!(receiver, PlaintextReceiver::Solana([0x11; 32]));
+    assert_eq!(client_address, ClientAddress::Solana([0x11; 32]));
 }

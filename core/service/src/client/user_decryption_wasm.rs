@@ -27,7 +27,7 @@ use algebra::{
 use alloy_sol_types::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse};
-use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
+use kms_grpc::rpc_types::{ClientAddress, fhe_types_to_num_blocks};
 use std::num::Wrapping;
 use std::sync::Arc;
 use tfhe::FheTypes;
@@ -842,7 +842,7 @@ impl Client {
 pub struct TestingUserDecryptionTranscript {
     // client
     pub(crate) server_addrs: std::collections::HashMap<u32, alloy_primitives::Address>,
-    pub(crate) client_address: PlaintextReceiver,
+    pub(crate) client_address: ClientAddress,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
     pub(crate) params: threshold_execution::tfhe_internals::parameters::DKGParams,
@@ -1028,7 +1028,7 @@ impl CiphertextHandle {
 pub struct ParsedUserDecryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     signature: Option<alloy_primitives::Signature>,
-    client_address: PlaintextReceiver,
+    client_address: ClientAddress,
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
@@ -1052,7 +1052,7 @@ impl ParsedUserDecryptionRequest {
     #[cfg(test)]
     pub(crate) fn new(
         signature: Option<alloy_primitives::Signature>,
-        client_address: impl Into<PlaintextReceiver>,
+        client_address: impl Into<ClientAddress>,
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
@@ -1118,7 +1118,9 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
             .map(|buf| alloy_primitives::Signature::try_from(buf.as_slice()))
             .transpose()
             .map_err(|e| JsError::new(&e.to_string()))?;
-        let client_address = PlaintextReceiver::parse(&req_hex.client_address)
+        let client_address = req_hex
+            .client_address
+            .parse::<ClientAddress>()
             .map_err(|e| JsError::new(&e.to_string()))?;
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
@@ -1238,7 +1240,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
 
-        let client_address = PlaintextReceiver::parse(&value.client_address)?;
+        let client_address = value.client_address.parse::<ClientAddress>()?;
 
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
@@ -1263,7 +1265,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
 }
 
 /// Computes the link of `req` under `domain`, as
-/// [PlaintextReceiver::user_decryption_link] defines it.
+/// [ClientAddress::user_decryption_link] defines it.
 /// TODO(#2781) move to signatures module
 pub fn compute_link(
     req: &ParsedUserDecryptionRequest,
