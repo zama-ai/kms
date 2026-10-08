@@ -346,17 +346,10 @@ pub(crate) async fn user_decryption_centralized(
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),
                 client_address: internal_client.client_address,
-                client_sk: internal_client.client_sk.clone(),
                 degree: 0,
                 params: internal_client.params,
                 fhe_types: vec![msg.fhe_type() as i32],
                 pts: vec![TypedPlaintext::from(msg).bytes.clone()],
-                cts: reqs[0]
-                    .0
-                    .typed_ciphertexts
-                    .iter()
-                    .map(|typed_ct| typed_ct.ciphertext.to_vec())
-                    .collect::<Vec<_>>(),
                 request: Some(reqs[0].clone().0),
                 eph_sk: reqs[0].clone().2,
                 eph_pk: reqs[0].clone().1,

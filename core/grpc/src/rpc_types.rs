@@ -178,8 +178,9 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
 /// The longest base58 encoding of 32 bytes.
 const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 
-/// The user a user-decryption result is signcrypted to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The user a user-decryption result is signcrypted to. The `FromStr` impl states which string
+/// format gives which kind of user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientAddress {
     /// An EVM address, written EIP-55.
     Evm(Address),
