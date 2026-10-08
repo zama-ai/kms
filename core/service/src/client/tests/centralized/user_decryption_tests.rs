@@ -16,7 +16,7 @@ use crate::util::key_setup::test_tools::{
 use anyhow::Result;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
-use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use kms_grpc::rpc_types::{ClientAddress, protobuf_to_alloy_domain};
 use std::collections::HashMap;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
@@ -415,6 +415,32 @@ pub(crate) async fn user_decryption_centralized(
                     .to_string()
                     .contains(ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA)
             );
+            // Signcryption binds the shares to the client address, so a client with another
+            // address of either kind cannot open them.
+            let own_address = internal_client.client_address;
+            for other_address in [
+                ClientAddress::Evm(alloy_primitives::address!(
+                    "d8da6bf26964af9d7eed9e03e53415d37aa96045"
+                )),
+                ClientAddress::Solana([0x22; 32]),
+            ] {
+                internal_client.client_address = other_address;
+                assert!(
+                    internal_client
+                        .process_user_decryption_resp(
+                            &client_request,
+                            &eip712_domain,
+                            enc_pk,
+                            enc_sk,
+                            None,
+                            &responses,
+                        )
+                        .unwrap_err()
+                        .to_string()
+                        .contains("unsigncrypt_plaintext failed")
+                );
+            }
+            internal_client.client_address = own_address;
             internal_client
                 .process_user_decryption_resp(
                     &client_request,
