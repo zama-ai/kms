@@ -1,5 +1,5 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
-use crate::backup::error::RecoverySkipReason;
+use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
 use crate::consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID};
@@ -903,8 +903,9 @@ async fn filter_custodian_data(
 ) -> anyhow::Result<HashMap<Role, Zeroizing<BackupMaterial>>> {
     // Use the number of custodian nodes that was part of the context, not the amount we have received from
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
-    let mut internal_outputs = Vec::with_capacity(custodian_recovery_outputs.len());
+    let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+    let ephemeral_dec_key = Arc::new(ephemeral_dec_key.clone());
 
     for cur_recovery_output in &custodian_recovery_outputs {
         if cur_recovery_output.custodian_role == 0
@@ -942,18 +943,50 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        internal_outputs.push(InternalCustodianRecoveryOutput {
+        let internal = InternalCustodianRecoveryOutput {
             signcryption: cur_signcryption,
             custodian_role: role,
-        });
+        };
+
+        match operator.validate_one_recovery_output(
+            &internal,
+            recovery_material,
+            &ephemeral_dec_key,
+            ephemeral_enc_key,
+        ) {
+            Ok(backup_material) => match parsed_custodian_rec.entry(role) {
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    tracing::warn!(
+                        "Received multiple recovery outputs for custodian role {role}. Only the first one will be used."
+                    );
+                    skip_reasons.push(RecoverySkipReason::DuplicateRole);
+                }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(backup_material);
+                }
+            },
+            Err(reason) => skip_reasons.push(reason),
+        }
     }
-    Ok(operator.validate_outputs(
-        &internal_outputs,
-        skip_reasons,
-        recovery_material,
-        ephemeral_dec_key,
-        ephemeral_enc_key,
-    )?)
+    let threshold = recovery_material.custodian_context().threshold as usize;
+    let required_min = threshold + 1;
+    if parsed_custodian_rec.len() < required_min {
+        let received = parsed_custodian_rec.len();
+        tracing::error!(
+            received,
+            threshold,
+            ?skip_reasons,
+            "Cannot recover the backup decryption key: not enough valid recovery outputs"
+        );
+        return Err(BackupError::RecoveryThresholdNotMet {
+            required_min,
+            received,
+            threshold,
+            skipped: skip_reasons,
+        }
+        .into());
+    }
+    Ok(parsed_custodian_rec)
 }
 
 /// Why no custodian context could be selected for recovery.
