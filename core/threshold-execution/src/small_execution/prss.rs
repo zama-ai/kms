@@ -637,7 +637,7 @@ where
 
 /// Number of consecutive counters each PRSS/PRZS kernel encrypts with one AES call per subset key.
 /// F4 gives 4 blocks per counter, so 16 counters fill the x86 VAES-512 backend's 64-block batch.
-const PRF_COUNTER_GROUP: usize = 8;
+const PRF_COUNTER_GROUP: usize = 16;
 
 /// Computes PRSS values without submitting a task or advancing session counters. Each node computes its own shares
 /// using subset keys and coefficients prepared for its role when the session was constructed.
