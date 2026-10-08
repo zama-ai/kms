@@ -343,9 +343,12 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
-The `validation_wasm` build holds the user-decryption response checks (the
-request link and the node signatures), so the in-browser client runs them.
-The server shares the node signature checks from the same module.
+The client checks each user-decryption response against the request link and
+the node signatures, and this code also builds for the browser. The node
+signature checks are in the `validation_wasm` module, which the
+public-decryption verifier also uses. The threshold path takes its link check from that
+module too; the centralized path checks the link in
+`client/user_decryption_wasm.rs`.
 
 The `client_address` of a user-decryption request is an EVM address or a
 Solana public key. `ClientAddress` in `kms-grpc` parses it and picks the
