@@ -1363,9 +1363,6 @@ async fn integration_test_commands(
         let get_res_command = match command {
             CCCommand::PreprocKeyGen(_) => CCCommand::PreprocKeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
-                context_id: None,
-                epoch_id: None,
-                no_verify: false,
             }),
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {

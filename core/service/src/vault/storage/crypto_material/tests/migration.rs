@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    cryptography::signatures::{RootSigningSeed, SigningSchemeType},
     cryptography::signing::identity::NodeSigningIdentity,
     engine::base::{
         DSEP_PUBDATA_KEY, compute_info_compressed_keygen, compute_info_uncompressed_keygen,
@@ -350,8 +349,7 @@ async fn test_copy_compressed_key_to_original_success() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store.clone(),
         )
@@ -406,90 +404,6 @@ async fn test_copy_compressed_key_to_original_success() {
     }
 }
 
-/// The migration re-signs, so it must honour the schemes the request asked for.
-#[tokio::test]
-async fn copy_compressed_key_to_original_signs_under_every_requested_scheme() {
-    let old_key_id = derive_request_id("copy_compressed_pq_old_key").unwrap();
-    let new_key_id = derive_request_id("copy_compressed_pq_new_key").unwrap();
-    let prep_id = derive_request_id("copy_compressed_pq_prep").unwrap();
-    let epoch_id: EpochId = derive_request_id("copy_compressed_pq_epoch")
-        .unwrap()
-        .into();
-
-    let (sk, domain, compressed_keyset, _generated_pk, _) =
-        generate_compressed_keys(&new_key_id, &prep_id, 201);
-    let crypto_storage = ram_threshold_storage(None);
-
-    let (old_fhe_keys, compact_pk) = setup_pre_migration_uncompressed(
-        &crypto_storage,
-        &old_key_id,
-        &epoch_id,
-        &sk,
-        &prep_id,
-        &domain,
-    )
-    .await;
-    let new_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
-        &new_key_id,
-        &prep_id,
-        old_fhe_keys.private_keys.clone(),
-        &compact_pk,
-        &sk,
-        &domain,
-        &compressed_keyset,
-        Vec::new(),
-    );
-    store_migrated_compressed_material(
-        &crypto_storage,
-        &new_key_id,
-        &epoch_id,
-        &compressed_keyset,
-        &compact_pk,
-        &new_fhe_keys,
-    )
-    .await;
-    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
-
-    // Same ECDSA key as the fixtures, so the EIP-712 signature still recovers to
-    // the expected address, plus a seed so the post-quantum key can be derived.
-    let identity = NodeSigningIdentity::new(
-        sk.clone(),
-        RootSigningSeed::random(&mut AesRng::seed_from_u64(201)),
-    );
-    let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
-
-    crypto_storage
-        .copy_compressed_key_to_original(
-            &new_key_id,
-            &epoch_id,
-            &old_key_id,
-            &epoch_id,
-            &identity,
-            &requested,
-            &domain,
-            meta_store.clone(),
-        )
-        .await
-        .expect("the migration must succeed when every requested scheme can be signed");
-
-    let guarded = crypto_storage
-        .read_guarded_fhe_keys(&old_key_id, &epoch_id)
-        .await
-        .unwrap();
-    let KeyGenMetadata::Current(inner) = &guarded.meta_data else {
-        panic!("the migrated record must carry current metadata");
-    };
-    assert_eq!(
-        inner
-            .signatures
-            .iter()
-            .map(|entry| entry.scheme)
-            .collect::<Vec<_>>(),
-        requested.to_vec(),
-        "the re-signed record must name every requested scheme, in canonical order"
-    );
-}
-
 #[tokio::test]
 async fn test_copy_compressed_key_overwrite() {
     let old_key_id = derive_request_id("copy_overwrite_old").unwrap();
@@ -541,8 +455,7 @@ async fn test_copy_compressed_key_overwrite() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store.clone(),
         )
@@ -588,8 +501,7 @@ async fn test_copy_compressed_key_overwrite() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store.clone(),
         )
@@ -648,8 +560,7 @@ async fn test_copy_compressed_key_missing_source() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store,
         )
@@ -707,8 +618,7 @@ async fn test_copy_compressed_key_legacy_metadata_fails() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store,
         )
@@ -781,8 +691,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store.clone(),
         )
@@ -922,8 +831,7 @@ async fn test_copy_compressed_key_updates_backup_vault() {
             &epoch_id,
             &old_key_id,
             &epoch_id,
-            &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[SigningSchemeType::Ecdsa256k1],
+            &sk,
             &domain,
             meta_store,
         )

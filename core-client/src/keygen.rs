@@ -841,33 +841,6 @@ pub(crate) async fn do_partial_preproc(
     Ok(req_id)
 }
 
-/// Check every signature each preprocessing response carries, under every scheme
-/// the client requested, and that each was produced by a known KMS party.
-/// If `verify` is `None`, the check is skipped.
-pub(crate) fn check_preproc_responses(
-    internal_client: &Client,
-    request_id: &RequestId,
-    verify: Option<&SigVerificationMaterial>,
-    responses: &[KeyGenPreprocResult],
-) -> anyhow::Result<()> {
-    let Some(material) = verify else {
-        return Ok(());
-    };
-    for response in responses {
-        internal_client.process_preproc_response(
-            request_id,
-            &material.domain,
-            response,
-            material.extra_data.clone(),
-        )?;
-    }
-    tracing::info!(
-        "Verified the signatures on {} preprocessing responses for {request_id}",
-        responses.len()
-    );
-    Ok(())
-}
-
 pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
