@@ -8,7 +8,7 @@ use crate::{
     cryptography::{
         compute_user_decrypt_message,
         signatures::{PublicSigKey, Signature, internal_verify_sig},
-        signing::{SchemeVerfKeys, SigningError, SigningSchemeType},
+        signing::{SchemeVerfKeys, SigningSchemeType},
     },
     engine::signed_payload::user_dec_payload,
 };
@@ -549,21 +549,24 @@ where
     let party_id = party.0;
     // A missing key is a rejection rather than a skip: accepting an entry nobody can
     // check would let a party satisfy a requested scheme without a valid signature.
-    keys.get(&party_id)
-        .ok_or(SigningError::NoVerificationKey(first.0))
-        .and_then(|party_keys| {
-            verify_scheme_bound_entries(
-                entries.iter().copied(),
-                party_keys,
-                payloads.dsep,
-                &preimage,
-            )
-        })
-        .map_err(|e| {
-            anyhow_tracked(format!(
-                "a signature of party {party_id} did not verify: {e}"
-            ))
-        })?;
+    let party_keys = keys.get(&party_id).ok_or_else(|| {
+        anyhow_tracked(format!(
+            "party {party_id} published no verification keys, so its {} signature cannot be \
+             checked",
+            first.0
+        ))
+    })?;
+    verify_scheme_bound_entries(
+        entries.iter().copied(),
+        party_keys,
+        payloads.dsep,
+        &preimage,
+    )
+    .map_err(|e| {
+        anyhow_tracked(format!(
+            "a signature of party {party_id} did not verify: {e}"
+        ))
+    })?;
     Ok(Some(party))
 }
 
