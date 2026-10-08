@@ -201,7 +201,6 @@ impl CoreToCoreNetworkConfig {
     ///
     /// It balances two concerns: give messages outstanding after session closure a chance to be
     /// delivered, while also allowing for quick cleanup once the sender is done with its work.
-    /// This fraction is a load-shedding policy, not a guarantee of delivery or connection recovery.
     /// NOTE: A successful session can close before its peers receive all final messages; this
     /// allowance can discard them if the receiving party is very slow or the network path is broken.
     pub fn get_closed_session_delivery_timeout(&self) -> Duration {
