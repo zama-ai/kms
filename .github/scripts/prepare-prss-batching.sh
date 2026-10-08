@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
-output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY [all|group16]}
+output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY [all|group16|accumulate|refactor]}
 comparison=${2:-all}
 [[ "$output" = /* ]] || { echo 'Output must be an absolute path' >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
@@ -17,6 +17,10 @@ printf '%s\n' "$scalar_ref" > "$output/scalar-commit.txt"
 
 case "$comparison" in
     group16) variants=(group8-word group16-word) ;;
+    # Array-returning PRF groups from a fixed commit against in-place accumulation from the checkout.
+    accumulate) variants=(group8-word group16-word group8-acc group16-acc) ;;
+    # Local only: the uncommitted accumulate snapshot against the checkout's infallible, degree-sized kernels.
+    refactor) variants=(group8-acc group16-acc group8-new group16-new) ;;
     all)
         variants=(scalar group2 group4 group8 scalar-word group8-word group16-word)
         case "$(uname -m)" in
@@ -31,6 +35,10 @@ printf '%s\n' "${variants[@]}" > "$output/variants.txt"
 printf '%s\n' "$comparison" > "$output/comparison.txt"
 original_group_ref=$(git rev-parse 36bb8f3a7)
 printf '%s\n' "$original_group_ref" > "$output/original-group-commit.txt"
+# Last commit whose grouped PRFs return arrays. The accumulate comparison uses it for its -word baselines.
+word_ref=3ea76bb448b765e07bf61585be02d89128e4efe2
+# Local `git stash create` snapshot of the first in-place accumulation. It exists only in the maintainer's checkout.
+acc_ref=192a80aef7980f0b829f337064ade5ef45c70ecf
 
 for variant in "${variants[@]}"; do
     source_dir="$output/sources/$variant"
@@ -47,8 +55,38 @@ for variant in "${variants[@]}"; do
         prf="$source_dir/core/threshold-execution/src/small_execution/prf.rs"
         case "$variant" in
             *-word)
-                # Portable candidates use the current checkout, including uncommitted source changes.
+                if [[ "$comparison" = accumulate ]]; then
+                    # Baselines keep the array-returning PRF groups, independently of later commits.
+                    git cat-file -e "$word_ref^{commit}"
+                    printf '%s\n' "$word_ref" > "$output/word-commit.txt"
+                    for path in core/threshold-algebra/src/galois_rings/common.rs core/threshold-algebra/src/lib.rs \
+                        core/threshold-execution/src/small_execution/prf.rs core/threshold-execution/src/small_execution/prss.rs; do
+                        git show "$word_ref:$path" > "$source_dir/$path"
+                    done
+                    if grep -q 'fn accumulate_psi_counters' "$prf"; then
+                        echo "Baseline $word_ref already accumulates in place" >&2
+                        exit 1
+                    fi
+                fi
+                # Otherwise portable candidates use the current checkout, including uncommitted source changes.
                 grep -q '^fn write_block(' "$prf"
+                ;;
+            *-acc)
+                if [[ "$comparison" = refactor ]]; then
+                    git cat-file -e "$acc_ref^{commit}"
+                    printf '%s\n' "$acc_ref" > "$output/acc-commit.txt"
+                    for path in core/threshold-algebra/src/galois_rings/common.rs core/threshold-algebra/src/lib.rs \
+                        core/threshold-execution/src/small_execution/prf.rs core/threshold-execution/src/small_execution/prss.rs; do
+                        git show "$acc_ref:$path" > "$source_dir/$path"
+                    done
+                fi
+                # Otherwise in-place accumulation from the current checkout, including uncommitted source changes.
+                grep -q 'fn accumulate_psi_counters' "$prf"
+                grep -q 'fn accumulate_chi_counters' "$prf"
+                ;;
+            *-new)
+                # The checkout's kernels, including uncommitted source changes.
+                grep -q '^fn check_counter_range\|^pub(crate) fn check_counter_range' "$prf"
                 ;;
             *) git show "$original_group_ref:core/threshold-execution/src/small_execution/prf.rs" > "$prf" ;;
         esac
@@ -62,28 +100,35 @@ for variant in "${variants[@]}"; do
             *) echo "Unsupported counter group: $group" >&2; exit 1 ;;
         esac
         prss="$source_dir/core/threshold-execution/src/small_execution/prss.rs"
-        # Restrict substitutions to the two kernels. Fail if their expected group-eight shape has changed.
-        kernel=$(sed -n '/^fn compute_prss</,/^#\[async_trait\]/p' "$prss")
-        [[ $(grep -c 'amount.div_ceil(8)' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8)' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'let idx = group \* 8;' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'let count = (amount - idx).min(8);' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'Result<\[Z; 8\]>' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'let mut sums = \[Z::ZERO; 8\];' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'if count == 8' <<< "$kernel") = 2 ]]
-        [[ $(grep -c 'counters::<Z, 8>' <<< "$kernel") = 2 ]]
-        sed -E "/^fn compute_prss</,/^#\[async_trait\]/ {
-            s/div_ceil\(8\)/div_ceil($group)/g
-            s/group \* 8/group * $group/g
-            s/\.min\(8\)/.min($group)/g
-            s/\[Z; 8\]/[Z; $group]/g
-            s/\[Z::ZERO; 8\]/[Z::ZERO; $group]/g
-            s/count == 8/count == $group/g
-            s/counters::<Z, 8>/counters::<Z, $group>/g
-            s/Encrypt eight consecutive counters/Encrypt $group_word consecutive counters/
-            s/at least 128 groups/at least $((1024 / group)) groups/
-        }" "$prss" > "$prss.tmp"
-        mv "$prss.tmp" "$prss"
+        if grep -q '^const PRF_COUNTER_GROUP: usize = 8;$' "$prss"; then
+            # Current kernels take their group size from one constant.
+            [[ $(grep -c '^const PRF_COUNTER_GROUP: usize = 8;$' "$prss") = 1 ]]
+            sed -E "s/^const PRF_COUNTER_GROUP: usize = 8;$/const PRF_COUNTER_GROUP: usize = $group;/" "$prss" > "$prss.tmp"
+            mv "$prss.tmp" "$prss"
+        else
+            # Older kernels: restrict substitutions to the two kernels. Fail if their expected group-eight shape has changed.
+            kernel=$(sed -n '/^fn compute_prss</,/^#\[async_trait\]/p' "$prss")
+            [[ $(grep -c 'amount.div_ceil(8)' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8)' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'let idx = group \* 8;' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'let count = (amount - idx).min(8);' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'Result<\[Z; 8\]>' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'let mut sums = \[Z::ZERO; 8\];' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'if count == 8' <<< "$kernel") = 2 ]]
+            [[ $(grep -c 'counters::<Z, 8>' <<< "$kernel") = 2 ]]
+            sed -E "/^fn compute_prss</,/^#\[async_trait\]/ {
+                s/div_ceil\(8\)/div_ceil($group)/g
+                s/group \* 8/group * $group/g
+                s/\.min\(8\)/.min($group)/g
+                s/\[Z; 8\]/[Z; $group]/g
+                s/\[Z::ZERO; 8\]/[Z::ZERO; $group]/g
+                s/count == 8/count == $group/g
+                s/counters::<Z, 8>/counters::<Z, $group>/g
+                s/Encrypt eight consecutive counters/Encrypt $group_word consecutive counters/
+                s/at least 128 groups/at least $((1024 / group)) groups/
+            }" "$prss" > "$prss.tmp"
+            mv "$prss.tmp" "$prss"
+        fi
     fi
     # Candidates are applied only to these source copies. Original controls keep their original block writers.
     candidate_patch=

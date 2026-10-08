@@ -11,7 +11,10 @@ use crate::{
     large_execution::vss::{SecureVss, Vss},
     network_value::BroadcastValue,
     runtime::sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
-    small_execution::prf::{PhiAes, chi, phi_range, psi},
+    small_execution::prf::{
+        CHI_COUNTER_BITS, PHI_COUNTER_BITS, PHI_MAX_BOUND, PSI_COUNTER_BITS, PhiAes,
+        accumulate_chi_counters, accumulate_psi_counters, check_counter_range, chi, phi_range, psi,
+    },
 };
 use algebra::{
     matrix::{VdmMatrix, compute_powers_list},
@@ -21,7 +24,7 @@ use algebra::{
 use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -632,76 +635,63 @@ where
     Ok(compute_powers_list(&parties, threshold))
 }
 
+/// Number of consecutive counters each PRSS/PRZS kernel encrypts with one AES call per subset key.
+/// F4 gives 4 blocks per counter, so 16 counters fill the x86 VAES-512 backend's 64-block batch.
+const PRF_COUNTER_GROUP: usize = 8;
+
 /// Computes PRSS values without submitting a task or advancing session counters. Each node computes its own shares
 /// using subset keys and coefficients prepared for its role when the session was constructed.
+/// The caller checks that all `amount` counters are below `2^PSI_COUNTER_BITS`.
 fn compute_prss<Z: Ring + PRSSConversions>(
     psi_keys: &[PsiAes],
     f_a_at_role: &[Z],
     prss_ctr: u128,
     amount: usize,
-) -> anyhow::Result<Vec<Z>> {
-    // Encrypt eight consecutive counters under each subset key, then accumulate each output separately.
-    // This gives the AES backend more independent blocks without changing the counter encoding or output order.
-    let groups = amount.div_ceil(8);
-    // Rayon counts groups, while the setting counts output values. With the default 1024-value minimum,
-    // each Rayon piece needs at least 128 groups.
-    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8);
-    (0..groups)
-        .into_par_iter()
+) -> Vec<Z> {
+    let mut shares = vec![Z::ZERO; amount];
+    // Rayon counts groups, while the setting counts output values.
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(PRF_COUNTER_GROUP);
+    shares
+        .par_chunks_mut(PRF_COUNTER_GROUP)
         .with_min_len(min_groups)
-        .flat_map_iter(|group| {
-            let idx = group * 8;
-            let count = (amount - idx).min(8);
-            let ctr = prss_ctr + idx as u128;
-            let result = (|| -> anyhow::Result<[Z; 8]> {
-                let mut sums = [Z::ZERO; 8];
-                for (psi_key, &f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
-                    if count == 8 {
-                        let random =
-                            crate::small_execution::prf::psi_counters::<Z, 8>(psi_key, ctr)?;
-                        for (sum, random) in sums.iter_mut().zip(random) {
-                            *sum += f_a_at_role * random;
-                        }
-                    } else {
-                        // A short final group evaluates only requested counters. Padding could evaluate past
-                        // psi's counter limit.
-                        for (offset, sum) in sums[..count].iter_mut().enumerate() {
-                            *sum += f_a_at_role
-                                * crate::small_execution::prf::psi_iter(
-                                    psi_key,
-                                    ctr + offset as u128,
-                                )?;
-                        }
+        .enumerate()
+        .for_each(|(group, outputs)| {
+            let ctr = prss_ctr + (group * PRF_COUNTER_GROUP) as u128;
+            let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+            // Hot loop: one AES call per subset key covers the whole group.
+            for (psi_key, &f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
+                if outputs.len() == PRF_COUNTER_GROUP {
+                    accumulate_psi_counters(psi_key, ctr, f_a_at_role, &mut sums);
+                } else {
+                    // Cold: the short final group. Evaluate only requested counters; padding could pass the limit.
+                    for (offset, sum) in sums[..outputs.len()].iter_mut().enumerate() {
+                        let ctr = ctr + offset as u128;
+                        accumulate_psi_counters(
+                            psi_key,
+                            ctr,
+                            f_a_at_role,
+                            std::array::from_mut(sum),
+                        );
                     }
                 }
-                Ok(sums)
-            })();
-            // Stack arrays avoid a Vec allocation per group. Yield one error on failure; otherwise retain
-            // counter order in the final Vec.
-            let (values, error) = match result {
-                Ok(sums) => (Some(sums), None),
-                Err(error) => (None, Some(error)),
-            };
-            values
-                .into_iter()
-                .flatten()
-                .take(count)
-                .map(Ok)
-                .chain(error.map(Err))
-        })
-        .collect()
+            }
+            outputs.copy_from_slice(&sums[..outputs.len()]);
+        });
+    shares
 }
 
+/// Computes PRZS values without submitting a task or advancing session counters, like [`compute_prss`].
+/// The caller checks that all `amount` counters are below `2^CHI_COUNTER_BITS` when `threshold` is nonzero.
 fn compute_przs<Z: Ring + PRSSConversions>(
     prfs: &SessionPrfs<Z>,
     threshold: u8,
     przs_ctr: u128,
     amount: usize,
-) -> anyhow::Result<Vec<Z>> {
+) -> Vec<Z> {
     let threshold = threshold as usize;
     // No chi evaluations at threshold zero; chunks_exact requires a nonzero size.
     if threshold == 0 {
-        return Ok(vec![Z::ZERO; amount]);
+        return vec![Z::ZERO; amount];
     }
     // Per-set invariants, computed once instead of per element: the products
     // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
@@ -713,51 +703,39 @@ fn compute_przs<Z: Ring + PRSSConversions>(
         }
     }
 
-    // Batch counters at each threshold index; each output keeps its own accumulator and the same subset order.
-    let groups = amount.div_ceil(8);
-    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(8);
-    (0..groups)
-        .into_par_iter()
+    let mut shares = vec![Z::ZERO; amount];
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(PRF_COUNTER_GROUP);
+    shares
+        .par_chunks_mut(PRF_COUNTER_GROUP)
         .with_min_len(min_groups)
-        .flat_map_iter(|group| {
-            let idx = group * 8;
-            let count = (amount - idx).min(8);
-            let ctr = przs_ctr + idx as u128;
-            let result = (|| -> anyhow::Result<[Z; 8]> {
-                let mut sums = [Z::ZERO; 8];
-                for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold))
-                {
-                    for (j_idx, &fa_alpha_j) in coefficients.iter().enumerate() {
-                        let j = (j_idx + 1) as u8;
-                        if count == 8 {
-                            let random =
-                                crate::small_execution::prf::chi_counters::<Z, 8>(chi_aes, ctr, j)?;
-                            for (sum, random) in sums.iter_mut().zip(random) {
-                                *sum += fa_alpha_j * random;
-                            }
-                        } else {
-                            // Do not pad a short final group: an unused counter could exceed chi's 2^104 limit.
-                            for (offset, sum) in sums[..count].iter_mut().enumerate() {
-                                *sum += fa_alpha_j * chi(chi_aes, ctr + offset as u128, j)?;
-                            }
+        .enumerate()
+        .for_each(|(group, outputs)| {
+            let ctr = przs_ctr + (group * PRF_COUNTER_GROUP) as u128;
+            let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+            // Hot loop: one AES call per (subset key, threshold index) covers the whole group.
+            for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold)) {
+                for (j_idx, &fa_alpha_j) in coefficients.iter().enumerate() {
+                    let j = (j_idx + 1) as u8;
+                    if outputs.len() == PRF_COUNTER_GROUP {
+                        accumulate_chi_counters(chi_aes, ctr, j, fa_alpha_j, &mut sums);
+                    } else {
+                        // Cold: the short final group, as in compute_prss.
+                        for (offset, sum) in sums[..outputs.len()].iter_mut().enumerate() {
+                            let ctr = ctr + offset as u128;
+                            accumulate_chi_counters(
+                                chi_aes,
+                                ctr,
+                                j,
+                                fa_alpha_j,
+                                std::array::from_mut(sum),
+                            );
                         }
                     }
                 }
-                Ok(sums)
-            })();
-            // As in PRSS, keep each group's outputs on the stack and preserve their order in the final vector.
-            let (values, error) = match result {
-                Ok(sums) => (Some(sums), None),
-                Err(error) => (None, Some(error)),
-            };
-            values
-                .into_iter()
-                .flatten()
-                .take(count)
-                .map(Ok)
-                .chain(error.map(Err))
-        })
-        .collect()
+            }
+            outputs.copy_from_slice(&sums[..outputs.len()]);
+        });
+    shares
 }
 
 #[async_trait]
@@ -781,31 +759,39 @@ where
         base_bound: u128,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
-        // Expand the protocol's base bound by the statistical security factor.
-        let sampling_bound = base_bound << STATSEC;
-
         assert_eq!(party_role, self.prfs.role);
+        // Expand the protocol's base bound by the statistical security factor. Check before shifting so that a large
+        // bound cannot lose its high bits.
+        if base_bound > PHI_MAX_BOUND >> STATSEC {
+            return Err(anyhow_error_and_log(format!(
+                "mask.next: bound {base_bound} times 2^{STATSEC} exceeds 2^126"
+            )));
+        }
+        let sampling_bound = base_bound << STATSEC;
         // The Rayon task owns this handle so it can outlive the awaiting future.
         let prfs = Arc::clone(&self.prfs);
         let mask_ctr = self.counters.mask_ctr;
+        // Each element consumes two phi counters. Check the whole range once; phi_range asserts it.
+        check_counter_range("phi", mask_ctr, 2 * amount as u128, PHI_COUNTER_BITS)?;
 
         // Element `idx` is the f_A-weighted sum over all sets of phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This
         // matches repeated scalar calls while still batching each chunk's AES-PRF evaluations.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+        let res = spawn_compute_bound(move || {
             let chunk = *PRSS_GEN_PAR_MIN_CHUNK;
             let mut res = vec![Z::ZERO; amount];
-            res.par_chunks_mut(chunk).enumerate().try_for_each(
-                |(chunk_idx, out)| -> anyhow::Result<()> {
+            res.par_chunks_mut(chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out)| {
                     let lo = chunk_idx * chunk;
+                    // Hot loop: one AES call per subset key covers the chunk's counter range.
                     for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
-                        // One pipelined AES call for the chunk's counter range. Element `idx`
-                        // consumes two distinct phi counters, matching one scalar mask_next().
+                        // Element `idx` consumes two distinct phi counters, matching one scalar mask_next().
                         let phi_vals = phi_range(
                             phi_aes,
                             mask_ctr + 2 * lo as u128,
                             2 * out.len(),
                             sampling_bound,
-                        )?;
+                        );
 
                         for (j, out_elem) in out.iter_mut().enumerate() {
                             let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
@@ -818,13 +804,11 @@ where
                             *out_elem += f_a_at_role.mul_by_i128(phi);
                         }
                     }
-                    Ok(())
-                },
-            )?;
-            Ok(res)
+                });
+            res
         })
         .instrument(tracing::Span::current())
-        .await??;
+        .await?;
 
         // Advance the counter by two per element, matching one mask_next() call per
         // element (each consumes two phi counters).
@@ -844,15 +828,17 @@ where
         if amount == 0 {
             return Ok(Vec::new());
         }
+        let prss_ctr = self.counters.prss_ctr;
+        // Check the whole range once; the PRFs assert it.
+        check_counter_range("psi", prss_ctr, amount as u128, PSI_COUNTER_BITS)?;
         // The Rayon task owns this handle so it can outlive the awaiting future.
         let prfs = Arc::clone(&self.prfs);
-        let prss_ctr = self.counters.prss_ctr;
 
         let res = spawn_compute_bound(move || {
             compute_prss(&prfs.psi, &prfs.f_a_at_role, prss_ctr, amount)
         })
         .instrument(tracing::Span::current())
-        .await??;
+        .await?;
 
         self.counters.prss_ctr += amount as u128;
 
@@ -881,17 +867,18 @@ where
         if amount == 0 {
             return Ok(Vec::new());
         }
+        let przs_ctr = self.counters.przs_ctr;
+        // Check the whole range once; the PRFs assert it. Threshold zero evaluates no chi.
+        if threshold > 0 {
+            check_counter_range("chi", przs_ctr, amount as u128, CHI_COUNTER_BITS)?;
+        }
         // The Rayon task owns this handle so it can outlive the future.
         let prfs = Arc::clone(&self.prfs);
-        let przs_ctr = self.counters.przs_ctr;
 
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = przs_ctr + idx`.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            compute_przs(&prfs, threshold, przs_ctr, amount)
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+        // Element `idx` uses `ctr = przs_ctr + idx`.
+        let res = spawn_compute_bound(move || compute_przs(&prfs, threshold, przs_ctr, amount))
+            .instrument(tracing::Span::current())
+            .await?;
 
         self.counters.przs_ctr += amount as u128;
 
@@ -915,10 +902,11 @@ where
             ));
         }
 
-        //Compute all psi values for subsets I am part of
+        check_counter_range("psi", ctr, 1, PSI_COUNTER_BITS)?;
+        // Cold path: one psi per subset for a single counter.
         let mut psi_values = Vec::with_capacity(sets.len());
         for (cur_set, psi_key) in sets.iter().zip(self.prfs.psi.iter()) {
-            let psi = vec![psi(psi_key, ctr)?];
+            let psi = vec![psi(psi_key, ctr)];
             psi_values.push((cur_set.parties.clone(), psi));
         }
 
@@ -956,11 +944,15 @@ where
                 "przs.check: subset and PRF counts differ",
             ));
         }
+        if session.threshold() > 0 {
+            check_counter_range("chi", ctr, 1, CHI_COUNTER_BITS)?;
+        }
+        // Cold path: one chi per subset and threshold index for a single counter.
         let mut chi_values = Vec::with_capacity(sets.len());
         for (cur_set, chi_aes) in sets.iter().zip(self.prfs.chi.iter()) {
             let mut chi_list = Vec::with_capacity(session.threshold() as usize);
             for j in 1..=session.threshold() {
-                chi_list.push(chi(chi_aes, ctr, j)?);
+                chi_list.push(chi(chi_aes, ctr, j));
             }
             chi_values.push((cur_set.parties.clone(), chi_list));
         }
@@ -1337,6 +1329,7 @@ mod tests {
     };
     use hashing::hash_element_w_size;
     use rand::SeedableRng;
+    use rayon::iter::IntoParallelIterator;
     use rstest::rstest;
     use std::num::Wrapping;
     use std::panic::AssertUnwindSafe;
@@ -1379,12 +1372,11 @@ mod tests {
                         let f_a = set.f_a_points[&role];
                         for (idx, value) in expected_prss.iter_mut().enumerate() {
                             let ctr = start + idx as u128;
-                            *value += f_a * psi(psi_key, ctr).unwrap();
+                            *value += f_a * psi(psi_key, ctr);
                         }
                     }
                     assert_eq!(
-                        compute_prss(&state.prfs.psi, &state.prfs.f_a_at_role, start, amount)
-                            .unwrap(),
+                        compute_prss(&state.prfs.psi, &state.prfs.f_a_at_role, start, amount),
                         expected_prss
                     );
                     let mut request = state.clone();
@@ -1408,8 +1400,7 @@ mod tests {
                                     .skip(1)
                                     .take(requested_threshold)
                                 {
-                                    *value +=
-                                        (f_a * *alpha_power) * chi(chi_key, ctr, j as u8).unwrap();
+                                    *value += (f_a * *alpha_power) * chi(chi_key, ctr, j as u8);
                                 }
                             }
                         }
@@ -1430,8 +1421,7 @@ mod tests {
                         let mut expected_mask = vec![Z::ZERO; amount];
                         for (set, (_, _, phi_key)) in setup.sets.iter().zip(&keys) {
                             let phi =
-                                phi_range(phi_key, start, 2 * amount, B_SWITCH_SQUASH << STATSEC)
-                                    .unwrap();
+                                phi_range(phi_key, start, 2 * amount, B_SWITCH_SQUASH << STATSEC);
                             for (idx, value) in expected_mask.iter_mut().enumerate() {
                                 *value += set.f_a_points[&role]
                                     .mul_by_i128(phi[2 * idx] + phi[2 * idx + 1]);
@@ -1464,21 +1454,24 @@ mod tests {
         prss_ctr: u128,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
+        // Written independently of check_counter_range: the last counter must stay below 2^112.
+        if amount > 0 && prss_ctr + amount as u128 > 1 << 112 {
+            anyhow::bail!("psi counter range exceeded");
+        }
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = prss_ctr + idx`.
-        (0..amount)
+        Ok((0..amount)
             .into_par_iter()
             .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
             .map(|idx| {
                 let ctr = prss_ctr + idx as u128;
                 let mut res = Z::ZERO;
                 for (psi_key, f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
-                    let psi = psi(psi_key, ctr)?;
-                    res += *f_a_at_role * psi;
+                    res += *f_a_at_role * psi(psi_key, ctr);
                 }
-                Ok(res)
+                res
             })
-            .collect::<anyhow::Result<Vec<_>>>()
+            .collect())
     }
 
     fn compute_przs_scalar<Z: Ring + PRSSConversions>(
@@ -1492,6 +1485,10 @@ mod tests {
         if threshold == 0 {
             return Ok(vec![Z::ZERO; amount]);
         }
+        // Written independently of check_counter_range: the last counter must stay below 2^104.
+        if amount > 0 && przs_ctr + amount as u128 > 1 << 104 {
+            anyhow::bail!("chi counter range exceeded");
+        }
         // Per-set invariants, computed once instead of per element: the products
         // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
         // Store one row per subset in a single allocation, in the same order as chi.
@@ -1502,7 +1499,7 @@ mod tests {
             }
         }
 
-        (0..amount)
+        Ok((0..amount)
             .into_par_iter()
             .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
             .map(|idx| {
@@ -1511,13 +1508,12 @@ mod tests {
                 for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold))
                 {
                     for (j_idx, fa_alpha_j) in coefficients.iter().enumerate() {
-                        let chi = chi(chi_aes, ctr, (j_idx + 1) as u8)?;
-                        res += *fa_alpha_j * chi;
+                        res += *fa_alpha_j * chi(chi_aes, ctr, (j_idx + 1) as u8);
                     }
                 }
-                Ok(res)
+                res
             })
-            .collect::<anyhow::Result<Vec<_>>>()
+            .collect())
     }
 
     #[tokio::test]
@@ -1796,6 +1792,67 @@ mod tests {
         // Empty requests consume no randomness, including at the counter limit.
         assert!(state.prss_next_vec(role, 0).await.unwrap().is_empty());
         assert_eq!(state.counters.prss_ctr, limit);
+
+        // PRZS checks its range only when it evaluates chi.
+        let limit = 1_u128 << 104;
+        state.counters.przs_ctr = limit - 1;
+        assert!(state.przs_next_vec(role, 1, 2).await.is_err());
+        assert_eq!(state.counters.przs_ctr, limit - 1);
+        assert_eq!(state.przs_next_vec(role, 1, 1).await.unwrap().len(), 1);
+        assert_eq!(state.counters.przs_ctr, limit);
+        assert!(state.przs_next_vec(role, 1, 1).await.is_err());
+        assert_eq!(
+            state.przs_next_vec(role, 0, 1).await.unwrap(),
+            vec![ResiduePolyF4Z128::ZERO]
+        );
+
+        // Each mask element consumes two phi counters.
+        let limit = 1_u128 << 120;
+        state.counters.mask_ctr = limit - 3;
+        assert!(state.mask_next_vec(role, B_SWITCH_SQUASH, 2).await.is_err());
+        assert_eq!(state.counters.mask_ctr, limit - 3);
+        assert_eq!(
+            state
+                .mask_next_vec(role, B_SWITCH_SQUASH, 1)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(state.counters.mask_ctr, limit - 1);
+        // A bound whose sampling bound exceeds 2^126 is rejected before shifting.
+        state.counters.mask_ctr = 0;
+        let error = state
+            .mask_next_vec(role, (PHI_MAX_BOUND >> STATSEC) + 1, 1)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 2^126"));
+        assert_eq!(state.counters.mask_ctr, 0);
+    }
+
+    #[tokio::test]
+    async fn test_prepared_session_checks_reject_counters_past_the_limit() {
+        let role = Role::indexed_from_one(2);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let state = setup
+            .new_prss_session_state(SessionId::from(42), role)
+            .unwrap();
+        let mut session = get_networkless_base_session_for_parties(4, 1, role);
+        // Both checks must fail before evaluating a PRF or broadcasting.
+        let error = state.prss_check(&mut session, 1 << 112).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("psi counters must stay below 2^112")
+        );
+        let error = state.przs_check(&mut session, 1 << 104).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("chi counters must stay below 2^104")
+        );
     }
 
     #[tokio::test]
@@ -2398,7 +2455,7 @@ mod tests {
         let mut psi_sum = ResiduePolyF4Z128::ZERO;
         for (idx, _set) in all_sets.iter().enumerate() {
             let psi_aes = PsiAes::new(&keys[idx], sid);
-            let psi: ResiduePolyF4Z128 = psi(&psi_aes, 0).unwrap();
+            let psi: ResiduePolyF4Z128 = psi(&psi_aes, 0);
             psi_sum += psi
         }
         tracing::info!("reconstructed psi sum: {:?}", psi_sum);
@@ -2765,7 +2822,7 @@ mod tests {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
             let psi_next = cloned_state.prss_next(role).await.unwrap();
 
-            let local_psi = psi(&state.prfs.psi[i], state.counters.prss_ctr).unwrap();
+            let local_psi = psi(&state.prfs.psi[i], state.counters.prss_ctr);
             let local_psi_value = vec![local_psi];
             let true_psi_vals = HashMap::from([(&set.parties, &local_psi_value)]);
 

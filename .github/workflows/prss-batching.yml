@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-batching"
-          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir" group16
+          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir" accumulate
           {
             echo "PRSS_ARTIFACT_DIR=$artifact_dir"
             echo "CRITERION_HOME=$artifact_dir/criterion"

@@ -10,8 +10,13 @@ The preparation script applies these patches only to isolated benchmark sources.
 | `group8-word` | Eight counters | Safe `u128` construction and little-endian block assignment |
 | `group16-word` | Sixteen counters | Same safe construction; 64 AES blocks per F4 group |
 | `group8-neon` | Eight counters | Experimental unsafe NEON store on little-endian ARM with NEON enabled |
+| `group8-acc`, `group16-acc` | Eight/sixteen counters, outputs added in place | Same safe construction as `-word`; checkout source |
 
-The workflow now selects the `group16` comparison: `group8-word` against `group16-word`, with no NEON variant.
+The workflow selects the `accumulate` comparison: `group8-word` and `group16-word` from commit `3ea76bb44`, whose PRF groups
+return arrays, against `group8-acc` and `group16-acc` from the checkout, which add each output to the caller's sums in place.
+The `group16` comparison measures only `group8-word` against `group16-word`.
+The local `refactor` comparison builds `group8-acc`/`group16-acc` from the uncommitted snapshot `192a80aef` against
+`group8-new`/`group16-new` from the checkout. Current kernels take their group size from `PRF_COUNTER_GROUP`.
 The preparation script's default `all` mode retains the complete control matrix. In that mode NEON is prepared only on ARM.
 Neither safe assignment nor the variant name guarantees one machine store. Inspect the saved assembly.
 
