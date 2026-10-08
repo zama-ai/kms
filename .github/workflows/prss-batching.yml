@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-batching"
-          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir"
+          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir" group16
           {
             echo "PRSS_ARTIFACT_DIR=$artifact_dir"
             echo "CRITERION_HOME=$artifact_dir/criterion"
@@ -66,6 +66,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          reference_variant=$(head -n 1 "$PRSS_ARTIFACT_DIR/variants.txt")
           while IFS= read -r variant; do
             manifest="$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.toml"
             # Archived workspaces share package identities. Separate targets prevent reuse of another variant's crates.
@@ -83,7 +84,7 @@ jobs:
             "$PRSS_ARTIFACT_DIR/$variant-bench" --test > "$PRSS_ARTIFACT_DIR/$variant-smoke.log" 2>&1
             cargo tree --locked --manifest-path "$manifest" -p threshold-execution -F testing -e features \
               > "$PRSS_ARTIFACT_DIR/$variant-dependency-features.txt"
-            cmp "$PRSS_ARTIFACT_DIR/sources/scalar/Cargo.lock" "$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.lock"
+            cmp "$PRSS_ARTIFACT_DIR/sources/$reference_variant/Cargo.lock" "$PRSS_ARTIFACT_DIR/sources/$variant/Cargo.lock"
             tar -czf "$PRSS_ARTIFACT_DIR/$variant-source.tar.gz" -C "$PRSS_ARTIFACT_DIR/sources" "$variant"
           done < "$PRSS_ARTIFACT_DIR/variants.txt"
           sha256sum "$PRSS_ARTIFACT_DIR/"*-bench > "$PRSS_ARTIFACT_DIR/executables.sha256"

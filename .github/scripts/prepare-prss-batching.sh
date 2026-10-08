@@ -3,7 +3,8 @@
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
-output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY}
+output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY [all|group16]}
+comparison=${2:-all}
 [[ "$output" = /* ]] || { echo 'Output must be an absolute path' >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
 mkdir "$output"
@@ -14,13 +15,22 @@ git rev-parse HEAD > "$output/commit.txt"
 git diff HEAD -- core/threshold-execution core/threshold-algebra > "$output/working-source.patch"
 printf '%s\n' "$scalar_ref" > "$output/scalar-commit.txt"
 
-variants=(scalar group2 group4 group8 scalar-word group8-word)
-case "$(uname -m)" in
-    arm64|aarch64) variants+=(group8-neon) ;;
-    *) printf '%s\n' 'NEON candidate skipped: this host is not ARM; group8-word measures the portable path.' \
-        > "$output/neon-skipped.txt" ;;
+case "$comparison" in
+    group16) variants=(group8-word group16-word) ;;
+    all)
+        variants=(scalar group2 group4 group8 scalar-word group8-word group16-word)
+        case "$(uname -m)" in
+            arm64|aarch64) variants+=(group8-neon) ;;
+            *) printf '%s\n' 'NEON candidate skipped: this host is not ARM; group8-word measures the portable path.' \
+                > "$output/neon-skipped.txt" ;;
+        esac
+        ;;
+    *) echo "Unknown comparison: $comparison" >&2; exit 1 ;;
 esac
 printf '%s\n' "${variants[@]}" > "$output/variants.txt"
+printf '%s\n' "$comparison" > "$output/comparison.txt"
+original_group_ref=$(git rev-parse 36bb8f3a7)
+printf '%s\n' "$original_group_ref" > "$output/original-group-commit.txt"
 
 for variant in "${variants[@]}"; do
     source_dir="$output/sources/$variant"
@@ -34,12 +44,22 @@ for variant in "${variants[@]}"; do
             core/threshold-execution/src/small_execution/prf.rs core/threshold-execution/src/small_execution/prss.rs; do
             cp "$repo_root/$path" "$source_dir/$path"
         done
+        prf="$source_dir/core/threshold-execution/src/small_execution/prf.rs"
+        case "$variant" in
+            *-word)
+                # Portable candidates use the current checkout, including uncommitted source changes.
+                grep -q '^fn write_block(' "$prf"
+                ;;
+            *) git show "$original_group_ref:core/threshold-execution/src/small_execution/prf.rs" > "$prf" ;;
+        esac
         group=${variant#group}
         group=${group%%-*}
         case "$group" in
             2) group_word=two ;;
             4) group_word=four ;;
             8) group_word=eight ;;
+            16) group_word=sixteen ;;
+            *) echo "Unsupported counter group: $group" >&2; exit 1 ;;
         esac
         prss="$source_dir/core/threshold-execution/src/small_execution/prss.rs"
         # Restrict substitutions to the two kernels. Fail if their expected group-eight shape has changed.
@@ -69,7 +89,6 @@ for variant in "${variants[@]}"; do
     candidate_patch=
     case "$variant" in
         scalar-word) candidate_patch='scalar-word' ;;
-        group8-word) candidate_patch='group-word' ;;
         group8-neon) candidate_patch='group-neon' ;;
     esac
     if [[ -n "$candidate_patch" ]]; then
