@@ -12,7 +12,9 @@ The preparation script applies these patches only to isolated benchmark sources.
 | `group8-neon` | Eight counters | Experimental unsafe NEON store on little-endian ARM with NEON enabled |
 | `group8-acc`, `group16-acc` | Eight/sixteen counters, outputs added in place | Same safe construction as `-word`; checkout source |
 
-The workflow selects the `accumulate` comparison: `group8-word` and `group16-word` from commit `3ea76bb44`, whose PRF groups
+The workflow selects the `full` comparison and measures every harness case, including masks and session construction.
+Its variants are `main` at `d09406212`, `scalar` (#894 head `d4ec6790c`), and `group8-new`/`group16-new` from the checkout.
+main uses the same harness with its older session constructor. The `main` comparison measures only `main` and `group16-new`. The `accumulate` comparison measured `group8-word` and `group16-word` from commit `3ea76bb44`, whose PRF groups
 return arrays, against `group8-acc` and `group16-acc` from the checkout, which add each output to the caller's sums in place.
 The `group16` comparison measures only `group8-word` against `group16-word`.
 The local `refactor` comparison builds `group8-acc`/`group16-acc` from the uncommitted snapshot `192a80aef` against

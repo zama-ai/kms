@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
-output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY [all|group16|accumulate|refactor]}
+output=${1:?Usage: prepare-prss-batching.sh ABSOLUTE_OUTPUT_DIRECTORY [all|group16|accumulate|refactor|main|full]}
 comparison=${2:-all}
 [[ "$output" = /* ]] || { echo 'Output must be an absolute path' >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
@@ -21,6 +21,10 @@ case "$comparison" in
     accumulate) variants=(group8-word group16-word group8-acc group16-acc) ;;
     # Local only: the uncommitted accumulate snapshot against the checkout's infallible, degree-sized kernels.
     refactor) variants=(group8-acc group16-acc group8-new group16-new) ;;
+    # Current main against this branch's group-16 kernels.
+    main) variants=(main group16-new) ;;
+    # PR evidence: main, #894 alone (scalar), and this branch with groups of 8 and 16.
+    full) variants=(main scalar group8-new group16-new) ;;
     all)
         variants=(scalar group2 group4 group8 scalar-word group8-word group16-word)
         case "$(uname -m)" in
@@ -39,11 +43,17 @@ printf '%s\n' "$original_group_ref" > "$output/original-group-commit.txt"
 word_ref=3ea76bb448b765e07bf61585be02d89128e4efe2
 # Local `git stash create` snapshot of the first in-place accumulation. It exists only in the maintainer's checkout.
 acc_ref=192a80aef7980f0b829f337064ade5ef45c70ecf
+# main when the comparison was prepared; its PRSS sources and Cargo.lock match this branch's merge base.
+main_ref=d09406212e1a0d510436eef665ee197d0c1b1788
 
 for variant in "${variants[@]}"; do
     source_dir="$output/sources/$variant"
     mkdir "$source_dir"
-    if [[ "$variant" = scalar || "$variant" = scalar-word ]]; then
+    if [[ "$variant" = main ]]; then
+        git cat-file -e "$main_ref^{commit}"
+        printf '%s\n' "$main_ref" > "$output/main-commit.txt"
+        git archive "$main_ref" | tar -xf - -C "$source_dir"
+    elif [[ "$variant" = scalar || "$variant" = scalar-word ]]; then
         git archive "$scalar_ref" | tar -xf - -C "$source_dir"
     else
         git archive HEAD | tar -xf - -C "$source_dir"
@@ -158,5 +168,15 @@ harness = false
 required-features = ["testing"]
 TOML
     mkdir -p "$source_dir/core/threshold-execution/benches"
-    cp "$repo_root/.github/benchmarks/prss_batching.rs" "$source_dir/core/threshold-execution/benches/prss_batching.rs"
+    harness="$source_dir/core/threshold-execution/benches/prss_batching.rs"
+    cp "$repo_root/.github/benchmarks/prss_batching.rs" "$harness"
+    if [[ "$variant" = main ]]; then
+        # main predates the role-checked session constructor; this is the harness's only API difference.
+        # The single quotes keep the harness's macro variables literal.
+        # shellcheck disable=SC2016
+        [[ $(grep -c 'new_prss_session_state(\$sid, \$role).unwrap()' "$harness") = 1 ]]
+        # shellcheck disable=SC2016
+        sed -i.bak 's/new_prss_session_state(\$sid, \$role).unwrap()/new_prss_session_state($sid)/' "$harness"
+        rm "$harness.bak"
+    fi
 done

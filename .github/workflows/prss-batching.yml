@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-batching"
-          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir" accumulate
+          bash .github/scripts/prepare-prss-batching.sh "$artifact_dir" full
           {
             echo "PRSS_ARTIFACT_DIR=$artifact_dir"
             echo "CRITERION_HOME=$artifact_dir/criterion"
@@ -101,7 +101,6 @@ jobs:
               baselines+=("$baseline")
               RAYON_NUM_THREADS="$threads" "$PRSS_ARTIFACT_DIR/$variant-bench" --bench \
                 --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline "$baseline" \
-                '^prss/f4_z(64|128)/parties_(4_threshold_1|13_threshold_4)/(prss_next/30000|przs_next/10000|triple_inputs/10000)$' \
                 > "$PRSS_ARTIFACT_DIR/$baseline.log" 2>&1
               critcmp --target-dir "$PRSS_ARTIFACT_DIR" --export "$baseline" > "$PRSS_ARTIFACT_DIR/$baseline.json"
             done < "$PRSS_ARTIFACT_DIR/variants.txt"
