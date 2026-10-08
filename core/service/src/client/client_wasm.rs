@@ -1,6 +1,6 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::{SchemeVerfKeys, SigningError, SigningSchemeType};
-use kms_grpc::rpc_types::PlaintextReceiver;
+use kms_grpc::rpc_types::ClientAddress;
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ pub struct Client {
     pub(crate) rng: Box<AesRng>,
     pub(crate) server_identities: ServerIdentities,
     pub(crate) scheme_verf_keys: SchemeVerfKeys,
-    pub(crate) client_address: PlaintextReceiver,
+    pub(crate) client_address: ClientAddress,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
     pub(crate) decryption_mode: DecryptionMode,
@@ -76,7 +76,7 @@ impl Client {
     pub fn new(
         server_pks: HashMap<u32, PublicSigKey>,
         scheme_verf_keys: SchemeVerfKeys,
-        client_address: impl Into<PlaintextReceiver>,
+        client_address: impl Into<ClientAddress>,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
         decryption_mode: Option<DecryptionMode>,
@@ -162,7 +162,7 @@ impl Client {
         }
     }
 
-    pub fn get_client_address(&self) -> PlaintextReceiver {
+    pub fn get_client_address(&self) -> ClientAddress {
         self.client_address
     }
 }

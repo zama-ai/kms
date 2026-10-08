@@ -347,7 +347,7 @@ EIP-712 signature validation on user-decryption requests is shared between
 the server and in-browser verifiers via the `validation_wasm` build.
 
 The `client_address` of a user-decryption request names the user, who is on
-an EVM host chain or on Solana. `PlaintextReceiver` in `kms-grpc` parses it:
+an EVM host chain or on Solana. `ClientAddress` in `kms-grpc` parses it:
 `0x` and EIP-55 hex is a 20-byte EVM address, and base58 of 32 bytes is a
 Solana public key. The receiver picks the struct that links the response to
 the request, `UserDecryptionLinker` or `SolanaUserDecryptionLinker`, and the

@@ -14,7 +14,7 @@ use kms_grpc::kms::v1::{
     CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
+use kms_grpc::rpc_types::{ClientAddress, fhe_types_to_num_blocks};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -413,7 +413,7 @@ impl TestUser {
     /// signing key.
     pub(crate) fn set_user(self, client: &mut Client) {
         if let Self::Solana = self {
-            client.client_address = PlaintextReceiver::Solana([0x11; 32]);
+            client.client_address = ClientAddress::Solana([0x11; 32]);
         }
     }
 }
