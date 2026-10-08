@@ -280,6 +280,10 @@ kmsInit:
   affinity:
   tolerations:
 
+# When enabled with Nitro, the job uses the built-in system-cluster-critical
+# priority so it can preempt this release's core pod and take its enclave slot.
+# On upgrade it is pinned to that pod's node, so it does not evict another party.
+# Leave enabled false except for the install or the one upgrade that must run the job.
 kmsGenCertAndKeys:
   enabled: false
   nameOverride:
