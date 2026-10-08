@@ -154,8 +154,7 @@ pub fn new_server_id_addr(id: u32, addr: String) -> Result<ServerIdAddr, JsError
 /// * `server_addrs` - a list of KMS server ID with EIP-55 addresses,
 /// the elements in the list can be created using [new_server_id_addr].
 ///
-/// * `client_address` - the client (wallet) address: an EVM address in EIP-55 hex prefixed
-/// with "0x", or a Solana public key in base58.
+/// * `client_address` - the client (wallet) address, in a format that [ClientAddress] reads.
 ///
 /// * `fhe_parameter` - the parameter choice, which can be either `"test"` or `"default"`.
 /// The "default" parameter choice is selected if no matching string is found.
@@ -340,8 +339,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 /// * `request` - the initial user_decryption request JS object.
 /// It can be set to null if `verify` is false.
 /// Otherwise the caller needs to give the following JS object.
-/// Note that `eip712_verifying_contract` follows EIP-55, and so does `client_address` for an EVM
-/// user. For a Solana user, `client_address` is the user's base58 public key.
+/// Note that `eip712_verifying_contract` follows EIP-55, and `client_address` has a format that
+/// [ClientAddress] reads.
 /// The signature field is not needed.
 /// ```
 /// {

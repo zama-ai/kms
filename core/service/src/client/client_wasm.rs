@@ -65,7 +65,7 @@ impl Client {
     ///   keyed by party id, for verifying the per-scheme `signatures` of a
     ///   response. A client that has no access to the servers' public storage
     ///   passes an empty map, and can then only verify ECDSA.
-    /// * `client_address` - the client wallet address: an EVM address or a Solana public key.
+    /// * `client_address` - the client wallet address, see [ClientAddress].
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
     ///   in a secure location, e.g., hardware wallet or web extension.
