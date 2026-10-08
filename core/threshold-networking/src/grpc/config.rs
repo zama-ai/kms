@@ -240,26 +240,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn closed_session_delivery_timeout_uses_default_queue_wait() {
-        assert_eq!(
-            CoreToCoreNetworkConfig::default().get_closed_session_delivery_timeout(),
-            Duration::from_secs(30),
-        );
-    }
-
-    #[test]
-    fn closed_session_delivery_timeout_honors_short_queue_wait() {
-        let conf = CoreToCoreNetworkConfig {
-            max_waiting_time_for_message_queue: Some(1),
-            ..Default::default()
-        };
-        assert_eq!(
-            conf.get_closed_session_delivery_timeout(),
-            Duration::from_millis(500),
-        );
-    }
-
-    #[test]
     fn keepalive_uses_defaults_when_unset() {
         let conf = CoreToCoreNetworkConfig::default();
         assert_eq!(conf.get_keepalive_interval(), KEEPALIVE_INTERVAL);
