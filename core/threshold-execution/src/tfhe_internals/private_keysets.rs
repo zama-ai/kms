@@ -961,8 +961,8 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
 
 #[cfg(test)]
 mod test {
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
     use tokio::task::JoinSet;
 
     use crate::{

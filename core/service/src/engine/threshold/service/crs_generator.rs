@@ -2,7 +2,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
-use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use anyhow::anyhow;
 use kms_grpc::{
@@ -23,6 +22,7 @@ use threshold_execution::{
     zk::ceremony::Ceremony,
 };
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
@@ -446,11 +446,6 @@ impl<
 
         match outcome {
             Err(msg) => {
-                MetricedError::handle_unreturnable_error(
-                    op_tag,
-                    Some(*req_id),
-                    anyhow::anyhow!(msg.clone()),
-                );
                 // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
             }
@@ -932,6 +927,7 @@ mod tests {
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
+        let recorded_errors_before = crate::engine::utils::unreturnable_error_call_count();
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
 
@@ -941,6 +937,11 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::Internal
+        );
+        assert_eq!(
+            crate::engine::utils::unreturnable_error_call_count(),
+            recorded_errors_before + 1,
+            "a failed ceremony must be recorded once"
         );
     }
 
@@ -1100,6 +1101,7 @@ mod tests {
             epoch_id: Some(epoch_id.into()),
         };
 
+        let recorded_errors_before = crate::engine::utils::unreturnable_error_call_count();
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
         // We manage to abort successfully first time
         assert!(
@@ -1118,6 +1120,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+        assert_eq!(
+            crate::engine::utils::unreturnable_error_call_count(),
+            recorded_errors_before + 1,
+            "an aborted generation must be recorded once"
+        );
 
         match existing_material {
             ExistingCrsMaterial::Public => {

@@ -1577,7 +1577,6 @@ mod tests {
         },
         engine::base::derive_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
@@ -1587,6 +1586,7 @@ mod tests {
         time::SystemTime,
     };
     use strum::IntoEnumIterator;
+    use threshold_types::rng::AesRng;
 
     /// Every backed-up private data type is restored exactly once, epoch data before the keysets
     /// that depend on it, and the signing key last.

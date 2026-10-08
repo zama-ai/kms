@@ -336,11 +336,11 @@ mod tests {
     use crate::algebra::levels::{GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1};
     use crate::algebra::ntt::N65536;
     use crate::constants::PLAINTEXT_MODULUS;
-    use aes_prng::AesRng;
     #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn test_bgv_keygen() {

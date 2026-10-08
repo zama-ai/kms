@@ -13,7 +13,6 @@ use crate::cryptography::signing::typed_signature::StoredTypedSignature;
 use crate::engine::rng_source::RngSource;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
-use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
@@ -63,6 +62,7 @@ use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrB
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_types::rng::AesRng;
 use tracing::error;
 
 // Domain separators for cryptographic operations to ensure domain separation
@@ -1851,7 +1851,6 @@ pub(crate) mod tests {
         },
         util::key_setup::FhePublicKey,
     };
-    use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
     use kms_grpc::rpc_types::PubDataType;
@@ -1873,6 +1872,7 @@ pub(crate) mod tests {
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn stored_eip712_domain_roundtrip_preserves_all_fields() {

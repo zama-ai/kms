@@ -137,11 +137,11 @@ mod tests {
     use crate::cryptography::encryption::HasPkeScheme;
     use crate::cryptography::encryption::UnifiedPublicEncKey;
     use crate::cryptography::signatures::{PublicSigKey, ROOT_SEED_LEN, RootSigningSeed};
-    use aes_prng::AesRng;
     use bip39::Mnemonic;
     use hashing::hash_element_w_size;
     use rand::SeedableRng;
     use std::str::FromStr;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
     use zeroize::Zeroizing;
 

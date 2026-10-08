@@ -686,7 +686,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::engine::rng_source::test_rng_source;
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -696,6 +695,7 @@ mod tests {
     use threshold_execution::{
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},

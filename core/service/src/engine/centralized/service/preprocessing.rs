@@ -177,12 +177,12 @@ mod tests {
         dummy_domain,
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
     };
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain,
         solidity_types::PrepKeygenVerification,
     };
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[tokio::test]
     async fn sunshine() {

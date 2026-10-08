@@ -111,7 +111,6 @@ mod tests {
             session_parameters::GenericParameterHandles, small_session::SmallSession,
         },
     };
-    use aes_prng::AesRng;
     use algebra::galois_rings::degree_3::{ResiduePolyF3Z64, ResiduePolyF3Z128};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
     use algebra::galois_rings::degree_5::{ResiduePolyF5Z64, ResiduePolyF5Z128};
@@ -127,6 +126,7 @@ mod tests {
     use rand::SeedableRng;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     /// [`SecureBitGenEven::num_rounds`] is the exact number of rounds a bit

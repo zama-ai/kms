@@ -1153,7 +1153,6 @@ mod tests {
     use crate::cryptography::signing::composite::{
         sign_result_entries, wire_scheme_bound_preimage,
     };
-    use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
         RequestId,
@@ -1166,6 +1165,7 @@ mod tests {
     };
     use rand::SeedableRng;
     use std::collections::HashMap;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         cryptography::{
@@ -1397,7 +1397,7 @@ mod tests {
         let request_id = derive_request_id("request_id").unwrap();
         let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::seed_from_u64(0);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
 
@@ -1603,7 +1603,7 @@ mod tests {
 
     #[test]
     fn test_verify_user_decrypt_eip712() {
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::seed_from_u64(0);
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = client_pk.address();
         let ciphertext = vec![1, 2, 3];

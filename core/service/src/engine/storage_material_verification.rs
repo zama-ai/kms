@@ -1353,10 +1353,10 @@ mod tests {
         Storage, StorageExt, delete_at_request_id, store_versioned_at_request_id,
     };
 
-    use aes_prng::AesRng;
     use hashing::{DomainSep, hash_element};
     use kms_grpc::rpc_types::SignedPubDataHandleInternal;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     // Success cases deliberately use invalid encodings: if startup ever starts deserializing
     // key or CRS objects again, the ordinary matching-digest tests will fail.

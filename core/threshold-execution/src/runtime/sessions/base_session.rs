@@ -1,11 +1,11 @@
 use crate::runtime::sessions::session_parameters::{
     DeSerializationRunTime, GenericParameterHandles, GenericSessionParameters, ParameterHandles,
 };
-use aes_prng::AesRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use threshold_types::network::Networking;
+use threshold_types::rng::AesRng;
 use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 use threshold_types::session_id::SessionId;
 

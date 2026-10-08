@@ -152,6 +152,8 @@ pub struct Operator {
     /// The published counterpart of `signing_key`
     verification_key: VerfKeySet,
     threshold: usize,
+    /// The configured number of custodians.
+    amount_custodians: usize,
 }
 
 impl std::fmt::Debug for Operator {
@@ -161,6 +163,7 @@ impl std::fmt::Debug for Operator {
             .field("signing_identity", &"omitted")
             .field("verification_key", &self.verification_key)
             .field("threshold", &self.threshold)
+            .field("amount_custodians", &self.amount_custodians)
             .finish()
     }
 }
@@ -493,6 +496,7 @@ impl Operator {
             signing_identity: Some(signing_key),
             verification_key,
             threshold,
+            amount_custodians,
         })
     }
 
@@ -513,6 +517,7 @@ impl Operator {
             signing_identity: None,
             verification_key: verf_key,
             threshold,
+            amount_custodians,
         })
     }
 
@@ -544,7 +549,7 @@ impl Operator {
             }
             Some(identity) => identity,
         };
-        let n = self.custodian_keys.len();
+        let n = self.amount_custodians;
         let t = self.threshold;
 
         // 1. Each player/operator `P_i` selects `n` other custodians `B_j` for `[j=1..n]`
@@ -1031,10 +1036,10 @@ mod tests {
         },
         engine::base::derive_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
+    use threshold_types::rng::AesRng;
 
     /// A wire recovery request naming `operator_verf_key` and carrying one backup ciphertext.
     fn recovery_request_naming(

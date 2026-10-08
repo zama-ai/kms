@@ -1491,7 +1491,6 @@ mod tests {
             },
         },
     };
-    use aes_prng::AesRng;
     use kms_grpc::{
         RequestId,
         identifiers::ContextId,
@@ -1504,6 +1503,7 @@ mod tests {
     use rand::{SeedableRng, rngs::OsRng};
     use rand_chacha::ChaCha20Rng;
     use std::time::SystemTime;
+    use threshold_types::rng::AesRng;
     use tokio::sync::Mutex;
     use tonic::Request;
 
