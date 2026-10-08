@@ -180,12 +180,6 @@ pub(crate) fn phi_range(pa: &PhiAes, start: u128, count: usize, bd1: u128) -> Ve
         .collect()
 }
 
-/// Builds the complete block before writing it, avoiding overlapping writes to its counter and index bytes.
-#[inline(always)]
-fn write_block(block: &mut AesBlock, word: u128) {
-    *block = AesBlock::from(word.to_le_bytes());
-}
-
 /// Number of AES blocks per `encrypt_blocks` call in scalar psi/chi. One buffer covers a degree-eight ring.
 const AES_BATCH: usize = 8;
 
@@ -210,7 +204,7 @@ where
             let v = idx % num_u128_base_ring;
             let i = idx / num_u128_base_ring;
             // Counter bounds leave the index bytes zero. Construct the complete input before writing the block.
-            write_block(block, ctr | block_indices(i, v));
+            *block = AesBlock::from((ctr | block_indices(i, v)).to_le_bytes());
         }
         aes.encrypt_blocks(&mut buf[..chunk]);
         for block in &buf[..chunk] {
@@ -273,9 +267,11 @@ fn accumulate_counter_blocks<
     let mut blocks = [[AesBlock::default(); DEGREE]; COUNTERS];
     for (offset, counter_blocks) in blocks.iter_mut().enumerate() {
         for (coefficient_index, block) in counter_blocks.iter_mut().enumerate() {
+            // Write each block once, as a complete value: overlapping writes to its index bytes stall the AES
+            // routine's loads of the block.
             let word =
                 (ctr + offset as u128) | indices | ((coefficient_index as u8) as u128) << 112;
-            write_block(block, word);
+            *block = AesBlock::from(word.to_le_bytes());
         }
     }
     // Give the backend the complete group so it can interleave independent AES round chains.
