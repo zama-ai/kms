@@ -4,13 +4,12 @@ use kms_grpc::{ContextId, EpochId};
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
-use std::sync::Arc;
 use tfhe::FheTypes;
 use tonic::Request;
 use tonic::Response;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
+use crate::cryptography::signatures::{PrivateSigKey, Signature};
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
 
@@ -35,11 +34,10 @@ pub trait Kms: BaseKms {
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
-
     #[expect(clippy::too_many_arguments)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        identity: Arc<NodeSigningIdentity>,
+        sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         ct_type: FheTypes,
