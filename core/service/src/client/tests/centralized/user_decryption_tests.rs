@@ -418,19 +418,20 @@ pub(crate) async fn user_decryption_centralized(
                 ClientAddress::Solana([0x22; 32]),
             ] {
                 internal_client.client_address = other_address;
+                let result = internal_client.process_user_decryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    enc_pk,
+                    enc_sk,
+                    None,
+                    &responses,
+                );
                 assert!(
-                    internal_client
-                        .process_user_decryption_resp(
-                            &client_request,
-                            &eip712_domain,
-                            enc_pk,
-                            enc_sk,
-                            None,
-                            &responses,
-                        )
-                        .unwrap_err()
-                        .to_string()
-                        .contains("unsigncrypt_plaintext failed")
+                    result
+                        .as_ref()
+                        .is_err_and(|e| e.to_string().contains("unsigncrypt_plaintext failed")),
+                    "a client of {other_address} must fail to unsigncrypt the shares of \
+                    {own_address}, got {result:?}"
                 );
             }
             internal_client.client_address = own_address;

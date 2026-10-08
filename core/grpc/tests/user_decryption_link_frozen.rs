@@ -60,8 +60,8 @@ fn frozen_domain() -> Eip712DomainMsg {
     }
 }
 
-/// A deterministic request. `enc_key` is opaque to the linker (it is hashed as bytes, never
-/// deserialized here), so a fixed pattern is enough.
+/// A deterministic request. The link hashes `enc_key` as opaque bytes and never deserializes
+/// it, so a fixed pattern is enough.
 fn frozen_request(user_address: &str, handles: [&str; 2]) -> UserDecryptionRequest {
     UserDecryptionRequest {
         request_id: None,
@@ -138,5 +138,6 @@ fn evm_and_solana_links_of_the_same_bytes_differ() {
 
     assert_eq!(client_address, ClientAddress::Solana(padded_key));
     assert_eq!(hex::encode(&link), PADDED_EVM_SOLANA_LINK_GOLDEN);
-    assert_ne!(PADDED_EVM_SOLANA_LINK_GOLDEN, EVM_LINK_GOLDEN);
+    let (evm_link, _, _) = evm_request().compute_link_checked().unwrap();
+    assert_ne!(link, evm_link);
 }

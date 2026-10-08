@@ -1857,7 +1857,9 @@ mod tests {
 
     #[test]
     fn only_the_0x_prefix_picks_an_evm_address() {
-        // Unprefixed hex that decodes as base58 to 32 bytes is a Solana key.
+        // Unprefixed hex that decodes as base58 to 32 bytes is a Solana key. These 40 hex digits
+        // are not the EIP-55 spelling: they are cased to decode to 32 bytes. The EIP-55 spelling
+        // of the same digits decodes to 31 bytes and is refused.
         let key = alloy_primitives::hex!(
             "000000000000000176b15ce4528b47dd92bce9b26b6aa48510db94dd8a323416"
         );
