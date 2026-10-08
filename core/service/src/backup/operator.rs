@@ -682,7 +682,7 @@ impl Operator {
     /// `RecoverySkipReason` on the first failure.
     ///
     /// Returns decrypted key shares in a [`Zeroizing`] guard.
-    fn validate_one_recovery_output(
+    pub(crate) fn validate_one_recovery_output(
         &self,
         output: &InternalCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
