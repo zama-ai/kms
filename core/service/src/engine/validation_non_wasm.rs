@@ -1214,11 +1214,11 @@ mod tests {
     };
 
     use super::{
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        PublicDecTrustedValidationContext, TypedSignature, compute_public_decryption_message,
-        unpack_public_decrypt_req, unpack_user_decrypt_req, verify_max_num_bits,
-        verify_public_decrypt_signatures,
+        ClientAddress, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
+        ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, PublicDecTrustedValidationContext, TypedSignature,
+        compute_public_decryption_message, unpack_public_decrypt_req, unpack_user_decrypt_req,
+        verify_max_num_bits, verify_public_decrypt_signatures,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.
@@ -1569,6 +1569,27 @@ mod tests {
                 epoch_id: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
+        }
+
+        // a Solana user: no verifying-contract check applies, even to a key that ends with the
+        // 20 bytes of the verifying contract
+        {
+            let mut solana_key = [0u8; 32];
+            solana_key[12..].copy_from_slice(alloy_domain.verifying_contract.unwrap().as_slice());
+            let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                domain: Some(domain.clone()),
+                client_address: ClientAddress::Solana(solana_key).to_string(),
+                enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let (_, _, _, client_address, ..) = unpack_user_decrypt_req(&req).unwrap();
+            assert_eq!(client_address, ClientAddress::Solana(solana_key));
         }
     }
 

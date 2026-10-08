@@ -170,6 +170,8 @@ test('solana threshold user decryption response', (_t) => {
     assert.throws(
         () => process_user_decryption_resp_from_js(
             otherClient, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true),
+        // every share fails to unsigncrypt, so all 4 responses are rejected
+        /Too many faulty user decryption responses: 4 > t=1/,
     );
 });
 
