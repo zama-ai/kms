@@ -379,6 +379,23 @@ sensitive operation. Parties reach each other over gRPC via
 `kms-gen-tls-certs`). Preprocessing runs asynchronously and produces material
 consumed by the online phase.
 
+Each outbound peer task sends queued messages in order and retries gRPC errors
+with exponential backoff. Once the sending party is done with its work it
+completes its own session by closing it. Any outstanding messages that have not
+yet been successfully sent now get a chance to complete. Each message gets half
+of `max_waiting_time_for_message_queue` as its delivery allowance.
+
+The default queue wait is 60 seconds, which gives a 30-second allowance per
+message in the queue to drain.
+The getter in [the network configuration](../core/threshold-networking/src/grpc/config.rs)
+derives this allowance from the configured queue wait
+(`max_waiting_time_for_message_queue`).
+
+The fraction (1/2) is a policy choice: allowing for decently quick cleanup, but
+also a chance for final messages to reach its destination. Closing a session
+also occurs after successful protocols, so this policy can discard messages
+that peers need.
+
 ## Backup and recovery
 
 Long-term private material held by a KMS node — signing keys, FHE secret-key

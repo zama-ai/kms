@@ -49,6 +49,7 @@ validator.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }

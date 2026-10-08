@@ -197,6 +197,17 @@ impl CoreToCoreNetworkConfig {
         )
     }
 
+    /// Returns the per-message delivery deadline used after the sender observes local session closure.
+    ///
+    /// It balances two concerns: give messages outstanding after session closure a chance to be
+    /// delivered, while also allowing for quick cleanup once the sender is done with its work.
+    /// This fraction is a load-shedding policy, not a guarantee of delivery or connection recovery.
+    /// NOTE: A successful session can close before its peers receive all final messages; this
+    /// allowance can discard them if the receiving party is very slow or the network path is broken.
+    pub fn get_closed_session_delivery_timeout(&self) -> Duration {
+        self.get_max_waiting_time_for_message_queue() / 2
+    }
+
     pub fn get_max_buffered_future_msgs(&self) -> usize {
         self.max_buffered_future_msgs
             .map(|v| v as usize)
@@ -228,6 +239,26 @@ impl CoreToCoreNetworkConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closed_session_delivery_timeout_uses_default_queue_wait() {
+        assert_eq!(
+            CoreToCoreNetworkConfig::default().get_closed_session_delivery_timeout(),
+            Duration::from_secs(30),
+        );
+    }
+
+    #[test]
+    fn closed_session_delivery_timeout_honors_short_queue_wait() {
+        let conf = CoreToCoreNetworkConfig {
+            max_waiting_time_for_message_queue: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            conf.get_closed_session_delivery_timeout(),
+            Duration::from_millis(500),
+        );
+    }
 
     #[test]
     fn keepalive_uses_defaults_when_unset() {
