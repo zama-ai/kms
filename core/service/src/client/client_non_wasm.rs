@@ -268,7 +268,7 @@ mod tests {
         payload: &CrsSignedPayload,
     ) -> Vec<TypedSignature> {
         let eip712_hash = sol_type().eip712_signing_hash(&dummy_domain());
-        sign_result_entries(identity, schemes, DSEP, &eip712_hash, payload)
+        sign_result_entries(identity, schemes, DSEP, eip712_hash.as_slice(), payload)
             .unwrap()
             .iter()
             .map(TypedSignature::from)

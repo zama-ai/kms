@@ -511,7 +511,7 @@ where
         identity,
         schemes,
         dsep,
-        &eip712_hash,
+        eip712_hash.as_slice(),
         payload,
     )?;
     Ok((external_signature, signatures))
