@@ -423,8 +423,13 @@ Note that in the threshold setting an insecure preprocessing entry can only be c
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the signatures and just report the result.
 
 #### Preprocessing for Secure Key-Generation
 
@@ -443,8 +448,13 @@ Note that this will generate large amounts of preprocessing data, which is expen
 
 It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the signatures and just report the result.
 
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
 
