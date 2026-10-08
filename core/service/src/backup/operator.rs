@@ -191,7 +191,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            signcryption: value.try_into()?,
+            signcryption: UnifiedSigncryption::new(value.signcryption, value.pke_type.try_into()?),
         })
     }
 }
@@ -682,7 +682,7 @@ impl Operator {
     /// `RecoverySkipReason` on the first failure.
     ///
     /// Returns decrypted key shares in a [`Zeroizing`] guard.
-    fn validate_one_recovery_output(
+    pub(crate) fn validate_one_recovery_output(
         &self,
         output: &InternalCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
@@ -801,31 +801,8 @@ impl Operator {
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
-        let validated = self.validate_outputs(
-            custodian_recovery_output,
-            Vec::new(),
-            recovery_material,
-            ephm_dec_key,
-            ephm_enc_key,
-        )?;
-        self.recover_from_validated(&validated)
-    }
-
-    /// Validate every signcrypted custodian recovery output and keep the first valid one of
-    /// each role.
-    ///
-    /// `skip_reasons` holds the reasons outputs were dropped before reaching this point, so
-    /// that a recovery that falls short reports every reason. Fails unless more than the
-    /// custodian threshold of roles validated.
-    pub(crate) fn validate_outputs(
-        &self,
-        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
-        mut skip_reasons: Vec<RecoverySkipReason>,
-        recovery_material: &RecoveryValidationMaterial,
-        ephm_dec_key: &UnifiedPrivateEncKey,
-        ephm_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<HashMap<Role, Zeroizing<BackupMaterial>>, BackupError> {
         let mut validated: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
+        let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
         let ephm_dec_key = Arc::new(ephm_dec_key.clone());
         for output in custodian_recovery_output {
             match self.validate_one_recovery_output(
@@ -866,7 +843,7 @@ impl Operator {
                 skipped: skip_reasons,
             });
         }
-        Ok(validated)
+        self.recover_from_validated(&validated)
     }
 
     /// Reconstruct the operator's secret from already-validated per-role `BackupMaterial`s.
@@ -1252,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_new_fails_with_bad_n_t() {
+    fn operator_new_fails_with_bad_n_t() {
         // 1 is not less than 2/2
         let result = validate_custodian_messages(vec![], 1, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
@@ -1266,21 +1243,21 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_new_fails_with_zero_t() {
+    fn operator_new_fails_with_zero_t() {
         let result = validate_custodian_messages(vec![], 0, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("t cannot be 0"));
     }
 
     #[test]
-    fn custodian_validation_new_fails_with_zero_n() {
+    fn operator_new_fails_with_zero_n() {
         let result = validate_custodian_messages(vec![], 1, 0, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("n cannot be 0"));
     }
 
     #[test]
-    fn custodian_validation_new_fails_with_insufficient_messages() {
+    fn operator_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1298,7 +1275,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_invalid_header() {
+    fn operator_new_fails_with_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1326,7 +1303,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_timestamp_in_the_past() {
+    fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1354,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_timestamp_in_the_future() {
+    fn operator_new_fails_with_invalid_timestamp_future() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1383,7 +1360,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_timestamp_validation() {
+    fn operator_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1408,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_new_fails_with_invalid_role() {
+    fn operator_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1439,7 +1416,7 @@ mod tests {
     }
 
     #[test]
-    fn custodian_validation_duplicate_roles() {
+    fn operator_new_fails_with_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();

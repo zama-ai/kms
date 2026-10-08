@@ -74,7 +74,10 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             anyhow::anyhow!("backup output not part of the custodian recovery output")
         })?;
         Ok(InternalCustodianRecoveryOutput {
-            signcryption: backup_output.try_into()?,
+            signcryption: UnifiedSigncryption::new(
+                backup_output.signcryption.clone(),
+                backup_output.pke_type.try_into()?,
+            ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
     }
@@ -400,6 +403,21 @@ impl Custodian {
         operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
+        self.verify_reencrypt_inner(
+            rng,
+            backup,
+            operator_verification_key,
+            operator_ephem_enc_key,
+        )
+    }
+
+    fn verify_reencrypt_inner<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        backup: &InnerOperatorBackupOutput,
+        operator_verification_key: &VerfKeySet,
+        operator_ephem_enc_key: &UnifiedPublicEncKey,
+    ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         let operator_id = operator_verification_key
             .id(BACKUP_SIGNING_SCHEMES)
             .map_err(|e| {
@@ -520,7 +538,7 @@ impl Custodian {
         }
     }
 
-    pub fn private_dec_key(&self) -> &UnifiedPrivateEncKey {
+    pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {
         &self.dec_key
     }
 

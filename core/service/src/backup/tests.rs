@@ -181,6 +181,25 @@ fn custodian_reencrypt() {
         assert!(matches!(err, BackupError::CustodianRecoveryError));
     }
 
+    // tweak the signature, so that signature verification also fails
+    {
+        let operator_role = Role::indexed_from_zero(0);
+        let mut bad_results = signcrypt_results.clone();
+        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
+            z.signcryption.payload[0] ^= 1;
+        }
+
+        let err = custodians[0]
+            .verify_reencrypt(
+                &mut rng,
+                bad_results[0].ct_shares.get(&operator_role).unwrap(),
+                verification_key,
+                &ephemeral_enc_key,
+            )
+            .unwrap_err();
+        assert!(matches!(err, BackupError::CustodianRecoveryError));
+    }
+
     // no tweaks, all should pass
     {
         let operator_role = Role::indexed_from_zero(0);
