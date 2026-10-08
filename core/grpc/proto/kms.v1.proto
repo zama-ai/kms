@@ -468,9 +468,11 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address: EIP-55 with the `0x` prefix for an EVM user, or
-  // base58 of the 32-byte public key for a Solana user. Its format picks the linker. The KMS does
-  // not check that the handles come from the same kind of host chain as the user; the caller does.
+  // The client's (blockchain wallet) address. Its format picks the kind of user and the EIP-712
+  // link struct: `0x` and EIP-55 hex is an EVM address, linked with UserDecryptionLinker; any
+  // other string must be base58 of a 32-byte public key, a Solana address, linked with
+  // SolanaUserDecryptionLinker. The KMS does not check that the handles come from the same kind
+  // of host chain as the user; the caller does.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
@@ -535,8 +537,7 @@ message UserDecryptionResponsePayload {
 
   // This is needed to ensure the response corresponds to the request.
   // It is the EIP712 hash, under the given domain in the request, of the
-  // linker struct that `client_address` picks: UserDecryptionLinker for an
-  // EVM user, SolanaUserDecryptionLinker for a Solana user.
+  // EIP-712 link struct that the request's `client_address` picks.
   bytes digest = 2;
 
   // The resulting signcrypted ciphertexts, each ciphertext

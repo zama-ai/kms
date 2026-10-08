@@ -901,7 +901,7 @@ pub(crate) struct StableExpectedPlaintext {
 pub(crate) struct StableUserDecryptionTestVector {
     /// FHE parameter name accepted by `new_client` (`"test"` or `"default"`).
     pub fhe_parameter: String,
-    /// Client (wallet) address: EIP-55 checksummed, or base58 for a Solana key.
+    /// Client (wallet) address, as [ClientAddress] writes it.
     pub client_address: String,
     /// KMS server identities.
     pub server_addrs: Vec<StableServerIdAddr>,
