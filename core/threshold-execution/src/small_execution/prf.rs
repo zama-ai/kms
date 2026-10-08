@@ -367,9 +367,8 @@ mod tests {
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 
-    //tododp the comment doesn't work for a PR: reviewers do not know about all the candidate block writers
-    // tododp maybe we should prepare a set of known-answer tests as well?
-    // Keep the original byte-by-byte encoder independent of all candidate block writers.
+    // Encode the counter and indices byte by byte, without using the production block writer.
+    // This provides an independent reference for the scalar and batched PRFs' input layout.
     fn original_encoding<Z: Ring + PRSSConversions>(aes: &Aes128, ctr: u128, j: Option<u8>) -> Z {
         let num = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
         let mut blocks: Vec<AesBlock> = (0..Z::EXTENSION_DEGREE * num)
@@ -392,10 +391,13 @@ mod tests {
         )
     }
 
-    //tododp needs comments inline and a few lines here as well
+    // Scalar and batched evaluation must preserve the same counter/index encoding and coefficient order.
+    // Compare each output with the byte-wise reference, including carries between counter bytes and the last valid group.
+    // F4/F8 exercise the grouped path; F3 exercises its scalar fallback. Both base rings check coefficient conversion.
     #[test]
     fn store_construction_matches_original_encoding() {
         fn check<Z: Ring + PRSSConversions>() {
+            // Check both group sizes against the same reference, independently of the size used by the PRSS kernel.
             check_group::<Z, 8>();
             check_group::<Z, 16>();
         }
@@ -406,8 +408,11 @@ mod tests {
                 for start in [
                     0,
                     1,
+                    // Carry into the second byte within a group.
                     255,
+                    // Carry between the two halves of the AES block.
                     (1_u128 << 64) - 3,
+                    // The final output uses psi's last valid counter.
                     (1_u128 << 112) - COUNTERS as u128,
                 ] {
                     let values = psi_counters::<Z, COUNTERS>(&psi_key, start).unwrap();
@@ -419,6 +424,7 @@ mod tests {
                         assert_eq!(*value, expected);
                     }
                 }
+                // Chi reserves an extra byte for j, so its counter bound is 2^104 rather than psi's 2^112.
                 for start in [
                     0,
                     1,
@@ -426,6 +432,7 @@ mod tests {
                     (1_u128 << 64) - 3,
                     (1_u128 << 104) - COUNTERS as u128,
                 ] {
+                    // Include zero and all bits set to catch misplaced or truncated threshold-index bytes.
                     for j in [0, 1, 4, 255] {
                         let values = chi_counters::<Z, COUNTERS>(&chi_key, start, j).unwrap();
                         for (offset, value) in values.iter().enumerate() {
@@ -444,6 +451,114 @@ mod tests {
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
         check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
         check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
+
+    // Fixed AES-128-ECB outputs generated with OpenSSL, independently of the Rust encoders and AES backend.
+    // These pin session/domain key derivation, input byte order, coefficient order, and Z64's low-half truncation.
+    // Generator: OpenSSL 4.0.3 29 Sep 2026 (Library: OpenSSL 4.0.3 29 Sep 2026).
+    // Host: macOS 27.0.1 (build 26A434), Apple M5 Max (Mac17,7; 18 cores).
+    // Commands used, wrapped for readability; printf concatenates the hex blocks without separators.
+    // psi:
+    // printf '%s' \
+    //   'ffffffffffffffff0000000000000000ffffffffffffffff0000000000000100' \
+    //   'ffffffffffffffff0000000000000200ffffffffffffffff0000000000000300' \
+    //   '0000000000000000010000000000000000000000000000000100000000000100' \
+    //   '0000000000000000010000000000020000000000000000000100000000000300' \
+    //   | xxd -r -p | openssl enc -aes-128-ecb -K 072543618fadcbe9f8dabc9e70523416 -nosalt -nopad | xxd -p -c 256
+    // chi:
+    // printf '%s' \
+    //   'ffffffffffffffff0000000000a50000ffffffffffffffff0000000000a50100' \
+    //   'ffffffffffffffff0000000000a50200ffffffffffffffff0000000000a50300' \
+    //   '00000000000000000100000000a5000000000000000000000100000000a50100' \
+    //   '00000000000000000100000000a5020000000000000000000100000000a50300' \
+    //   | xxd -r -p | openssl enc -aes-128-ecb -K 062543618fadcbe9f8dabc9e70523416 -nosalt -nopad | xxd -p -c 256
+    #[test]
+    fn psi_chi_known_answers() {
+        let key = PrfKey([0x17; 16]);
+        let sid = SessionId::from(0x0123456789abcdef_fedcba9876543210_u128);
+        let psi_key = PsiAes::new(&key, sid);
+        let chi_key = ChiAes::new(&key, sid);
+        // Consecutive counters cross the 64-bit carry; j sets both low and high bits of chi's index byte.
+        let first_counter = u64::MAX as u128;
+        let j = 0xa5;
+        // OpenSSL keys: psi=072543618fadcbe9f8dabc9e70523416, chi=062543618fadcbe9f8dabc9e70523416.
+        // Each row contains four encrypted blocks interpreted as little-endian u128 coefficients.
+        let expected_psi = [
+            [
+                0xbd97cd92845ede50fb3b62d1b6fcec8a_u128,
+                0x92335305f109de4b97143f475b826968,
+                0xa92c6ab666a1fcf0026c9b8efcbe3b9d,
+                0xb76b2a4cfcf86b34d0da67caa8248926,
+            ],
+            [
+                0x0cecd5013c98a503f8bfbab2ed7bde52,
+                0x4aeb14867a1b9adef700a61e59f6893f,
+                0x3aaeb5c53f83feb24fbc9791b9a6c90b,
+                0xa3060312f0c5dd36695906a5d839ce96,
+            ],
+        ];
+        let expected_chi = [
+            [
+                0x7029f3ae30775cd217b90f1c45625783_u128,
+                0xf3cfd51e048aba13e3241ac878a5e43e,
+                0xcdfabff0e7036b6ca56ffde04ae7f699,
+                0xb1c9ef830777eafb93b8354ac88a2ec4,
+            ],
+            [
+                0x4964b524f5851c6184153d98c849120e,
+                0xb8e796e503e7409f6eb3279b3be9a72b,
+                0x2cc7457d00028ee7e22241d5f2e451c2,
+                0x31af557614a25a6488bfd8547f8c033f,
+            ],
+        ];
+        for (offset, (psi_coefs, chi_coefs)) in
+            expected_psi.into_iter().zip(expected_chi).enumerate()
+        {
+            let counter = first_counter + offset as u128;
+            assert_eq!(
+                psi::<ResiduePolyF4Z128>(&psi_key, counter)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                psi_coefs
+            );
+            assert_eq!(
+                psi_iter::<ResiduePolyF4Z128>(&psi_key, counter)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                psi_coefs
+            );
+            assert_eq!(
+                chi::<ResiduePolyF4Z128>(&chi_key, counter, j)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                chi_coefs
+            );
+            // Compare coefficient arrays directly: expected values must not use the production conversion helpers.
+            assert_eq!(
+                psi::<ResiduePolyF4Z64>(&psi_key, counter)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                psi_coefs.map(|c| c as u64)
+            );
+            assert_eq!(
+                psi_iter::<ResiduePolyF4Z64>(&psi_key, counter)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                psi_coefs.map(|c| c as u64)
+            );
+            assert_eq!(
+                chi::<ResiduePolyF4Z64>(&chi_key, counter, j)
+                    .unwrap()
+                    .coefs
+                    .map(|c| c.0),
+                chi_coefs.map(|c| c as u64)
+            );
+        }
     }
 
     #[test]
