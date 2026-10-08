@@ -372,10 +372,23 @@ fn full_flow_malicious_custodian_init() {
                 *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
-        assert!(
-            result.skipped_roles.contains(&Role::indexed_from_one(2)),
-            "expected role 2 to be skipped (removed custodian): {:?}",
-            result.skipped_roles
+        assert_eq!(
+            result.skipped_roles,
+            vec![Role::indexed_from_one(2)],
+            "expected only role 2 to be skipped (removed custodian)"
+        );
+        // Every other configured custodian, including the last one, must still get a share.
+        let expected_roles: Vec<Role> = [1, 3, 4, 5]
+            .into_iter()
+            .map(Role::indexed_from_one)
+            .collect();
+        assert_eq!(
+            result.ct_shares.keys().copied().collect::<Vec<_>>(),
+            expected_roles
+        );
+        assert_eq!(
+            result.commitments.keys().copied().collect::<Vec<_>>(),
+            expected_roles
         );
     }
 }
