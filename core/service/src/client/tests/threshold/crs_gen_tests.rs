@@ -420,8 +420,7 @@ pub async fn wait_for_crsgen_result(
 
         // test that having [THRESHOLD] wrong signatures still works
         let mut final_responses_with_bad_sig = res_storage.clone();
-        // The ECDSA entry of the list is what a result carrying the list is verified
-        // by; the deprecated `external_signature` beside it is not checked.
+        // Note that only the ECDSA entry of the list is corrupted here.
         let bad_sig = {
             let mut tmp = ecdsa_entry(&mut res_storage[0].0.clone()).clone();
             tmp[0] ^= 0xff;
