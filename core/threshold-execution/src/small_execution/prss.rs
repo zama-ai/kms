@@ -643,8 +643,7 @@ const PRF_COUNTER_GROUP: usize = 16;
 /// using subset keys and coefficients prepared for its role when the session was constructed.
 /// The caller checks that all `amount` counters are below `2^PSI_COUNTER_BITS`.
 fn compute_prss<Z: Ring + PRSSConversions>(
-    psi_keys: &[PsiAes],
-    f_a_at_role: &[Z],
+    prfs: &SessionPrfs<Z>,
     prss_ctr: u128,
     amount: usize,
 ) -> Vec<Z> {
@@ -659,7 +658,7 @@ fn compute_prss<Z: Ring + PRSSConversions>(
             let ctr = prss_ctr + (group * PRF_COUNTER_GROUP) as u128;
             let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
             // Hot loop: one AES call per subset key covers the whole group.
-            for (psi_key, &f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
+            for (psi_key, &f_a_at_role) in prfs.psi.iter().zip(&prfs.f_a_at_role) {
                 if outputs.len() == PRF_COUNTER_GROUP {
                     accumulate_psi_counters(psi_key, ctr, f_a_at_role, &mut sums);
                 } else {
@@ -738,6 +737,48 @@ fn compute_przs<Z: Ring + PRSSConversions>(
     shares
 }
 
+/// Computes PRSS-Mask values without submitting a task or advancing session counters, like [`compute_prss`].
+/// The caller checks that all `2 * amount` counters are below `2^PHI_COUNTER_BITS` and that `sampling_bound` is at
+/// most `2^126`.
+fn compute_mask<Z: Ring + PRSSConversions>(
+    prfs: &SessionPrfs<Z>,
+    mask_ctr: u128,
+    amount: usize,
+    sampling_bound: u128,
+) -> Vec<Z> {
+    // Element `idx` is the f_A-weighted sum over all sets of phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This
+    // matches repeated scalar calls while still batching each chunk's AES-PRF evaluations.
+    let chunk = *PRSS_GEN_PAR_MIN_CHUNK;
+    let mut res = vec![Z::ZERO; amount];
+    res.par_chunks_mut(chunk)
+        .enumerate()
+        .for_each(|(chunk_idx, out)| {
+            let lo = chunk_idx * chunk;
+            // Hot loop: one AES call per subset key covers the chunk's counter range.
+            for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
+                // Element `idx` consumes two distinct phi counters, matching one scalar mask_next().
+                let phi_vals = phi_range(
+                    phi_aes,
+                    mask_ctr + 2 * lo as u128,
+                    2 * out.len(),
+                    sampling_bound,
+                );
+
+                for (j, out_elem) in out.iter_mut().enumerate() {
+                    let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
+                    // mul_by_i128 scales by the signed scalar via from_i128, so it is a
+                    // cheap coefficient scale for ResiduePoly yet still correct for base
+                    // rings whose modulus does not divide 2^128 (e.g. the BGV prime
+                    // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
+                    // negative phi on such rings (the wrong large mask would wrap mod q and
+                    // corrupt the decrypted plaintext).
+                    *out_elem += f_a_at_role.mul_by_i128(phi);
+                }
+            }
+        });
+    res
+}
+
 #[async_trait]
 impl<Z, B> PRSSPrimitives<Z> for PRSSState<Z, B>
 where
@@ -774,41 +815,10 @@ where
         // Each element consumes two phi counters. Check the whole range once; phi_range asserts it.
         check_counter_range("phi", mask_ctr, 2 * amount as u128, PHI_COUNTER_BITS)?;
 
-        // Element `idx` is the f_A-weighted sum over all sets of phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This
-        // matches repeated scalar calls while still batching each chunk's AES-PRF evaluations.
-        let res = spawn_compute_bound(move || {
-            let chunk = *PRSS_GEN_PAR_MIN_CHUNK;
-            let mut res = vec![Z::ZERO; amount];
-            res.par_chunks_mut(chunk)
-                .enumerate()
-                .for_each(|(chunk_idx, out)| {
-                    let lo = chunk_idx * chunk;
-                    // Hot loop: one AES call per subset key covers the chunk's counter range.
-                    for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
-                        // Element `idx` consumes two distinct phi counters, matching one scalar mask_next().
-                        let phi_vals = phi_range(
-                            phi_aes,
-                            mask_ctr + 2 * lo as u128,
-                            2 * out.len(),
-                            sampling_bound,
-                        );
-
-                        for (j, out_elem) in out.iter_mut().enumerate() {
-                            let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
-                            // mul_by_i128 scales by the signed scalar via from_i128, so it is a
-                            // cheap coefficient scale for ResiduePoly yet still correct for base
-                            // rings whose modulus does not divide 2^128 (e.g. the BGV prime
-                            // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
-                            // negative phi on such rings (the wrong large mask would wrap mod q and
-                            // corrupt the decrypted plaintext).
-                            *out_elem += f_a_at_role.mul_by_i128(phi);
-                        }
-                    }
-                });
-            res
-        })
-        .instrument(tracing::Span::current())
-        .await?;
+        let res =
+            spawn_compute_bound(move || compute_mask(&prfs, mask_ctr, amount, sampling_bound))
+                .instrument(tracing::Span::current())
+                .await?;
 
         // Advance the counter by two per element, matching one mask_next() call per
         // element (each consumes two phi counters).
@@ -834,11 +844,9 @@ where
         // The Rayon task owns this handle so it can outlive the awaiting future.
         let prfs = Arc::clone(&self.prfs);
 
-        let res = spawn_compute_bound(move || {
-            compute_prss(&prfs.psi, &prfs.f_a_at_role, prss_ctr, amount)
-        })
-        .instrument(tracing::Span::current())
-        .await?;
+        let res = spawn_compute_bound(move || compute_prss(&prfs, prss_ctr, amount))
+            .instrument(tracing::Span::current())
+            .await?;
 
         self.counters.prss_ctr += amount as u128;
 
@@ -1375,10 +1383,7 @@ mod tests {
                             *value += f_a * psi(psi_key, ctr);
                         }
                     }
-                    assert_eq!(
-                        compute_prss(&state.prfs.psi, &state.prfs.f_a_at_role, start, amount),
-                        expected_prss
-                    );
+                    assert_eq!(compute_prss(&state.prfs, start, amount), expected_prss);
                     let mut request = state.clone();
                     request.counters.prss_ctr = start;
                     assert_eq!(
