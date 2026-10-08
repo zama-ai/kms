@@ -128,7 +128,7 @@ data:
     session_update_interval_secs = 60
     session_cleanup_interval_secs = 86400
     discard_inactive_sessions_interval = 900
-    max_waiting_time_for_message_queue = 60
+    max_waiting_time_for_message_queue = 60 # seconds; half of it is the delivery allowance per queued message after a session closes
     max_opened_inactive_sessions_per_party = {{ int .Values.kmsCore.thresholdMode.maxOpenedInactiveSessionsPerParty }}
 
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}

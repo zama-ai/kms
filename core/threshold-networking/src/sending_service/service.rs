@@ -679,8 +679,8 @@ mod tests {
         sender.send(SendValueRequest::default()).unwrap();
         drop(sender);
 
-        // A live sender would wait a minute before retrying. A closed sender skips
-        // that backoff and gives the next queued message its own delivery attempt.
+        // A live sender would wait a minute before retrying. A closed sender abandons the
+        // message instead of waiting, and gives the next queued message its own delivery attempt.
         let backoff = ExponentialBackoff {
             initial_interval: Duration::from_secs(60),
             randomization_factor: 0.0,
