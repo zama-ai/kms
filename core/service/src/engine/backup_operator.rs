@@ -1,5 +1,5 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
-use crate::backup::error::{BackupError, RecoverySkipReason};
+use crate::backup::error::RecoverySkipReason;
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
 use crate::consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID};
@@ -903,9 +903,8 @@ async fn filter_custodian_data(
 ) -> anyhow::Result<HashMap<Role, Zeroizing<BackupMaterial>>> {
     // Use the number of custodian nodes that was part of the context, not the amount we have received from
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
-    let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
+    let mut internal_outputs = Vec::with_capacity(custodian_recovery_outputs.len());
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
-    let ephemeral_dec_key = Arc::new(ephemeral_dec_key.clone());
 
     for cur_recovery_output in &custodian_recovery_outputs {
         if cur_recovery_output.custodian_role == 0
@@ -943,50 +942,18 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        let internal = InternalCustodianRecoveryOutput {
+        internal_outputs.push(InternalCustodianRecoveryOutput {
             signcryption: cur_signcryption,
             custodian_role: role,
-        };
-
-        match operator.validate_one_recovery_output(
-            &internal,
-            recovery_material,
-            &ephemeral_dec_key,
-            ephemeral_enc_key,
-        ) {
-            Ok(backup_material) => match parsed_custodian_rec.entry(role) {
-                std::collections::hash_map::Entry::Occupied(_) => {
-                    tracing::warn!(
-                        "Received multiple recovery outputs for custodian role {role}. Only the first one will be used."
-                    );
-                    skip_reasons.push(RecoverySkipReason::DuplicateRole);
-                }
-                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(backup_material);
-                }
-            },
-            Err(reason) => skip_reasons.push(reason),
-        }
+        });
     }
-    let threshold = recovery_material.custodian_context().threshold as usize;
-    let required_min = threshold + 1;
-    if parsed_custodian_rec.len() < required_min {
-        let received = parsed_custodian_rec.len();
-        tracing::error!(
-            received,
-            threshold,
-            ?skip_reasons,
-            "Cannot recover the backup decryption key: not enough valid recovery outputs"
-        );
-        return Err(BackupError::RecoveryThresholdNotMet {
-            required_min,
-            received,
-            threshold,
-            skipped: skip_reasons,
-        }
-        .into());
-    }
-    Ok(parsed_custodian_rec)
+    Ok(operator.validate_outputs(
+        &internal_outputs,
+        skip_reasons,
+        recovery_material,
+        ephemeral_dec_key,
+        ephemeral_enc_key,
+    )?)
 }
 
 /// Why no custodian context could be selected for recovery.
@@ -1599,7 +1566,9 @@ mod tests {
     use crate::{
         backup::{
             BACKUP_SIGNING_SCHEMES,
-            custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
+            custodian::{
+                Custodian, CustodianSetupMessagePayload, HEADER, InternalCustodianContext,
+            },
         },
         cryptography::{
             signatures::{
@@ -2291,22 +2260,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_filter_custodian_data_invalid_operator_role() {
-        let (rec, _verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let bad_verf_key =
-            seeded_verf_key_set(&mut AesRng::seed_from_u64(42), BACKUP_SIGNING_SCHEMES);
-        run_filter_expect_skip(
-            vec![dummy_output_for_operator(1)],
-            &rec,
-            &bad_verf_key,
-            &dec_key,
-            &enc_key,
-            RecoverySkipReason::InvalidSigncryption,
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
         run_filter_expect_skip(
@@ -2323,22 +2276,115 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn test_filter_custodian_data_invalid_signature() {
-        let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        run_filter_expect_skip(
-            vec![
-                dummy_output_for_operator(1),
-                dummy_output_for_operator(2),
-                dummy_output_for_operator(3),
-            ],
-            &rec,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-            RecoverySkipReason::InvalidSigncryption,
+    /// A real backup and recovery with 3 custodians and threshold 1: the operator's
+    /// recovery material, its backup key set, the backup keys the custodians re-encrypt to,
+    /// and the honest output of every custodian.
+    fn honest_recovery() -> (
+        RecoveryValidationMaterial,
+        VerfKeySet,
+        UnifiedPrivateEncKey,
+        UnifiedPublicEncKey,
+        Vec<CustodianRecoveryOutput>,
+    ) {
+        let mut rng = AesRng::seed_from_u64(7);
+        let backup_id = derive_request_id("honest_recovery").unwrap();
+        let custodians: Vec<_> = (1..=3)
+            .map(|i| {
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+                let (dec_key, enc_key) = enc.keygen().unwrap();
+                let identity = seeded_identity(&mut rng);
+                Custodian::new(Role::indexed_from_one(i), identity, enc_key, dec_key).unwrap()
+            })
+            .collect();
+        let setup_msgs: Vec<_> = custodians
+            .iter()
+            .map(|custodian| {
+                custodian
+                    .generate_setup_message(&mut rng, format!("Custodian-{}", custodian.role()))
+                    .unwrap()
+            })
+            .collect();
+
+        let identity = Arc::new(seeded_identity(&mut rng));
+        let verf_key = VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        let operator =
+            Operator::new_for_sharing(setup_msgs.clone(), Arc::clone(&identity), 1, 3).unwrap();
+        let (dec_key, enc_key) = Encryption::new(BACKUP_PKE_SCHEME, &mut rng)
+            .keygen()
+            .unwrap();
+        let backup = operator
+            .secret_share_and_signcrypt(&mut rng, &[7u8; 32], backup_id, *DEFAULT_MPC_CONTEXT)
+            .unwrap();
+        let custodian_context = CustodianContext {
+            custodian_nodes: setup_msgs
+                .into_iter()
+                .map(|msg| msg.try_into().unwrap())
+                .collect(),
+            custodian_context_id: Some(backup_id.into()),
+            threshold: 1,
+        };
+        let rec_material = RecoveryValidationMaterial::new(
+            backup.ct_shares.clone(),
+            backup.commitments,
+            InternalCustodianContext::new(custodian_context, enc_key.clone()).unwrap(),
+            &identity,
+            *DEFAULT_MPC_CONTEXT,
         )
-        .await;
+        .unwrap();
+
+        let outputs = custodians
+            .iter()
+            .map(|custodian| {
+                custodian
+                    .verify_reencrypt(
+                        &mut rng,
+                        &backup.ct_shares[&custodian.role()],
+                        &verf_key,
+                        &enc_key,
+                    )
+                    .unwrap()
+                    .try_into()
+                    .unwrap()
+            })
+            .collect();
+        (rec_material, verf_key, dec_key, enc_key, outputs)
+    }
+
+    /// Well-formed custodian outputs validate for the operator they were re-encrypted for,
+    /// and fail unsigncryption for another operator or once their ciphertext is tampered with.
+    #[tokio::test]
+    async fn test_filter_custodian_data_rejects_outputs_it_cannot_unsigncrypt() {
+        let (rec, verf_key, dec_key, enc_key, outputs) = honest_recovery();
+        let operator = build_operator_from_recovery_material(&rec, &verf_key);
+        let validated = filter_custodian_data(outputs.clone(), &operator, &rec, &dec_key, &enc_key)
+            .await
+            .expect("honest outputs must validate");
+        assert_eq!(validated.len(), outputs.len());
+
+        let other_operator =
+            seeded_verf_key_set(&mut AesRng::seed_from_u64(42), BACKUP_SIGNING_SCHEMES);
+        // The last byte of a signcryption is the last byte of its AEAD tag.
+        let mut tampered = outputs.clone();
+        for output in &mut tampered {
+            let signcryption = &mut output.backup_output.as_mut().unwrap().signcryption;
+            *signcryption.last_mut().unwrap() ^= 1;
+        }
+        for (case, outputs, verf_key) in [
+            ("another operator", outputs, &other_operator),
+            ("a tampered tag", tampered, &verf_key),
+        ] {
+            let operator = build_operator_from_recovery_material(&rec, verf_key);
+            let err = filter_custodian_data(outputs, &operator, &rec, &dec_key, &enc_key)
+                .await
+                .unwrap_err();
+            let (received, skipped) = expect_threshold_not_met(err);
+            assert_eq!(received, 0, "{case}");
+            assert_eq!(
+                skipped,
+                vec![RecoverySkipReason::InvalidSigncryption; 3],
+                "{case}"
+            );
+        }
     }
 
     #[tokio::test]

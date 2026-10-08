@@ -330,13 +330,16 @@ mod tests {
             "a different domain separator opened the envelope"
         );
 
+        // The last byte of the payload is the last byte of the AEAD tag.
         let mut flipped = cipher.clone();
-        flipped.payload[0] ^= 0x01;
+        *flipped.payload.last_mut().unwrap() ^= 0x01;
+        let err = f
+            .unsigncryption_key
+            .open_composite(DSEP, &demanded, &flipped)
+            .unwrap_err();
         assert!(
-            f.unsigncryption_key
-                .open_composite(DSEP, &demanded, &flipped)
-                .is_err(),
-            "a tampered ciphertext opened the envelope"
+            matches!(err, CryptographyError::AesGcmError(_)),
+            "a tampered ciphertext must fail authenticated decryption, got: {err}"
         );
 
         let mut rng = AesRng::seed_from_u64(999);

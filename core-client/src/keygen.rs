@@ -841,6 +841,37 @@ pub(crate) async fn do_partial_preproc(
     Ok(req_id)
 }
 
+/// Check every signature each preprocessing response carries, under every scheme
+/// the client requested, and that each was produced by a known KMS party.
+///
+/// The result-only command cannot see the request that produced these responses,
+/// so the context and epoch it was made under come from the caller and have to
+/// match — the same contract a keygen or CRS result carries. `None` skips the
+/// check, which is what `--no-verify` asks for.
+pub(crate) fn check_preproc_responses(
+    internal_client: &Client,
+    request_id: &RequestId,
+    verify: Option<&SigVerificationMaterial>,
+    responses: &[KeyGenPreprocResult],
+) -> anyhow::Result<()> {
+    let Some(material) = verify else {
+        return Ok(());
+    };
+    for response in responses {
+        internal_client.process_preproc_response(
+            request_id,
+            &material.domain,
+            response,
+            material.extra_data.clone(),
+        )?;
+    }
+    tracing::info!(
+        "Verified the signatures on {} preprocessing responses for {request_id}",
+        responses.len()
+    );
+    Ok(())
+}
+
 pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
