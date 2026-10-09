@@ -68,7 +68,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int .id }}"
+    object_folder = {{ (.prefix | default (printf "PUB-p%d" (int .id))) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -80,7 +80,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ if and $.Values.kmsCore.publicVault.s3.prefix (eq (int $i) ($.Values.kmsPeers.id | default 0 | int)) }}{{ $.Values.kmsCore.publicVault.s3.prefix | quote }}{{ else }}"PUB-p{{ int $i }}"{{ end }}
         {{ end }}
       {{- end }}
 
@@ -156,11 +156,11 @@ data:
       {{- if .Values.kmsCore.thresholdMode.enabled }}
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range $i, $peer := .Values.kmsCore.thresholdMode.peersList }}
-      wget -O /keygen/kms_signer_address_{{ $peer.id }} "${S3_ENDPOINT}/PUB-p{{ $peer.id }}/VerfAddress/${verf_key_id}"
+      wget -O /keygen/kms_signer_address_{{ $peer.id }} "${S3_ENDPOINT}/{{ $peer.prefix | default (printf "PUB-p%d" (int $peer.id)) }}/VerfAddress/${verf_key_id}"
           {{- end }}
         {{- else }}
           {{ range $i := $peersIDList }}
-      wget -O /keygen/kms_signer_address_{{ $i }} "${S3_ENDPOINT}/PUB-p{{ $i }}/VerfAddress/${verf_key_id}"
+      wget -O /keygen/kms_signer_address_{{ $i }} "${S3_ENDPOINT}/{{ if and $.Values.kmsCore.publicVault.s3.prefix (eq (int $i) ($.Values.kmsPeers.id | default 0 | int)) }}{{ $.Values.kmsCore.publicVault.s3.prefix }}{{ else }}PUB-p{{ $i }}{{ end }}/VerfAddress/${verf_key_id}"
           {{- end }}
         {{- end }}
       {{- else }}
