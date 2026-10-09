@@ -343,8 +343,19 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
-EIP-712 signature validation on user-decryption requests is shared between
-the server and in-browser verifiers via the `validation_wasm` build.
+The client checks each user-decryption response against the request link and
+the node signatures, and this code also builds for the browser. The node
+signature checks are in the `validation_wasm` module, which the
+public-decryption verifier also uses. The threshold path takes its link check from that
+module too; the centralized path checks the link in
+`client/user_decryption_wasm.rs`.
+
+The `client_address` of a user-decryption request is an EVM address or a
+Solana public key. `ClientAddress` in `kms-grpc` parses it and picks the
+EIP-712 link struct and the bytes that signcryption binds the result to. The
+rest of the user-decryption path is the same for both kinds of user. The
+caller, not the KMS, checks that the handles come from the user's kind of
+host chain.
 
 ## Deployment modes
 

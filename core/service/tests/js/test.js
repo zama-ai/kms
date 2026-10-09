@@ -147,6 +147,34 @@ test('threshold user decryption response', (_t) => {
     assertExpected(pt3, data.expected);
 });
 
+test('solana threshold user decryption response', (_t) => {
+    // TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH
+    const { data, client, enc_pk, enc_sk } = loadVector('test-solana-threshold-wasm-transcript.8.json');
+    const otherKey = '3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3';
+
+    const pt = process_user_decryption_resp_from_js(
+        client, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true);
+    assertExpected(pt, data.expected);
+
+    // the link binds the user: the same responses for a request of another key are refused
+    const otherUser = { ...data.request, client_address: otherKey };
+    assert.throws(
+        () => process_user_decryption_resp_from_js(
+            client, otherUser, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true),
+        /not linked to the correct request/,
+    );
+
+    // signcryption binds the user: a client of another key cannot open the shares of this request
+    const server_addrs = data.server_addrs.map(s => new_server_id_addr(s.id, s.addr));
+    const otherClient = new_client(server_addrs, otherKey, data.fhe_parameter);
+    assert.throws(
+        () => process_user_decryption_resp_from_js(
+            otherClient, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true),
+        // every share fails to unsigncrypt, so all 4 responses are rejected
+        /Too many faulty user decryption responses: 4 > t=1/,
+    );
+});
+
 test('new client', (_t) => {
     // make a generic client
     let address = "0x66f9664f97F2b50F62D13eA064982f936dE76657";

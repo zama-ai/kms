@@ -4580,6 +4580,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "bc2wrap",
+ "bs58",
  "bytes",
  "cfg-if",
  "hex",
