@@ -52,6 +52,7 @@ x509-parser.workspace = true
 rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [build-dependencies]
 tonic-prost-build.workspace = true
