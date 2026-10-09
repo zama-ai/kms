@@ -388,6 +388,7 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "omitPeers": { "type": "boolean" },
         "peersList": {
           "type": "array",
           "items": {
