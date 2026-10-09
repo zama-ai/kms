@@ -2577,14 +2577,16 @@ pub async fn execute_cmd(
                 result_parameters.context_id,
                 result_parameters.epoch_id,
             )?;
-            keygen::check_preproc_responses(
-                internal_client
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
-                &req_id,
-                verify.as_ref(),
-                &responses,
-            )?;
+            if let Some(verify_material) = verify {
+                keygen::check_preproc_responses(
+                    internal_client
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                    &req_id,
+                    &verify_material,
+                    &responses,
+                )?;
+            }
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         #[cfg(feature = "insecure")]
@@ -2598,14 +2600,16 @@ pub async fn execute_cmd(
                 result_parameters.context_id,
                 result_parameters.epoch_id,
             )?;
-            keygen::check_preproc_responses(
-                internal_client
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
-                &req_id,
-                verify.as_ref(),
-                &responses,
-            )?;
+            if let Some(verify_material) = verify {
+                keygen::check_preproc_responses(
+                    internal_client
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                    &req_id,
+                    &verify_material,
+                    &responses,
+                )?;
+            }
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
