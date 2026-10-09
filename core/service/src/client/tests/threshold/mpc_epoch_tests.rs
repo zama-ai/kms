@@ -421,6 +421,10 @@ async fn run_new_epoch(
             resharing.as_ref().map(|r| &r.signing_domain),
         )
         .unwrap();
+    assert_eq!(
+        reshare_request.signing_schemes, requested_schemes,
+        "the request must carry the schemes the client asks for"
+    );
     let extra_data = reshare_request.extra_data.clone();
 
     // Execute reshare

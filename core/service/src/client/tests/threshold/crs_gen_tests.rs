@@ -420,9 +420,8 @@ pub async fn wait_for_crsgen_result(
 
         // test that having [THRESHOLD] wrong signatures still works
         let mut final_responses_with_bad_sig = res_storage.clone();
-        // Note that only the ECDSA entry of the list is corrupted here.
         let bad_sig = {
-            let mut tmp = ecdsa_entry(&mut res_storage[0].0.clone()).clone();
+            let mut tmp = res_storage[0].0.external_signature.clone();
             tmp[0] ^= 0xff;
             tmp
         };
@@ -503,23 +502,13 @@ pub async fn wait_for_crsgen_result(
     }
     results
 }
-/// The ECDSA entry of a result's `signatures` list.
-fn ecdsa_entry(crs_gen_result: &mut kms_grpc::kms::v1::CrsGenResult) -> &mut Vec<u8> {
-    let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
-    &mut crs_gen_result
-        .signatures
-        .iter_mut()
-        .find(|typed| typed.scheme == ecdsa)
-        .expect("the result carries an ECDSA entry")
-        .signature
-}
 fn set_signatures(
     crs_res_storage: &mut [(kms_grpc::kms::v1::CrsGenResult, FileStorage)],
     count: usize,
     sig: &[u8],
 ) {
     for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
-        *ecdsa_entry(crs_gen_result) = sig.to_vec();
+        crs_gen_result.external_signature = sig.to_vec();
     }
 }
 fn set_digests(
