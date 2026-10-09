@@ -153,3 +153,27 @@ jobs:
             echo "omitPeers rendered a peer list" >&2
             exit 1
           fi
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.count=1 \
+            --set kmsPeers.id=1 \
+            --set kmsPeers.name=partner-acme \
+            --set kmsPeers.ordinal=0 \
+            --set kmsCore.thresholdMode.thresholdValue=4 \
+            --set kmsCore.thresholdMode.omitPeers=true \
+            --set kmsCore.thresholdMode.tls.enabled=true \
+            --set kmsCore.publicVault.s3.prefix=PUB-partner-acme \
+            --set kmsGenCertAndKeys.enabled=true 2>&1); then
+            echo "named party should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'tls_subject = "partner-acme"' <<<"$output"
+          grep -Fq 'KEY_PATH="PUB-partner-acme/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq 'start: 0' <<<"$output"
+          grep -Fq 'pod-name: test-core-0' <<<"$output"
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "named party still used PUB-p1" >&2
+            exit 1
+          fi
