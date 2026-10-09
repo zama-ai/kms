@@ -133,7 +133,7 @@ these operations therefore work unchanged whether clients use the async or the s
   `kms_network_sender_tasks_{spawned,completed}_total` make leaks or growing backlogs visible.
 - `kms_completed_sessions` counts completed MPC sessions retained so late peer messages are
   acknowledged as completed instead of reopening the session. Retention is controlled by
-  `session_cleanup_interval_secs` (24 hours by default), so this measures recent session churn
+  `session_cleanup_interval_secs` (6 hours by default), so this measures recent session churn
   over that window, not active work or a processing backlog.
 
 ### Performance Metrics

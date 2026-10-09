@@ -71,6 +71,7 @@ impl GrpcNetworkingManager {
     /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         inactive_session_count: Arc<AtomicU64>,
         active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
@@ -84,9 +85,8 @@ impl GrpcNetworkingManager {
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
                 let mut internal_completed_sessions_count = 0;
-                let mut to_remove = Vec::new();
-                for mut cur in session_store.iter_mut() {
-                    let (session_id, status) = cur.pair_mut();
+                // Check expiry and remove under the same lock so activation cannot race with removal.
+                session_store.retain(|_, status| {
                     match status {
                         SessionStatus::Completed(started) => {
                             // Remove completed sessions that have been completed for a very long time
@@ -94,19 +94,19 @@ impl GrpcNetworkingManager {
                                 metrics::METRICS.increment_network_event(
                                     NetworkDebugEvent::SessionCompletedRemoved,
                                 );
-                                to_remove.push(*session_id);
+                                return false;
                             } else {
                                 internal_completed_sessions_count += 1;
                             }
                         }
-                        SessionStatus::Inactive((_, started)) => {
+                        SessionStatus::Inactive((queues, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
                                 metrics::METRICS.increment_network_event(
                                     NetworkDebugEvent::SessionInactiveDiscarded,
                                 );
-                                to_remove.push(*session_id);
-                                continue;
+                                queues.release_inactive_counts(&opened_sessions_tracker);
+                                return false;
                             } else {
                                 internal_inactive_sessions_count += 1;
                             }
@@ -123,10 +123,8 @@ impl GrpcNetworkingManager {
                             }
                         },
                     };
-                }
-                for session_id in to_remove {
-                    session_store.remove(&session_id);
-                }
+                    true
+                });
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
                 metrics::METRICS.record_completed_sessions(internal_completed_sessions_count);
@@ -166,8 +164,10 @@ impl GrpcNetworkingManager {
         let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
         let inactive_session_count = Arc::new(AtomicU64::new(0));
         let active_session_count = Arc::new(AtomicU64::new(0));
+        let opened_sessions_tracker = Arc::new(DashMap::new());
         Self::start_background_cleaning_task(
             cleanup_session_store,
+            Arc::clone(&opened_sessions_tracker),
             Arc::clone(&inactive_session_count),
             Arc::clone(&active_session_count),
             update_interval,
@@ -179,7 +179,7 @@ impl GrpcNetworkingManager {
             session_store,
             inactive_session_count,
             active_session_count,
-            opened_sessions_tracker: Arc::new(DashMap::new()),
+            opened_sessions_tracker,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
             #[cfg(feature = "insecure")]
@@ -330,8 +330,54 @@ impl GrpcNetworkingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grpc::{ChannelPair, ReceiverState};
     use threshold_types::party::Identity;
     use threshold_types::role::Role;
+    use tokio::sync::{Mutex, mpsc};
+
+    #[tokio::test]
+    async fn inactive_expiry_releases_sender_counts() {
+        let store = Arc::new(SessionStore::default());
+        let tracker = Arc::new(DashMap::new());
+        let channels = DashMap::new();
+        for sender in ["party1", "party2"] {
+            let sender = MpcIdentity(sender.into());
+            let (tx, rx) = mpsc::channel(1);
+            channels.insert(
+                sender.clone(),
+                ChannelPair {
+                    tx: Arc::new(tx),
+                    rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                },
+            );
+            tracker.insert(sender, 2);
+        }
+        store.insert(
+            SessionId::from(1),
+            SessionStatus::Inactive((
+                MessageQueueStore::new_uninitialized(channels),
+                Instant::now() - Duration::from_secs(2),
+            )),
+        );
+        GrpcNetworkingManager::start_background_cleaning_task(
+            Arc::clone(&store),
+            Arc::clone(&tracker),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Duration::from_millis(10),
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !store.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(tracker.iter().all(|count| *count.value() == 1));
+    }
 
     /// Name of a session store entry's status, for assertion messages.
     fn status_name(status: Option<&SessionStatus>) -> &'static str {

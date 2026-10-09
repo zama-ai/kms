@@ -139,12 +139,6 @@ impl MessageQueueStore {
             for (role, identity) in others.iter() {
                 let mpc_id = identity.mpc_identity();
                 if let Some(entry) = channel_maps.get(&mpc_id) {
-                    opened_sessions_tracker
-                        .entry(mpc_id.clone())
-                        .and_modify(|count| {
-                            *count = count.saturating_sub(1);
-                        })
-                        .or_insert(0);
                     let pair = entry.value();
                     tx_map.insert(entry.key().clone(), pair.tx.clone());
                     rx_map.insert(role.get_role_kind(), pair.rx.clone());
@@ -158,12 +152,28 @@ impl MessageQueueStore {
                 }
             }
 
+            self.release_inactive_counts(&opened_sessions_tracker);
             *self = MessageQueueStore::Initialized(InitializedMessageQueueStore {
                 tx: tx_map,
                 receiver_state: rx_map,
             });
         } else {
             tracing::warn!("MessageQueueStore is already initialized");
+        }
+    }
+
+    /// Releases each sender's inactive-session slot, including senders outside the role assignment.
+    /// For a registered session, the caller must hold its write lock and discard or initialize this store next.
+    pub(crate) fn release_inactive_counts(&self, tracker: &DashMap<MpcIdentity, u64>) {
+        if let Self::Uninitialized(channels) = self {
+            for sender in channels.iter() {
+                tracker
+                    .entry(sender.key().clone())
+                    .and_modify(|count| {
+                        *count = count.saturating_sub(1);
+                    })
+                    .or_insert(0);
+            }
         }
     }
 
@@ -228,6 +238,36 @@ impl MessageQueueStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use threshold_types::party::Identity;
+    use threshold_types::role::Role;
+
+    #[test]
+    fn activation_releases_counts_for_included_and_excluded_senders() {
+        let included = Identity::new("included".into(), 1, None);
+        let excluded = Identity::new("excluded".into(), 2, None);
+        let tracker = Arc::new(DashMap::new());
+        let channels = DashMap::new();
+        for identity in [&included, &excluded] {
+            let (tx, rx) = channel(1);
+            channels.insert(
+                identity.mpc_identity(),
+                ChannelPair {
+                    tx: Arc::new(tx),
+                    rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                },
+            );
+            tracker.insert(identity.mpc_identity(), 2);
+        }
+        let mut roles = RoleAssignment::default();
+        roles.insert(Role::indexed_from_one(1), included.clone());
+        let mut queues = MessageQueueStore::new_uninitialized(channels);
+        queues.init(1, &roles, Arc::clone(&tracker));
+
+        assert!(queues.get_tx(&included.mpc_identity()).unwrap().is_some());
+        assert!(queues.get_tx(&excluded.mpc_identity()).unwrap().is_none());
+        queues.init(1, &roles, Arc::clone(&tracker));
+        assert!(tracker.iter().all(|count| *count.value() == 1));
+    }
 
     #[test]
     fn test_take_current() {
