@@ -1,10 +1,10 @@
-use aes_prng::AesRng;
 use criterion::BenchmarkId;
 use criterion::{Criterion, criterion_group, criterion_main};
 use crypto_bigint::modular::ConstMontyParams;
 use rand::RngCore;
 use rand::SeedableRng;
 use threshold_execution::runtime::test_runtime::generate_fixed_roles;
+use threshold_types::rng::AesRng;
 
 use threshold_bgv::algebra::levels::*;
 use threshold_bgv::algebra::ntt::N65536;

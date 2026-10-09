@@ -242,7 +242,7 @@ impl<
                     let prss_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PrssDerive);
                     let mut prss_state = session_maker
-                        .prss_state_z128(session_id, epoch_id)
+                        .prss_state_z128(session_id, epoch_id, my_role)
                         .await
                         .map_err(|e| {
                             anyhow::anyhow!(
@@ -689,7 +689,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::engine::rng_source::test_rng_source;
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -699,6 +698,7 @@ mod tests {
     use threshold_execution::{
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -798,8 +798,17 @@ mod tests {
         );
 
         let epoch_id = EpochId::new_random(rng);
-        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
+        let prss_setup_z64 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
 
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,

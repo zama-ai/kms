@@ -6,7 +6,6 @@
 mod common;
 use common::load_and_unversionize;
 
-use aes_prng::AesRng;
 use algebra::{
     galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
     sharing::share::Share,
@@ -40,6 +39,7 @@ use threshold_execution::{
     },
 };
 use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 use crate::common::load_and_unversionize_auxiliary;

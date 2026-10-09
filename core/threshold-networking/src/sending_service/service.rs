@@ -5,7 +5,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::error::Error;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::ggen::SendValueRequest;
@@ -15,7 +15,6 @@ use crate::grpc::CoreToCoreNetworkConfig;
 use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
-use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::metrics::{self, NetworkDebugEvent};
@@ -23,7 +22,7 @@ use observability::telemetry::ContextPropagator;
 use threshold_types::party::{Identity, RoleAssignment};
 use threshold_types::role::{RoleKind, RoleTrait};
 use tokio::sync::{
-    RwLock,
+    Notify, RwLock,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
@@ -43,7 +42,7 @@ pub trait SendingService: Send + Sync {
         &self,
         other_identity: &Identity,
         other_role_kind: RoleKind,
-        aborted: Arc<DashSet<RoleKind>>,
+        aborted: Arc<CompletedParties>,
     ) -> anyhow::Result<UnboundedSender<SendValueRequest>>;
 
     ///Adds multiple connections at once
@@ -52,12 +51,63 @@ pub trait SendingService: Send + Sync {
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
         HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
-        Arc<DashSet<RoleKind>>,
+        Arc<CompletedParties>,
     )>;
 }
 
 type ChannelMap =
     HashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>;
+
+/// Records peer completion and wakes receivers waiting for those peers.
+#[derive(Debug)]
+pub struct CompletedParties {
+    parties: Mutex<Vec<RoleKind>>,
+    changed: Notify,
+}
+
+impl Default for CompletedParties {
+    fn default() -> Self {
+        Self {
+            parties: Mutex::new(Vec::with_capacity(12)),
+            changed: Notify::new(),
+        }
+    }
+}
+
+impl CompletedParties {
+    pub(crate) fn insert(&self, peer: RoleKind) {
+        // Only vector lookup and insertion hold this lock; poisoning indicates an internal panic.
+        let mut parties = self.parties.lock().expect("completion lock poisoned");
+        if parties.contains(&peer) {
+            return;
+        }
+        parties.push(peer);
+        // Release the lock so waiters can check if they're completed.
+        drop(parties);
+        self.changed.notify_waiters();
+    }
+
+    pub(crate) fn contains(&self, peer: &RoleKind) -> bool {
+        // Only vector lookup and insertion hold this lock; poisoning indicates an internal panic.
+        self.parties
+            .lock()
+            .expect("completion lock poisoned")
+            .contains(peer)
+    }
+
+    pub(crate) async fn wait_for_completion(&self, peer: RoleKind) {
+        loop {
+            // Register the notification future before checking if this peer has completed; otherwise completion could
+            // occur between the check and the registration, leaving this task asleep. Calls to `notify_waiters()` are
+            // guaranteed to reach notification futures created before the call, even if they have not been polled yet.
+            let changed = self.changed.notified();
+            if self.contains(&peer) {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
@@ -183,7 +233,7 @@ impl GrpcSendingService {
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
         other_role_kind: RoleKind,
-        completed_parties: Arc<DashSet<RoleKind>>,
+        completed_parties: Arc<CompletedParties>,
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
@@ -304,7 +354,7 @@ impl SendingService for GrpcSendingService {
         &self,
         other_identity: &Identity,
         other_role_kind: RoleKind,
-        aborted: Arc<DashSet<RoleKind>>,
+        aborted: Arc<CompletedParties>,
     ) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
@@ -345,11 +395,11 @@ impl SendingService for GrpcSendingService {
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
         HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
-        Arc<DashSet<RoleKind>>,
+        Arc<CompletedParties>,
     )> {
         let mut result = HashMap::with_capacity(others.len());
 
-        let aborted = Arc::new(DashSet::new());
+        let aborted = Arc::new(CompletedParties::default());
         for (other_role, other_id) in others.iter() {
             let other_role_kind = other_role.get_role_kind();
             match self
@@ -378,7 +428,33 @@ impl SendingService for GrpcSendingService {
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use futures_util::poll;
     use test_utils::random_free_port::get_listeners_random_free_ports;
+    use threshold_types::role::Role;
+
+    #[tokio::test]
+    async fn completion_wakes_waiters_for_the_completed_peer() {
+        let completed = CompletedParties::default();
+        let first_role = Role::indexed_from_one(1).get_role_kind();
+        let second_role = Role::indexed_from_one(2).get_role_kind();
+        let first = completed.wait_for_completion(first_role);
+        let another_first = completed.wait_for_completion(first_role);
+        let second = completed.wait_for_completion(second_role);
+        tokio::pin!(first, another_first, second);
+        assert!(poll!(&mut first).is_pending());
+        assert!(poll!(&mut another_first).is_pending());
+        assert!(poll!(&mut second).is_pending());
+
+        completed.insert(second_role);
+        assert!(poll!(&mut first).is_pending());
+        assert!(poll!(&mut second).is_ready());
+        completed.insert(first_role);
+        assert!(poll!(&mut first).is_ready());
+        assert!(poll!(&mut another_first).is_ready());
+        let already_completed = completed.wait_for_completion(first_role);
+        tokio::pin!(already_completed);
+        assert!(poll!(&mut already_completed).is_ready());
+    }
 
     /// Verify that after receiving `Status::Completed`, the `UnboundedReceiver` is NOT dropped, so
     /// subsequent sends on the `UnboundedSender` do not fail with "channel closed".
@@ -461,7 +537,7 @@ mod tests {
 
         // Create channel and shared state
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
-        let completed_parties = Arc::new(DashSet::new());
+        let completed_parties = Arc::new(CompletedParties::default());
         let role_kind = threshold_types::role::Role::indexed_from_one(1).get_role_kind();
 
         let backoff = ExponentialBackoff {

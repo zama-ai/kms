@@ -5,7 +5,6 @@
 //! are identical. The goal is to catch accidental nondeterminism in KMS fixture
 //! construction or persisted fields, not to test stdlib container behavior.
 
-use aes_prng::AesRng;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::BACKUP_PKE_SCHEME;
@@ -17,6 +16,7 @@ use rand::SeedableRng;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 use tfhe_versionable::Versionize;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 const REPEATS: usize = 10;

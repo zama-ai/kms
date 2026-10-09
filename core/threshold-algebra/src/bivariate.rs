@@ -126,10 +126,10 @@ mod tests {
         structure_traits::{One, Zero},
     };
 
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::num::Wrapping;
+    use threshold_types::rng::AesRng;
 
     //Checks the hot coefficient shapes used by bivariate evaluation.
     #[test]

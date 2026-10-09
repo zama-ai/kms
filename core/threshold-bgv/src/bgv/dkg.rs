@@ -186,8 +186,8 @@ where
 mod tests {
     use std::num::NonZero;
 
-    use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
+    use threshold_types::rng::AesRng;
 
     use super::{BGVDkgPreprocessing, bgv_distributed_keygen};
     use crate::{

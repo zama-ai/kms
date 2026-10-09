@@ -1,6 +1,6 @@
-use aes_prng::AesRng;
 use async_trait::async_trait;
 use rand::SeedableRng;
+use threshold_types::rng::AesRng;
 use tracing::instrument;
 
 use super::vss::{SecureVss, Vss};
@@ -124,7 +124,6 @@ pub(crate) mod tests {
         TestingParameters, execute_protocol_large_w_disputes_and_malicious,
         get_networkless_large_session_for_parties,
     };
-    use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         structure_traits::{ErrorCorrect, Ring},
@@ -132,6 +131,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
     use tokio::task::JoinSet;
 
