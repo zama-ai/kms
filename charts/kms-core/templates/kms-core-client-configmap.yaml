@@ -80,7 +80,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ if and $.Values.kmsCore.publicVault.s3.prefix (eq (int $i) ($.Values.kmsPeers.id | default 0 | int)) }}{{ $.Values.kmsCore.publicVault.s3.prefix | quote }}{{ else }}"PUB-p{{ int $i }}"{{ end }}
       {{ end }}
       {{- end }}
 
@@ -171,7 +171,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ if and $.Values.kmsCore.publicVault.s3.prefix (eq (int $i) ($.Values.kmsPeers.id | default 0 | int)) }}{{ $.Values.kmsCore.publicVault.s3.prefix | quote }}{{ else }}"PUB-p{{ int $i }}"{{ end }}
         {{ end }}
       {{- end }}
 
