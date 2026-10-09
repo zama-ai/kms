@@ -340,7 +340,47 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- $ownPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" (default "" .Values.kmsPeers.id)) }}
+{{- $idText := "" -}}
+{{- if .Values.kmsPeers.id -}}
+{{- $idText = .Values.kmsPeers.id | toString -}}
+{{- end -}}
+{{- $ownPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" $idText) }}
+{{- if $.Values.kmsCore.thresholdMode.omitPeers }}
+# omitPeers skips the peer loop, but the server still needs its own certificate.
+{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
+CERT_PATH="{{ $ownPrefix }}/CACert/cert.pem"
+echo "Fetching CA cert for party {{ .Values.kmsPeers.id }} from: ${S3_BASE_URL}/${CERT_PATH}"
+MAX_RETRIES=30
+RETRY_COUNT=0
+RETRY_DELAY=2
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s -f -o ./ca_pem_{{ .Values.kmsPeers.id }} "${S3_BASE_URL}/${CERT_PATH}"; then
+    export KMS_CA_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./ca_pem_{{ .Values.kmsPeers.id }})\"\"\""
+    echo "Successfully fetched CA cert for party {{ .Values.kmsPeers.id }}"
+    break
+  else
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+      echo "Certificate not found yet, retry $RETRY_COUNT/$MAX_RETRIES in ${RETRY_DELAY}s..."
+      sleep $RETRY_DELAY
+    else
+      echo "WARNING: No CA cert found for party {{ .Values.kmsPeers.id }} at ${CERT_PATH} after $MAX_RETRIES retries"
+    fi
+  fi
+done
+{{- else }}
+echo "Looking for CA cert for party {{ .Values.kmsPeers.id }} at: ${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/CACert/"
+OWN_CA_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+echo "Found bucket path: ${OWN_CA_BUCKET_PATH}"
+if [ -n "${OWN_CA_BUCKET_PATH}" ]; then
+  curl -s -o ./ca_pem_{{ .Values.kmsPeers.id }} "${S3_BASE_URL}/${OWN_CA_BUCKET_PATH}"
+  export KMS_CA_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./ca_pem_{{ .Values.kmsPeers.id }})\"\"\""
+  echo "Fetched CA cert for party {{ .Values.kmsPeers.id }}"
+else
+  echo "WARNING: No CA cert found for party {{ .Values.kmsPeers.id }}"
+fi
+{{- end }}
+{{- end }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to key.pem
 KEY_PATH="{{ $ownPrefix }}/PrivateKey/key.pem"

@@ -5,6 +5,7 @@ kmsPeers:
   # This is my_id and the pod suffix. The public vault folder is PUB-p<id> unless a prefix is set.
   # id: 1
   # Optional TLS subject. When set, it is used as-is and is not suffixed with the party id.
+  # It must be a DNS name, because it is the certificate common name and the dialed service name.
   # name: partner-acme
   # The number of peers managed by the StatefulSets
   count: 1
