@@ -3,6 +3,7 @@
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
 {{- $currentPeerID := default $peersStartID .Values.kmsPeers.id | int }}
+{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $currentPeerID) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -157,7 +158,9 @@ spec:
               {{- end }}
               {{- end }}
 
-              {{- if not $currentHostname }}
+              {{- if .Values.kmsPeers.name }}
+              {{- $currentHostname = .Values.kmsPeers.name }}
+              {{- else if not $currentHostname }}
               {{- /* Fallback if hostname not found in peersList */}}
               {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
               {{- end }}
@@ -166,7 +169,7 @@ spec:
 
               # Generate certificate using kms-gen-tls-certs binary (only for this party)
               /app/kms/core/service/bin/kms-gen-tls-certs \
-                --ca-names {{ $currentHostname }} \
+                --ca-names {{ $currentHostname | quote }} \
                 --output-dir /tmp/certs \
                 --num-cores 0 \
                 --force-self-signed-non-ca \
@@ -304,22 +307,24 @@ spec:
               {{- end }}
               {{- end }}
 
-              {{- if not $currentHostname }}
+              {{- if .Values.kmsPeers.name }}
+              {{- $currentHostname = .Values.kmsPeers.name }}
+              {{- else if not $currentHostname }}
               {{- /* Fallback if hostname not found in peersList */}}
               {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
               {{- end }}
 
               # Clean up any existing certificates to avoid mismatches
               echo "Cleaning up old certificates for party {{ $currentPeerID }}..."
-              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/CACert/ \
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/CACert/ \
                 --recursive --region {{ .Values.kmsCore.aws.region }} || true
-              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/PrivateKey/ \
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/PrivateKey/ \
                 --recursive --region {{ .Values.kmsCore.aws.region }} || true
 
               # Upload certificate for party {{ $currentPeerID }}
               echo "Uploading certificate for party {{ $currentPeerID }}..."
-              if ! aws s3 cp /tmp/certs/cert_{{ $currentHostname }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/CACert/cert.pem \
+              if ! aws s3 cp "/tmp/certs/cert_{{ $currentHostname }}.pem" \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/CACert/cert.pem \
                 --region {{ .Values.kmsCore.aws.region }}; then
                 echo "ERROR: Failed to upload certificate for party {{ $currentPeerID }}"
                 exit 1
@@ -328,8 +333,8 @@ spec:
 
               # Upload private key for party {{ $currentPeerID }}
               echo "Uploading private key for party {{ $currentPeerID }}..."
-              if ! aws s3 cp /tmp/certs/key_{{ $currentHostname }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/PrivateKey/key.pem \
+              if ! aws s3 cp "/tmp/certs/key_{{ $currentHostname }}.pem" \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/PrivateKey/key.pem \
                 --region {{ .Values.kmsCore.aws.region }}; then
                 echo "ERROR: Failed to upload private key for party {{ $currentPeerID }}"
                 exit 1
