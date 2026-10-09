@@ -13,7 +13,7 @@ use kms_grpc::{
 };
 use kms_lib::backup::{
     DSEP_ATTESTED_BACKUP_PK,
-    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
+    custodian::{TransferableCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::InternalRecoveryRequest,
 };
 use kms_lib::cryptography::signatures::{SigningSchemeType, VerfKeySet};
@@ -173,7 +173,7 @@ pub(crate) async fn do_custodian_recovery_init(
 pub(crate) async fn do_custodian_backup_recovery(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     custodian_context_id: RequestId,
-    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+    custodian_recovery_outputs: Vec<TransferableCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     if custodian_recovery_outputs.is_empty() {
         anyhow::bail!("At least one custodian recovery output is required");

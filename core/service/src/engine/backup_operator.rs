@@ -1,4 +1,4 @@
-use crate::backup::custodian::InternalCustodianRecoveryOutput;
+use crate::backup::custodian::TransferableCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
@@ -943,7 +943,7 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        let internal = InternalCustodianRecoveryOutput {
+        let internal = TransferableCustodianRecoveryOutput {
             signcryption: cur_signcryption,
             custodian_role: role,
         };

@@ -4,7 +4,7 @@ use super::{
     secretsharing,
 };
 use crate::backup::{
-    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    custodian::{InternalCustodianContext, TransferableCustodianRecoveryOutput},
     error::RecoverySkipReason,
 };
 use crate::{
@@ -684,7 +684,7 @@ impl Operator {
     /// Returns decrypted key shares in a [`Zeroizing`] guard.
     pub(crate) fn validate_one_recovery_output(
         &self,
-        output: &InternalCustodianRecoveryOutput,
+        output: &TransferableCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &Arc<UnifiedPrivateEncKey>,
         ephm_enc_key: &UnifiedPublicEncKey,
@@ -796,7 +796,7 @@ impl Operator {
     /// Validate every signcrypted custodian recovery output and reconstruct the operator's secret.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
+        custodian_recovery_output: &[TransferableCustodianRecoveryOutput],
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,

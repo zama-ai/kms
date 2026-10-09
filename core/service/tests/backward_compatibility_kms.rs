@@ -10,7 +10,7 @@ use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
     ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianContextTest, TransferableCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
     MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
@@ -41,7 +41,7 @@ use kms_lib::{
         BACKUP_PKE_SCHEME, BackupCiphertext,
         custodian::{
             Custodian, CustodianContextAnchor, InternalCustodianContext,
-            InternalCustodianRecoveryOutput, InternalCustodianSetupMessage,
+            TransferableCustodianRecoveryOutput, InternalCustodianSetupMessage,
         },
         operator::{
             BackupMaterial, DSEP_BACKUP_COMMITMENT, InnerOperatorBackupOutput,
@@ -1268,17 +1268,17 @@ fn test_internal_custodian_context(
 
 fn test_internal_custodian_recovery_output(
     dir: &Path,
-    test: &InternalCustodianRecoveryOutputTest,
+    test: &TransferableCustodianRecoveryOutputTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: InternalCustodianRecoveryOutput =
+    let original_versionized: TransferableCustodianRecoveryOutput =
         load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
     let signcryption = UnifiedSigncryption::new(buf.to_vec(), BACKUP_PKE_SCHEME);
 
-    let new_versionized = InternalCustodianRecoveryOutput {
+    let new_versionized = TransferableCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),
     };
@@ -1286,7 +1286,7 @@ fn test_internal_custodian_recovery_output(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid InternalCustodianRecoveryOutput:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+                "Invalid TransferableCustodianRecoveryOutput:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1946,7 +1946,7 @@ impl TestedModule for KMS {
             Self::Metadata::InternalCustodianSetupMessage(test) => {
                 test_internal_custodian_message(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::InternalCustodianRecoveryOutput(test) => {
+            Self::Metadata::TransferableCustodianRecoveryOutput(test) => {
                 test_internal_custodian_recovery_output(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::OperatorBackupOutput(test) => {

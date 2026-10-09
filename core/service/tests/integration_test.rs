@@ -666,7 +666,7 @@ mod kms_custodian_binary_tests {
             BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
             SEED_PHRASE_DESC,
             custodian::{
-                InternalCustodianContext, InternalCustodianRecoveryOutput,
+                InternalCustodianContext, TransferableCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
             },
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
@@ -954,7 +954,7 @@ mod kms_custodian_binary_tests {
         ephem_dec_key: &UnifiedPrivateEncKey,
         ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Vec<u8> {
-        let outputs: Vec<InternalCustodianRecoveryOutput> = custodian_outputs
+        let outputs: Vec<TransferableCustodianRecoveryOutput> = custodian_outputs
             .iter()
             .map(|cur| base64_deserialize(cur).unwrap())
             .collect();
