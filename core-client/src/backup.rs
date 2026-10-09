@@ -13,7 +13,7 @@ use kms_grpc::{
 };
 use kms_lib::backup::{
     DSEP_ATTESTED_BACKUP_PK,
-    custodian::{TransferableCustodianRecoveryOutput, InternalCustodianSetupMessage},
+    custodian::{InternalCustodianSetupMessage, TransferableCustodianRecoveryOutput},
     operator::InternalRecoveryRequest,
 };
 use kms_lib::cryptography::signatures::{SigningSchemeType, VerfKeySet};

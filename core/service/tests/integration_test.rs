@@ -666,8 +666,8 @@ mod kms_custodian_binary_tests {
             BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
             SEED_PHRASE_DESC,
             custodian::{
-                InternalCustodianContext, TransferableCustodianRecoveryOutput,
-                InternalCustodianSetupMessage,
+                InternalCustodianContext, InternalCustodianSetupMessage,
+                TransferableCustodianRecoveryOutput,
             },
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
