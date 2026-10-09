@@ -47,39 +47,6 @@ centralized
 {{- end -}}
 {{- end -}}
 
-{{/* Public folder for this party's CA and TLS key. Empty prefix keeps PUB-p<id>. */}}
-{{- define "kmsOwnPublicPrefix" -}}
-{{- if .Values.kmsCore.publicVault.s3.prefix -}}
-{{- .Values.kmsCore.publicVault.s3.prefix -}}
-{{- else -}}
-PUB-p{{ .Values.kmsPeers.id }}
-{{- end -}}
-{{- end -}}
-
-{{/* dict peer, root. Peer prefix, else this party's vault prefix, else PUB-p<id>. */}}
-{{- define "kmsPeerPublicPrefix" -}}
-{{- $peer := .peer -}}
-{{- $root := .root -}}
-{{- if $peer.prefix -}}
-{{- $peer.prefix -}}
-{{- else if and $root.Values.kmsCore.publicVault.s3.prefix (eq (int $peer.id) ($root.Values.kmsPeers.id | default 0 | int)) -}}
-{{- $root.Values.kmsCore.publicVault.s3.prefix -}}
-{{- else -}}
-PUB-p{{ int $peer.id }}
-{{- end -}}
-{{- end -}}
-
-{{/* dict id, root. Same rule for a synthesized party id. */}}
-{{- define "kmsIndexedPublicPrefix" -}}
-{{- $id := .id | int -}}
-{{- $root := .root -}}
-{{- if and $root.Values.kmsCore.publicVault.s3.prefix (eq $id ($root.Values.kmsPeers.id | default 0 | int)) -}}
-{{- $root.Values.kmsCore.publicVault.s3.prefix -}}
-{{- else -}}
-PUB-p{{ $id }}
-{{- end -}}
-{{- end -}}
-
 {{- define "kmsNetworkTunnelQueueCount" -}}
 {{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.queueCount -}}
 {{- if and $configured (gt (int $configured) 0) -}}
@@ -338,7 +305,7 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-{{- $peerPrefix := include "kmsPeerPublicPrefix" (dict "peer" . "root" $) }}
+{{- $peerPrefix := .prefix | default (printf "PUB-p%d" (int .id)) }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
 CERT_PATH="{{ $peerPrefix }}/CACert/cert.pem"
@@ -378,7 +345,7 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- $ownPrefix := include "kmsOwnPublicPrefix" . }}
+{{- $ownPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" (default "" .Values.kmsPeers.id)) }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to key.pem
 KEY_PATH="{{ $ownPrefix }}/PrivateKey/key.pem"
