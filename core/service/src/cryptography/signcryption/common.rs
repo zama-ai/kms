@@ -32,10 +32,10 @@ pub(crate) mod test_support {
         PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet, canonical_schemes, gen_sig_keys,
     };
     use crate::cryptography::signing::test_support::seeded_identity;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::sync::Arc;
     use strum::IntoEnumIterator;
+    use threshold_types::rng::AesRng;
 
     /// One sender, one receiver, and the rng that produced them.
     pub(crate) struct SigncryptionFixture {

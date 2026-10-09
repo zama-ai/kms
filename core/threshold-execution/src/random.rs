@@ -1,10 +1,10 @@
-use aes_prng::AesRng;
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 use tfhe::{
     Seed,
     core_crypto::prelude::{DefaultRandomGenerator, SecretRandomGenerator},
 };
+use threshold_types::rng::AesRng;
 
 /// Get a *secure* random number generator.
 pub fn get_rng() -> impl Rng + CryptoRng {
@@ -26,12 +26,12 @@ pub fn seed_from_rng<R: Rng + CryptoRng>(rng: &mut R) -> Seed {
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use tfhe::{
         core_crypto::entities::{LweSecretKey, LweSecretKeyOwned},
         integer::parameters::LweDimension,
     };
+    use threshold_types::rng::AesRng;
 
     use crate::random::{get_rng, secret_rng_from_seed, seed_from_rng};
 

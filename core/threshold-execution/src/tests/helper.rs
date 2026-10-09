@@ -6,10 +6,10 @@ pub mod tests_and_benches {
 
     use tokio::time::Duration;
 
-    use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures::Future;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use tokio::task::JoinSet;
     use tracing::warn;
@@ -341,12 +341,12 @@ pub mod testing {
             prss::{AbortRealPrssInit, PRSSInit, PRSSSetup},
         },
     };
-    use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert};
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
     use tokio::runtime::Runtime;
@@ -421,7 +421,6 @@ pub mod tests {
             test_feature::{KeySet, gen_uncompressed_key_set},
         },
     };
-    use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures_util::future::{Future, FutureExt, join_all};
     use itertools::Itertools;
@@ -432,6 +431,7 @@ pub mod tests {
     };
     use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
+    use threshold_types::rng::AesRng;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use threshold_types::session_id::SessionId;
     use tokio::task::JoinError;

@@ -691,9 +691,9 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_delete_at_epoch_removes_empty_epoch_dir() {
-        use aes_prng::AesRng;
         use kms_grpc::rpc_types::PrivDataType;
         use rand::SeedableRng;
+        use threshold_types::rng::AesRng;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path();
@@ -737,9 +737,9 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_delete_at_epoch_keeps_dir_when_not_empty() {
-        use aes_prng::AesRng;
         use kms_grpc::rpc_types::PrivDataType;
         use rand::SeedableRng;
+        use threshold_types::rng::AesRng;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path();

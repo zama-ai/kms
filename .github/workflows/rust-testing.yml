@@ -10,12 +10,6 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      SLACK_CHANNEL:
-        required: true
-      BOT_USERNAME:
-        required: true
-      SLACK_WEBHOOK:
-        required: true
       CGR_USERNAME:
         required: true
       CGR_PASSWORD:
@@ -330,9 +324,6 @@ jobs:
       nextest-test-threads: ${{ matrix.nextest_threads }}
       efs-test-material-path: ${{ inputs.efs-test-material-path }}
     secrets:
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
@@ -361,11 +352,7 @@ jobs:
       runner-volume: '400gb'
       rust-log-level: 'info'
       nextest-test-threads: '4'
-      notify-slack: false
     secrets:
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 

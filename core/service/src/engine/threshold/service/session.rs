@@ -13,8 +13,6 @@ use crate::engine::{
 };
 
 // === External Crates ===
-#[cfg(test)]
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
 use threshold_execution::{
@@ -25,11 +23,13 @@ use threshold_execution::{
         },
         small_session::SmallSession,
     },
-    small_execution::prss::{DerivePRSSState, PRSSSetup},
+    small_execution::prss::{DerivePRSSState, PRSSSetup, SecurePRSSState},
 };
 use threshold_networking::{
     grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
 };
+#[cfg(test)]
+use threshold_types::rng::AesRng;
 // Only used by the `#[cfg(test)]` dummy-session constructors below.
 #[cfg(test)]
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
@@ -702,20 +702,52 @@ impl SessionMaker {
             .make_base_session(session_id, context_id, network_mode)
             .await?;
 
-        let prss_state = {
-            let epoch_map_guard = self.epoch_map.read().await;
-            let prss_setup_extended = epoch_map_guard
-                .get(&epoch_id)
-                .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss.prss_setup_z128;
-            prss_setup.new_prss_session_state(session_id)
-        };
+        let prss_state = self
+            .prss_state_z128(session_id, epoch_id, base_session.my_role())
+            .await?;
 
         let session = SmallSession {
             base_session,
             prss_state,
         };
         Ok(session)
+    }
+
+    /// Derives the Z128 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
+    ///
+    /// Unlike the session constructors, this sets up no networking, so it suits protocols that
+    /// only need local PRSS output.
+    async fn prss_state_z128(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+        role: Role,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
+        let epoch_map_guard = self.epoch_map.read().await;
+        let prss_setup_extended = epoch_map_guard
+            .get(&epoch_id)
+            .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
+        prss_setup_extended
+            .prss
+            .prss_setup_z128
+            .new_prss_session_state(session_id, role)
+    }
+
+    /// Derives the Z64 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
+    async fn prss_state_z64(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+        role: Role,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z64>> {
+        let epoch_map_guard = self.epoch_map.read().await;
+        let prss_setup_extended = epoch_map_guard
+            .get(&epoch_id)
+            .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
+        prss_setup_extended
+            .prss
+            .prss_setup_z64
+            .new_prss_session_state(session_id, role)
     }
 
     async fn make_small_session_z64(
@@ -729,15 +761,9 @@ impl SessionMaker {
             .make_base_session(session_id, context_id, network_mode)
             .await?;
 
-        let prss_state = {
-            let epoch_map_guard = self.epoch_map.read().await;
-            let prss_setup_extended = epoch_map_guard
-                .get(&epoch_id)
-                .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss.prss_setup_z64;
-
-            prss_setup.new_prss_session_state(session_id)
-        };
+        let prss_state = self
+            .prss_state_z64(session_id, epoch_id, base_session.my_role())
+            .await?;
 
         let session = SmallSession {
             base_session,
@@ -1095,6 +1121,16 @@ impl ImmutableSessionMaker {
             .await
     }
 
+    /// Derives the Z128 PRSS state of `session_id` for `epoch_id`, without setting up networking.
+    pub(crate) async fn prss_state_z128(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+        role: Role,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
+        self.inner.prss_state_z128(session_id, epoch_id, role).await
+    }
+
     pub(crate) async fn make_small_async_session_z64(
         &self,
         session_id: SessionId,
@@ -1238,6 +1274,19 @@ mod tests {
         pki_types::{CertificateDer, ServerName, UnixTime},
         server::danger::ClientCertVerifier,
     };
+
+    #[tokio::test]
+    async fn prss_state_rejects_unknown_epoch() {
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(6));
+        let epoch_id = EpochId::new_random(&mut AesRng::seed_from_u64(5));
+        let error = session_maker
+            .make_immutable()
+            .prss_state_z128(SessionId::from(1), epoch_id, Role::indexed_from_one(1))
+            .await
+            .err()
+            .expect("an unknown epoch cannot supply a PRSS state");
+        assert!(error.to_string().contains(&epoch_id.to_string()));
+    }
 
     /// Sunshine: one health check session per context that has a role for this party.
     #[tokio::test]

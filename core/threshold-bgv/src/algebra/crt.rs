@@ -373,8 +373,8 @@ pub(crate) fn from_crt(crt_rep: LevelKswCrtRepresentation) -> LevelKsw {
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use super::*;
     use crate::algebra::levels::LevelKsw;

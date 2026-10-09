@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
@@ -10,6 +9,7 @@ use observability::metrics_names::{
 };
 use std::sync::Arc;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_types::rng::AesRng;
 use tokio_util::sync::CancellationToken;
 
 use tokio::sync::RwLock;

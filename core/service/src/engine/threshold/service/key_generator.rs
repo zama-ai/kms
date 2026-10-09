@@ -1727,7 +1727,8 @@ impl<
                             epoch_id,
                             &old_key_id,
                             epoch_id,
-                            sk.ecdsa(),
+                            &sk,
+                            &signing_schemes,
                             &eip712_domain,
                             Arc::clone(&meta_store),
                         )
@@ -1884,7 +1885,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::engine::rng_source::test_rng_source;
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
@@ -1900,6 +1900,7 @@ mod tests {
         small_execution::prss::PRSSSetup,
     };
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},
@@ -1988,8 +1989,17 @@ mod tests {
             test_rng_source(),
         );
         let epoch_id = *DEFAULT_EPOCH_ID;
-        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
+        let prss_setup_z64 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,

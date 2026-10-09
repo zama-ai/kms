@@ -144,6 +144,7 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 | `test-wasm` | `kms` | core-service / CI changes; calls `wasm-testing.yml` |
 | `test-reporter` | — | always; aggregates JUnit reports after PR test jobs complete |
 | `docker-build` | — | PR labeled `docker`; calls `docker-build.yml` |
+| `notify-nightly` | — | scheduled; posts one Slack message with job counts and one line per job that did not succeed, failed jobs first (`ci/scripts/nightly_slack_summary.py`); posts a short notice with the run link if the summary fails |
 
 ### `test-core-service` matrix
 
@@ -166,7 +167,7 @@ Most test jobs depend on FHE and signing material under `./test-material/`. The 
 Calls `common-testing.yml` for the main sharded Rust test matrix. It receives the
 EFS-backed test-material path from `main.yml` and shares it across its jobs. On
 scheduled runs, it also runs the slow `kms` library tests whose names contain
-`nightly` in five shards. `main.yml` sends the aggregate Slack notification.
+`nightly` in five shards. The `notify-nightly` job in `main.yml` reports their results.
 
 ### `kms-nightly.yml`
 
@@ -188,13 +189,11 @@ Steps (subset):
 | Build `kms-custodian` binary | Required by integration tests |
 | Run Tests | `cargo nextest --profile ci run …` |
 | Upload JUnit + integration logs | On PR runs |
-| Slack notification | Scheduled runs only |
 
 Inputs of note:
 - `crate-names` — `-p <crate> [-p …]` forwarded to cargo
 - `args-tests` — extra cargo / nextest args
 - `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
-- `notify-slack` — post the result for a scheduled caller, defaulting to `true`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
 - `runs-on`, `runner-volume` — runs-on slab selector

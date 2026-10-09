@@ -197,7 +197,7 @@ deploy_threshold_mode() {
             --values "${PEERS_VALUES}"
             --values "${OVERRIDE_VALUES}"
             --set kmsPeers.id="${i}"
-            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+            --set-string kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
             --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
             --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
@@ -243,7 +243,7 @@ deploy_threshold_mode() {
                 --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
                 --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
                 --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
-                --set kmsCore.image.tag="${KMS_CORE_TAG}"
+                --set-string kmsCore.image.tag="${KMS_CORE_TAG}"
             )
             # Add TLS/PCR settings for threshold deployments with TLS enabled
             if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" ]]; then
@@ -401,7 +401,7 @@ deploy_centralized_mode() {
         --values "${OVERRIDE_VALUES}"
         --set kmsPeers.id="1"
         --set kmsCore.thresholdMode.enabled=false
-        --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+        --set-string kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
 
@@ -431,7 +431,7 @@ deploy_centralized_mode() {
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-1"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-1"
-            --set kmsCore.image.tag="${KMS_CORE_TAG}"
+            --set-string kmsCore.image.tag="${KMS_CORE_TAG}"
         )
     fi
 
@@ -1103,11 +1103,11 @@ upgrade_parties() {
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsPeers.id="${i}"
             --set kmsCoreClient.image.name="${new_kms_client_image_name}"
-            --set kmsCoreClient.image.tag="${new_tag}"
+            --set-string kmsCoreClient.image.tag="${new_tag}"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
             --set kmsCore.image.name="${party_image_name}"
-            --set kmsCore.image.tag="${party_tag}"
+            --set-string kmsCore.image.tag="${party_tag}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
             --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"

@@ -240,9 +240,9 @@ pub fn execute_all_randomness_tests_loose<Z: Ring>(elems: &[Z]) -> anyhow::Resul
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::{RngCore, SeedableRng};
+    use threshold_types::rng::AesRng;
 
     use super::{
         NUM_STD_DEV_NIST, SIGNIFICANCE_LEVEL, execute_all_randomness_tests_tight, igamc,

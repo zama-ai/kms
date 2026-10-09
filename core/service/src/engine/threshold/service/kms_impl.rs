@@ -1053,7 +1053,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::collections::BTreeMap;
     use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
@@ -1062,6 +1061,7 @@ mod tests {
         public_keysets::FhePubKeySet,
         test_feature::{gen_key_set, gen_uncompressed_key_set},
     };
+    use threshold_types::rng::AesRng;
 
     use crate::consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM};
 
