@@ -923,7 +923,7 @@ async fn filter_custodian_data(
         let cur_signcryption: UnifiedSigncryption = match &cur_recovery_output.backup_output {
             // Skipped like every other unusable output: one custodian sending a malformed scheme
             // must not be able to fail a recovery the other t+1 could complete.
-            Some(cur_op_out) => match cur_op_out.try_into() {
+            Some(cur_op_out) => match cur_op_out.clone().try_into() {
                 Ok(signcryption) => signcryption,
                 Err(e) => {
                     tracing::warn!(

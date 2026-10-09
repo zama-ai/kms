@@ -801,30 +801,7 @@ impl Operator {
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
-        let validated = self.validate_outputs(
-            custodian_recovery_output,
-            Vec::new(),
-            recovery_material,
-            ephm_dec_key,
-            ephm_enc_key,
-        )?;
-        self.recover_from_validated(&validated)
-    }
-
-    /// Validate every signcrypted custodian recovery output and keep the first valid one of
-    /// each role.
-    ///
-    /// `skip_reasons` holds the reasons outputs were dropped before reaching this point, so
-    /// that a recovery that falls short reports every reason. Fails unless more than the
-    /// custodian threshold of roles validated.
-    pub(crate) fn validate_outputs(
-        &self,
-        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
-        mut skip_reasons: Vec<RecoverySkipReason>,
-        recovery_material: &RecoveryValidationMaterial,
-        ephm_dec_key: &UnifiedPrivateEncKey,
-        ephm_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<HashMap<Role, Zeroizing<BackupMaterial>>, BackupError> {
+        let mut skip_reasons = Vec::new();
         let mut validated: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
         let ephm_dec_key = Arc::new(ephm_dec_key.clone());
         for output in custodian_recovery_output {
@@ -866,7 +843,7 @@ impl Operator {
                 skipped: skip_reasons,
             });
         }
-        Ok(validated)
+        self.recover_from_validated(&validated)
     }
 
     /// Reconstruct the operator's secret from already-validated per-role `BackupMaterial`s.
