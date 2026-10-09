@@ -2171,7 +2171,7 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
-        metadata: InternalCustodianRecoveryOutput((
+        metadata: TransferableCustodianRecoveryOutput((
             test_filename: "internal_custodian_recovery_output",
             state: 43,
             mpc_context_id: (7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7),

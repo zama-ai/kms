@@ -11,7 +11,7 @@ use kms_0_15_0::backup::custodian::{
     Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_15_0::backup::{
-    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
+    custodian::{TransferableCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
         RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
@@ -109,7 +109,7 @@ use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
     ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianContextTest, TransferableCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
     MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
@@ -641,8 +641,8 @@ const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
     };
 
 // KMS test
-const INTERNAL_CUS_REC_OUT_TEST: InternalCustodianRecoveryOutputTest =
-    InternalCustodianRecoveryOutputTest {
+const INTERNAL_CUS_REC_OUT_TEST: TransferableCustodianRecoveryOutputTest =
+    TransferableCustodianRecoveryOutputTest {
         test_filename: Cow::Borrowed("internal_custodian_recovery_output"),
         state: 43,
         mpc_context_id: [7u8; 32],
@@ -1786,12 +1786,12 @@ impl KmsV0_15_0 {
             payload: buf.to_vec(),
             pke_type: BACKUP_PKE_SCHEME,
         };
-        let icro = InternalCustodianRecoveryOutput {
+        let icro = TransferableCustodianRecoveryOutput {
             signcryption,
             custodian_role: Role::indexed_from_one(2),
         };
         store_versioned_test!(&icro, dir, &INTERNAL_CUS_REC_OUT_TEST.test_filename);
-        TestMetadataKMS::InternalCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
+        TestMetadataKMS::TransferableCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
     }
 
     fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {

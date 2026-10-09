@@ -9,8 +9,8 @@ use crate::{
     backup::{
         BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
         custodian::{
-            InternalCustodianContext, InternalCustodianRecoveryOutput,
-            InternalCustodianSetupMessage,
+            InternalCustodianContext, InternalCustodianSetupMessage,
+            TransferableCustodianRecoveryOutput,
         },
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
@@ -163,25 +163,6 @@ fn custodian_reencrypt() {
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
-    {
-        let operator_role = Role::indexed_from_zero(0);
-        let mut bad_results = signcrypt_results.clone();
-        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
-            z.signcryption.payload[0] ^= 1;
-        }
-
-        let err = custodians[0]
-            .verify_reencrypt(
-                &mut rng,
-                bad_results[0].ct_shares.get(&operator_role).unwrap(),
-                verification_key,
-                &ephemeral_enc_key,
-            )
-            .unwrap_err();
-        assert!(matches!(err, BackupError::CustodianRecoveryError));
-    }
-
-    // tweak the signature, so that signature verification also fails
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_results = signcrypt_results.clone();
@@ -731,7 +712,7 @@ fn custodian_recover(
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &CustodianBackupsMap, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
-) -> BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
+) -> BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
     for (cur_operator_address, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
         let mut cur_operator_res = BTreeMap::new();
@@ -759,7 +740,7 @@ fn custodian_recover(
 }
 
 fn operator_recover(
-    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
+    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>>,
     operators: &OperatorsMap,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();

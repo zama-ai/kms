@@ -217,7 +217,7 @@ mod tests {
             BACKUP_PKE_SCHEME
         );
         assert_eq!(
-            custodian.public_dec_key().encryption_scheme_type(),
+            custodian.private_dec_key().encryption_scheme_type(),
             BACKUP_PKE_SCHEME
         );
     }
