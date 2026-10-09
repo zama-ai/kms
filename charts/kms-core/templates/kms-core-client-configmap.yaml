@@ -68,7 +68,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int .id }}"
+    object_folder = {{ include "kmsPeerPublicPrefix" (dict "peer" . "root" $) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -76,11 +76,11 @@ data:
     # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     party_id = {{ int $i }}
     # The address of the given KMS server, including the port
-    address = "http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"
+    address = "http://{{- printf "%s-%d" $kmsCoreName (include "kmsPodSuffix" (dict "root" $ "partyId" $i) | int) }}:{{- $.Values.kmsCore.ports.client -}}"
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ include "kmsIndexedPublicPrefix" (dict "id" $i "root" $) | quote }}
       {{ end }}
       {{- end }}
 
@@ -159,7 +159,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int .id }}"
+    object_folder = {{ include "kmsPeerPublicPrefix" (dict "peer" . "root" $) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -167,11 +167,11 @@ data:
     # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     party_id = {{ int $i }}
     # The address of the given KMS server, including the port
-    address = "http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"
+    address = "http://{{- printf "%s-%d" $kmsCoreName (include "kmsPodSuffix" (dict "root" $ "partyId" $i) | int) }}:{{- $.Values.kmsCore.ports.client -}}"
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ include "kmsIndexedPublicPrefix" (dict "id" $i "root" $) | quote }}
         {{ end }}
       {{- end }}
 
@@ -179,7 +179,7 @@ data:
 
     [[cores]]
     party_id = 1
-    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
+    address = "http://{{- printf "%s-%d" $kmsCoreName (include "kmsPodSuffix" (dict "root" $ "partyId" 1) | int) }}:{{- $.Values.kmsCore.ports.client -}}"
     s3_endpoint = "${S3_ENDPOINT}"
     object_folder = "PUB"
 
