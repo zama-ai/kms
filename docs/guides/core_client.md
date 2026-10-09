@@ -448,7 +448,7 @@ Note that this will generate large amounts of preprocessing data, which is expen
 
 It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
