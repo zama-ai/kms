@@ -760,6 +760,7 @@ pub(crate) async fn do_preproc(
     Ok(req_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "insecure")]
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
