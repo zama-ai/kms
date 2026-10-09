@@ -167,8 +167,8 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
-      # Empty keeps this party's CA and TLS key at PUB-p<id>.
-      # A value here is the folder for those objects, for example PUB-partner-acme.
+      # Folder for this party's public CA and TLS key, for example PUB-p6.
+      # Empty keeps the historical PUB-p<id> path.
       prefix: ""
   privateVault:
     s3:
