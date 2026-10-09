@@ -1,3 +1,11 @@
+//! AES-based PRFs: psi for PRSS, chi for PRZS and phi for PRSS-Mask.
+//!
+//! Hot paths: `accumulate_psi_counters` and `accumulate_chi_counters`, called from the inner loops of the PRSS and
+//! PRZS kernels in `prss.rs`, and `phi_range` for masks. `psi` and `chi` evaluate one counter. They serve the
+//! checks, rings with several AES blocks per coefficient, and tests.
+//!
+//! Request entry points check counter ranges once with `check_counter_range`. The PRFs assert the same bounds.
+
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::{
     Aes128, Block as AesBlock,
@@ -96,84 +104,96 @@ impl PsiAes {
     }
 }
 
+/// Counters of psi stay below 2^112: bytes 14 and 15 of its AES input hold the coefficient and block indices.
+pub(crate) const PSI_COUNTER_BITS: u32 = 112;
+/// Counters of chi stay below 2^104: byte 13 also holds the threshold index.
+pub(crate) const CHI_COUNTER_BITS: u32 = 104;
+/// Counters of phi stay below 2^120: byte 15 holds the block index.
+pub(crate) const PHI_COUNTER_BITS: u32 = 120;
+/// Largest phi bound: `-bd1 + (AES mod 2 * bd1)` must not overflow an `i128`.
+pub(crate) const PHI_MAX_BOUND: u128 = 1 << 126;
+
+/// Returns true if the `count` counters starting at `ctr` are all below `2^bits`.
+fn counters_fit(ctr: u128, count: u128, bits: u32) -> bool {
+    count == 0 || ctr.checked_add(count).is_some_and(|end| end <= 1 << bits)
+}
+
+/// Returns an error unless the `count` counters starting at `ctr` are all below `2^bits`.
+/// Request entry points call this once per request. The PRFs below then assert the same bound, so a failure there is
+/// a bug: a larger counter would overlap the index bytes and repeat PRF inputs.
+pub(crate) fn check_counter_range(
+    prf: &str,
+    ctr: u128,
+    count: u128,
+    bits: u32,
+) -> anyhow::Result<()> {
+    if counters_fit(ctr, count, bits) {
+        Ok(())
+    } else {
+        Err(anyhow_error_and_log(format!(
+            "{prf} counters must stay below 2^{bits}, but the request needs {count} counters from {ctr}"
+        )))
+    }
+}
+
+/// Panics unless the `count` counters starting at `ctr` are all below `2^bits`.
+#[inline(always)]
+fn assert_counter_range(prf: &str, ctr: u128, count: u128, bits: u32) {
+    // Request entry points reject such ranges with an error first (see `check_counter_range`).
+    assert!(
+        counters_fit(ctr, count, bits),
+        "{prf} counters from {ctr} (count {count}) reach 2^{bits}; the caller did not check the range"
+    );
+}
+
 //NOTE: I BELIEVE WE NEVER NEED PRSS-MASK TO GENERATE MASK BIGGER THAN 2^126 EVEN FOR BGV
 //AFAICT, ONLY USED IN BGV DDEC WITH BD1<Q1 AND Q1 IS 94BIT LONG
 /// Function Phi that generates bounded randomness for PRSS-Mask.Next(), evaluated over the
 /// contiguous counter range `[start, start + count)`.
 ///
-/// This currently assumes and checks that the value Bd_1 in the NIST doc is smaller than 2^126.
-/// A single `encrypt_blocks` call is issued so the AES-NI backend can pipeline the blocks,
-/// and the (loop-invariant) bounds are checked only once for the whole range.
-pub(crate) fn phi_range(
-    pa: &PhiAes,
-    start: u128,
-    count: usize,
-    bd1: u128,
-) -> anyhow::Result<Vec<i128>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    // check that bd1 is within expected bounds, to avoid overflow when computing -Bd1 + (AES mod 2*Bd1)
-    if bd1 > (1 << 126) {
-        return Err(anyhow_error_and_log(
-            "Bd1 must be at most 2^126 to not overflow, but is larger".to_string(),
-        ));
-    }
-
-    // We assume the block counter is stored in ctr_bytes[15] (even though it's currently fixed to zero, given our parameters)
-    // Thus, we need to check that ctr is smaller 2^120, so nothing gets overwritten by setting the index below.
-    // Also ensure it doesn't overflow when adding count-1 to it.
-    let max_ctr = start.saturating_add(count as u128 - 1);
-    if max_ctr >= 1 << 120 {
-        return Err(anyhow_error_and_log(format!(
-            "ctr in phi must be smaller than 2^120 but was {max_ctr}."
-        )));
-    }
+/// Each output is `-bd1 + (AES(ctr) mod 2 * bd1)`, uniform in `[-bd1, bd1)`. One `encrypt_blocks` call covers the
+/// whole range. Panics if `bd1` exceeds [`PHI_MAX_BOUND`] or a counter reaches `2^PHI_COUNTER_BITS`; the caller
+/// checks both.
+pub(crate) fn phi_range(pa: &PhiAes, start: u128, count: usize, bd1: u128) -> Vec<i128> {
+    // mask_next_vec rejects larger bounds with an error first.
+    assert!(bd1 <= PHI_MAX_BOUND, "phi bound {bd1} exceeds 2^126");
+    assert_counter_range("phi", start, count as u128, PHI_COUNTER_BITS);
 
     // Number of AES blocks per value, currently limited to 1. See NOTE above.
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
     // TODO iterate over blocks from 0..v here, if we ever need Bd1 > 2^126
-    let mut blocks = Vec::with_capacity(count);
-    for k in 0..count {
-        let mut ctr_bytes = (start + k as u128).to_le_bytes();
-        ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
-        let block = AesBlock::from(ctr_bytes);
-        blocks.push(block);
-    }
+    // The counter bound keeps byte 15, the block index v, zero.
+    let mut blocks: Vec<AesBlock> = (0..count)
+        .map(|k| AesBlock::from((start + k as u128).to_le_bytes()))
+        .collect();
 
     // single pipelined AES call over the whole range
     pa.aes.encrypt_blocks(&mut blocks);
 
     let modulus = 2 * bd1;
     let neg_bd1 = -(bd1 as i128);
-    let mut res = Vec::with_capacity(count);
-    for block in blocks {
-        let out = u128::from_le_bytes(block.into());
-        // compute output as -BD1 + (AES (mod 2*BD1)), a uniform random value in [-BD1 .. BD1)
-        res.push(neg_bd1 + (out % modulus) as i128);
-    }
-    Ok(res)
+    blocks
+        .into_iter()
+        .map(|block| neg_bd1 + (u128::from_le_bytes(block.into()) % modulus) as i128)
+        .collect()
 }
 
-/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi. Sized to the AES-NI /
-/// ARMv8 parallel width so a single batch covers the common degree-8 case, while a stack buffer
-/// (rather than a per-call heap allocation) holds the blocks.
+/// Number of AES blocks per `encrypt_blocks` call in scalar psi/chi. One buffer covers a degree-eight ring.
 const AES_BATCH: usize = 8;
 
+/// Cold path: scalar psi/chi for checks and for rings with several AES blocks per coefficient.
+/// The PRSS/PRZS kernels use [`accumulate_psi_counters`] and [`accumulate_chi_counters`] instead.
 #[inline(always)]
-fn encrypt_indexed_prf_blocks<Z, F>(aes: &Aes128, ctr: u128, mut encode_block_indices: F) -> Z
+fn encrypt_indexed_prf_blocks<Z, F>(aes: &Aes128, ctr: u128, block_indices: F) -> Z
 where
     Z: Ring + PRSSConversions,
-    F: FnMut(&mut AesBlock, usize, usize),
+    F: Fn(usize, usize) -> u128,
 {
     // Compute v = ceil(log(q)/128) if q is a power of 2, v = dist + log(q)/128 otherwise.
     let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
     let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
-    let base = ctr.to_le_bytes();
-
     let mut chunks = Vec::with_capacity(n_blocks);
     let mut buf = [AesBlock::from([0u8; 16]); AES_BATCH];
     let mut start = 0;
@@ -181,10 +201,10 @@ where
         let chunk = (n_blocks - start).min(AES_BATCH);
         for (slot, block) in buf[..chunk].iter_mut().enumerate() {
             let idx = start + slot;
-            block.copy_from_slice(&base);
             let v = idx % num_u128_base_ring;
             let i = idx / num_u128_base_ring;
-            encode_block_indices(block, i, v);
+            // Counter bounds leave the index bytes zero. Construct the complete input before writing the block.
+            *block = AesBlock::from((ctr | block_indices(i, v)).to_le_bytes());
         }
         aes.encrypt_blocks(&mut buf[..chunk]);
         for block in &buf[..chunk] {
@@ -196,38 +216,137 @@ where
     Z::from_u128_chunks(chunks)
 }
 
-/// Function Psi that generates bounded randomness for PRSS.next()
-pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
-    // Bytes 14 and 15 are reserved for the dimension index and block counter. Keep ctr below
-    // 2^112 so those bytes are zero before we write the indices below.
-    if ctr >= 1 << 112 {
-        return Err(anyhow_error_and_log(format!(
-            "ctr in psi must be smaller than 2^112 but was {ctr}."
-        )));
-    }
-
-    Ok(encrypt_indexed_prf_blocks(&pa.aes, ctr, |block, i, v| {
-        block[15] = v as u8;
-        block[14] = i as u8;
-    }))
+/// Evaluates the PRSS function psi at `ctr` for one subset key.
+///
+/// Each coefficient, and each 128-bit limb of it, is one AES-128 block with input `ctr | v << 120 | i << 112`,
+/// where `i` is the coefficient index and `v` the limb index.
+/// Panics if `ctr >= 2^112`, because larger counters would overlap the index bytes. Request entry points check the
+/// range first.
+pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> Z {
+    assert_counter_range("psi", ctr, 1, PSI_COUNTER_BITS);
+    // Byte 15 (bits 120..128) holds the limb index v, byte 14 (bits 112..120) the coefficient index i.
+    // The u8 casts keep the original one-byte fields; ctr < 2^112 leaves both bytes zero, so OR places them.
+    encrypt_indexed_prf_blocks(&pa.aes, ctr, |i, v| {
+        ((v as u8) as u128) << 120 | ((i as u8) as u128) << 112
+    })
 }
 
-/// Function Chi that generates bounded randomness for PRZS.next()
-/// This currently assumes that q = 2^128
-pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
-    // Bytes 13, 14, and 15 are reserved for the threshold index, dimension index, and block
-    // counter. Keep ctr below 2^104 so those bytes are zero before we write the indices below.
-    if ctr >= 1 << 104 {
-        return Err(anyhow_error_and_log(format!(
-            "ctr in chi must be smaller than 2^104 but was {ctr}."
-        )));
-    }
+/// Evaluates the PRZS function chi at `ctr` and threshold index `j` for one subset key.
+///
+/// The AES inputs are those of [`psi`], plus `j << 104`.
+/// Panics if `ctr >= 2^104`, because larger counters would overlap the index bytes. Request entry points check the
+/// range first.
+pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> Z {
+    assert_counter_range("chi", ctr, 1, CHI_COUNTER_BITS);
+    // As in psi, plus j in byte 13 (bits 104..112); ctr < 2^104 leaves that byte zero too.
+    encrypt_indexed_prf_blocks(&pa.aes, ctr, |i, v| {
+        ((v as u8) as u128) << 120 | ((i as u8) as u128) << 112 | (j as u128) << 104
+    })
+}
 
-    Ok(encrypt_indexed_prf_blocks(&pa.aes, ctr, |block, i, v| {
-        block[15] = v as u8;
-        block[14] = i as u8;
-        block[13] = j;
-    }))
+/// Hot path: encrypts `COUNTERS` consecutive counters with one AES call and adds `coefficient` times each output to
+/// `sums`. Each counter uses `DEGREE` blocks, one per coefficient, with the coefficient index in byte 14.
+///
+/// The outputs are read directly from the encrypted blocks. Returning them as an array instead makes LLVM copy large
+/// Z128 groups when it does not unroll the caller's loop.
+#[inline(always)]
+fn accumulate_counter_blocks<
+    Z: Ring + PRSSConversions,
+    const COUNTERS: usize,
+    const DEGREE: usize,
+>(
+    aes: &Aes128,
+    ctr: u128,
+    indices: u128,
+    coefficient: Z,
+    sums: &mut [Z; COUNTERS],
+) {
+    // The caller selects DEGREE from Z, so this folds away.
+    assert_eq!(DEGREE, Z::EXTENSION_DEGREE);
+    // Every block is written below, so the compiler drops the zero initialization.
+    let mut blocks = [[AesBlock::default(); DEGREE]; COUNTERS];
+    for (offset, counter_blocks) in blocks.iter_mut().enumerate() {
+        for (coefficient_index, block) in counter_blocks.iter_mut().enumerate() {
+            // Write each block once, as a complete value: overlapping writes to its index bytes stall the AES
+            // routine's loads of the block.
+            let word =
+                (ctr + offset as u128) | indices | ((coefficient_index as u8) as u128) << 112;
+            *block = AesBlock::from(word.to_le_bytes());
+        }
+    }
+    // Give the backend the complete group so it can interleave independent AES round chains.
+    aes.encrypt_blocks(blocks.as_flattened_mut());
+    for (sum, counter_blocks) in sums.iter_mut().zip(&blocks) {
+        *sum += coefficient
+            * Z::from_u128_iter(
+                counter_blocks
+                    .iter()
+                    .map(|block| u128::from_le_bytes((*block).into())),
+            );
+    }
+}
+
+/// Adds `coefficient * scalar(ctr + offset)` to `sums[offset]`, using one AES call for the whole group when each
+/// coefficient fits in one block. `indices` holds the PRF's fixed index bytes; `scalar` evaluates one counter of the
+/// same PRF.
+#[inline(always)]
+fn accumulate_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    aes: &Aes128,
+    ctr: u128,
+    indices: u128,
+    coefficient: Z,
+    sums: &mut [Z; COUNTERS],
+    scalar: impl Fn(u128) -> Z,
+) {
+    match (Z::EXTENSION_DEGREE, Z::NUM_BITS_STAT_SEC_BASE_RING) {
+        (4, 64 | 128) => {
+            accumulate_counter_blocks::<Z, COUNTERS, 4>(aes, ctr, indices, coefficient, sums)
+        }
+        (8, 64 | 128) => {
+            accumulate_counter_blocks::<Z, COUNTERS, 8>(aes, ctr, indices, coefficient, sums)
+        }
+        // Cold path: other rings use the general encoding, one counter at a time.
+        _ => {
+            for (offset, sum) in sums.iter_mut().enumerate() {
+                *sum += coefficient * scalar(ctr + offset as u128);
+            }
+        }
+    }
+}
+
+/// Adds `coefficient * psi(pa, ctr + offset)` to `sums[offset]` for each offset, with the encoding of [`psi`].
+/// Panics if `COUNTERS` is zero or a counter reaches `2^PSI_COUNTER_BITS`; the caller checks the range.
+pub(crate) fn accumulate_psi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    pa: &PsiAes,
+    ctr: u128,
+    coefficient: Z,
+    sums: &mut [Z; COUNTERS],
+) {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    assert_counter_range("psi", ctr, COUNTERS as u128, PSI_COUNTER_BITS);
+    accumulate_counters(&pa.aes, ctr, 0, coefficient, sums, |ctr| psi(pa, ctr));
+}
+
+/// Adds `coefficient * chi(pa, ctr + offset, j)` to `sums[offset]` for each offset, with the encoding of [`chi`].
+/// Panics if `COUNTERS` is zero or a counter reaches `2^CHI_COUNTER_BITS`; the caller checks the range.
+pub(crate) fn accumulate_chi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    pa: &ChiAes,
+    ctr: u128,
+    j: u8,
+    coefficient: Z,
+    sums: &mut [Z; COUNTERS],
+) {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    assert_counter_range("chi", ctr, COUNTERS as u128, CHI_COUNTER_BITS);
+    accumulate_counters(&pa.aes, ctr, (j as u128) << 104, coefficient, sums, |ctr| {
+        chi(pa, ctr, j)
+    });
 }
 
 #[cfg(test)]
@@ -236,9 +355,227 @@ mod tests {
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 
+    // Encode the counter and indices byte by byte, without using the production block writer.
+    // This provides an independent reference for the scalar and batched PRFs' input layout.
+    fn original_encoding<Z: Ring + PRSSConversions>(aes: &Aes128, ctr: u128, j: Option<u8>) -> Z {
+        let num = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
+        let mut blocks: Vec<AesBlock> = (0..Z::EXTENSION_DEGREE * num)
+            .map(|idx| {
+                let mut block = AesBlock::from(ctr.to_le_bytes());
+                block[15] = (idx % num) as u8;
+                block[14] = (idx / num) as u8;
+                if let Some(j) = j {
+                    block[13] = j;
+                }
+                block
+            })
+            .collect();
+        aes.encrypt_blocks(&mut blocks);
+        Z::from_u128_chunks(
+            blocks
+                .iter()
+                .map(|b| u128::from_le_bytes((*b).into()))
+                .collect(),
+        )
+    }
+
+    // Evaluates consecutive counters through the grouped PRF with a unit coefficient.
+    fn psi_group<Z: Ring + PRSSConversions, const N: usize>(key: &PsiAes, ctr: u128) -> [Z; N] {
+        let mut values = [Z::ZERO; N];
+        accumulate_psi_counters(key, ctr, Z::ONE, &mut values);
+        values
+    }
+
+    fn chi_group<Z: Ring + PRSSConversions, const N: usize>(
+        key: &ChiAes,
+        ctr: u128,
+        j: u8,
+    ) -> [Z; N] {
+        let mut values = [Z::ZERO; N];
+        accumulate_chi_counters(key, ctr, j, Z::ONE, &mut values);
+        values
+    }
+
+    // Scalar and batched evaluation must preserve the same counter/index encoding and coefficient order.
+    // Compare each output with the byte-wise reference, including carries between counter bytes and the last valid group.
+    // F4/F8 exercise the grouped path; F3 exercises its scalar fallback. Both base rings check coefficient conversion.
+    #[test]
+    fn store_construction_matches_original_encoding() {
+        fn check<Z: Ring + PRSSConversions>() {
+            // Check both group sizes against the same reference, independently of the size used by the PRSS kernel.
+            check_group::<Z, 8>();
+            check_group::<Z, 16>();
+        }
+        fn check_group<Z: Ring + PRSSConversions, const COUNTERS: usize>() {
+            for sid in [0, 42] {
+                let psi_key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                let chi_key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                for start in [
+                    0,
+                    1,
+                    // Carry into the second byte within a group.
+                    255,
+                    // Carry between the two halves of the AES block.
+                    (1_u128 << 64) - 3,
+                    // The final output uses psi's last valid counter.
+                    (1_u128 << 112) - COUNTERS as u128,
+                ] {
+                    let values = psi_group::<Z, COUNTERS>(&psi_key, start);
+                    for (offset, value) in values.iter().enumerate() {
+                        let ctr = start + offset as u128;
+                        let expected = original_encoding::<Z>(&psi_key.aes, ctr, None);
+                        assert_eq!(psi::<Z>(&psi_key, ctr), expected);
+                        // A group of one is the short-final-group path of the PRSS kernel.
+                        assert_eq!(psi_group::<Z, 1>(&psi_key, ctr), [expected]);
+                        assert_eq!(*value, expected);
+                    }
+                }
+                // Chi reserves an extra byte for j, so its counter bound is 2^104 rather than psi's 2^112.
+                for start in [
+                    0,
+                    1,
+                    255,
+                    (1_u128 << 64) - 3,
+                    (1_u128 << 104) - COUNTERS as u128,
+                ] {
+                    // Include zero and all bits set to catch misplaced or truncated threshold-index bytes.
+                    for j in [0, 1, 4, 255] {
+                        let values = chi_group::<Z, COUNTERS>(&chi_key, start, j);
+                        for (offset, value) in values.iter().enumerate() {
+                            let ctr = start + offset as u128;
+                            let expected = original_encoding::<Z>(&chi_key.aes, ctr, Some(j));
+                            assert_eq!(chi::<Z>(&chi_key, ctr, j), expected);
+                            assert_eq!(chi_group::<Z, 1>(&chi_key, ctr, j), [expected]);
+                            assert_eq!(*value, expected);
+                        }
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>();
+        check::<ResiduePolyF4Z128>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
+
+    // The grouped PRFs add coefficient times each output to existing sums, in counter order.
+    #[test]
+    fn grouped_prfs_accumulate_scaled_outputs() {
+        fn check<Z: Ring + PRSSConversions>() {
+            let psi_key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(42));
+            let chi_key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(42));
+            for start in [0, 255, (1_u128 << 64) - 1] {
+                // Nonzero sums and a non-unit coefficient check that outputs are scaled and added in place.
+                let coefficient = psi::<Z>(&psi_key, 7);
+                let initial: [Z; 4] =
+                    std::array::from_fn(|offset| psi(&psi_key, 100 + offset as u128));
+                let mut sums = initial;
+                accumulate_psi_counters(&psi_key, start, coefficient, &mut sums);
+                for (offset, sum) in sums.into_iter().enumerate() {
+                    let ctr = start + offset as u128;
+                    assert_eq!(sum, initial[offset] + coefficient * psi(&psi_key, ctr));
+                }
+                for j in [1, 4, 255] {
+                    let mut sums = initial;
+                    accumulate_chi_counters(&chi_key, start, j, coefficient, &mut sums);
+                    for (offset, sum) in sums.into_iter().enumerate() {
+                        let ctr = start + offset as u128;
+                        assert_eq!(sum, initial[offset] + coefficient * chi(&chi_key, ctr, j));
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>();
+        check::<ResiduePolyF4Z128>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
+        // Degree three uses the scalar fallback.
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
+        check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
+
+    #[test]
+    fn counter_range_check_covers_the_whole_request() {
+        let bits = PSI_COUNTER_BITS;
+        let limit = 1_u128 << bits;
+        for (ctr, count) in [
+            (0, 0),
+            (0, 1),
+            (limit - 1, 1),
+            (limit - 4, 4),
+            (limit, 0),
+            (u128::MAX, 0),
+        ] {
+            assert!(
+                check_counter_range("psi", ctr, count, bits).is_ok(),
+                "{ctr} + {count}"
+            );
+        }
+        // The last case would wrap around without checked addition.
+        for (ctr, count) in [
+            (limit, 1),
+            (limit - 1, 2),
+            (limit - 3, 4),
+            (u128::MAX, 1),
+            (1, u128::MAX),
+        ] {
+            let error = check_counter_range("psi", ctr, count, bits).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("psi counters must stay below 2^112")
+            );
+        }
+    }
+
+    // The PRFs panic on counters past their limit: request entry points must reject those ranges first.
+    #[test]
+    #[should_panic(expected = "psi counters from")]
+    fn psi_panics_at_its_counter_limit() {
+        let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        psi::<ResiduePolyF4Z64>(&key, 1 << PSI_COUNTER_BITS);
+    }
+
+    #[test]
+    #[should_panic(expected = "chi counters from")]
+    fn chi_panics_at_its_counter_limit() {
+        let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        chi::<ResiduePolyF4Z64>(&key, 1 << CHI_COUNTER_BITS, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "psi counters from")]
+    fn psi_group_panics_if_its_last_counter_reaches_the_limit() {
+        let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        psi_group::<ResiduePolyF4Z128, 4>(&key, (1 << PSI_COUNTER_BITS) - 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "chi counters from")]
+    fn chi_group_panics_if_its_last_counter_reaches_the_limit() {
+        let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        chi_group::<ResiduePolyF4Z128, 4>(&key, (1 << CHI_COUNTER_BITS) - 3, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "phi counters from")]
+    fn phi_panics_at_its_counter_limit() {
+        let key = PhiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        phi_range(&key, (1 << PHI_COUNTER_BITS) - 1, 2, B_SWITCH_SQUASH);
+    }
+
+    #[test]
+    #[should_panic(expected = "phi bound")]
+    fn phi_panics_on_a_bound_that_could_overflow() {
+        let key = PhiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        phi_range(&key, 0, 1, PHI_MAX_BOUND + 1);
+    }
+
     /// Single-value convenience wrapper over [`phi_range`] used by the phi tests.
-    fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
-        Ok(phi_range(pa, ctr, 1, bd1)?[0])
+    fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> i128 {
+        phi_range(pa, ctr, 1, bd1)[0]
     }
 
     #[test]
@@ -250,7 +587,7 @@ mod tests {
         // test for B_SWITCH_SQUASH * 2^STATSEC  (currently even, so we can count bits using ilog2)
         for ctr in 0..100 {
             let bd1 = B_SWITCH_SQUASH * (1 << STATSEC);
-            let res = phi(&aes, ctr, bd1).unwrap();
+            let res = phi(&aes, ctr, bd1);
             let log = res.abs().ilog2();
             assert!(log < (LOG_B_SWITCH_SQUASH + STATSEC));
             assert!(-(bd1 as i128) <= res);
@@ -262,48 +599,30 @@ mod tests {
         // test for some odd bound value
         let odd_bound = (1 << 113) + 23;
         for ctr in 0..100 {
-            let res = phi(&aes, ctr, odd_bound).unwrap();
+            let res = phi(&aes, ctr, odd_bound);
             assert!(-(odd_bound as i128) <= res);
             assert!(odd_bound as i128 > res);
             assert_ne!(prev, res);
             prev = res;
         }
 
-        assert_eq!(
-            phi(&aes, 0, B_SWITCH_SQUASH).unwrap(),
-            phi(&aes, 0, B_SWITCH_SQUASH).unwrap()
-        );
+        assert_eq!(phi(&aes, 0, B_SWITCH_SQUASH), phi(&aes, 0, B_SWITCH_SQUASH));
 
         let aes_2 = PhiAes::new(&key, SessionId::from(2));
         assert_ne!(
-            phi(&aes, 0, B_SWITCH_SQUASH).unwrap(),
-            phi(&aes_2, 0, B_SWITCH_SQUASH).unwrap()
+            phi(&aes, 0, B_SWITCH_SQUASH),
+            phi(&aes_2, 0, B_SWITCH_SQUASH)
         );
-
-        let err_overflow = phi(&aes, 0, 1 << 127).unwrap_err().to_string();
-        assert!(err_overflow.contains("Bd1 must be at most 2^126 to not overflow, but is larger"));
-
-        let err_ctr = phi(&aes, 1 << 123, B_SWITCH_SQUASH)
-            .unwrap_err()
-            .to_string();
-        assert!(err_ctr.contains(
-            "ctr in phi must be smaller than 2^120 but was 10633823966279326983230456482242756608."
-        ));
     }
 
     fn test_psi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
         let aes = PsiAes::new(&key, SessionId::from(0));
-        assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 1).unwrap());
-        assert_eq!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 0).unwrap());
+        assert_ne!(psi::<Z>(&aes, 0), psi(&aes, 1));
+        assert_eq!(psi::<Z>(&aes, 0), psi(&aes, 0));
 
         let aes_2 = PsiAes::new(&key, SessionId::from(2));
-        assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes_2, 0).unwrap());
-
-        let err_ctr = psi::<Z>(&aes, 1 << 123).unwrap_err().to_string();
-        assert!(err_ctr.contains(
-            "ctr in psi must be smaller than 2^112 but was 10633823966279326983230456482242756608."
-        ));
+        assert_ne!(psi::<Z>(&aes, 0), psi(&aes_2, 0));
     }
 
     #[test]
@@ -319,17 +638,12 @@ mod tests {
     fn test_chi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
         let aes = ChiAes::new(&key, SessionId::from(0));
-        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 1, 0).unwrap());
-        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 1).unwrap());
-        assert_eq!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 0).unwrap());
+        assert_ne!(chi::<Z>(&aes, 0, 0), chi(&aes, 1, 0));
+        assert_ne!(chi::<Z>(&aes, 0, 0), chi(&aes, 0, 1));
+        assert_eq!(chi::<Z>(&aes, 0, 0), chi(&aes, 0, 0));
 
         let aes_2 = ChiAes::new(&key, SessionId::from(2));
-        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes_2, 0, 0).unwrap());
-
-        let err_ctr = chi::<Z>(&aes, 1 << 123, 0).unwrap_err().to_string();
-        assert!(err_ctr.contains(
-            "ctr in chi must be smaller than 2^104 but was 10633823966279326983230456482242756608."
-        ));
+        assert_ne!(chi::<Z>(&aes, 0, 0), chi(&aes_2, 0, 0));
     }
 
     #[test]
@@ -351,7 +665,7 @@ mod tests {
         let phiaes = PhiAes::new(&key, SessionId::from(0));
 
         // test direct PRF calls
-        assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
+        assert_ne!(chi::<Z>(&chiaes, 0, 0), psi(&psiaes, 0));
 
         // initialize identical 128-bit block
         let mut chi_block = AesBlock::from([42u8; 16]);

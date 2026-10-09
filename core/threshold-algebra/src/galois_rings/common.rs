@@ -883,6 +883,17 @@ where
 }
 
 impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENSION_DEGREE> {
+    fn from_u128_iter(mut coefs: impl ExactSizeIterator<Item = u128>) -> Self {
+        assert_eq!(coefs.len(), EXTENSION_DEGREE);
+        Self {
+            // Read each chunk directly into the coefficient array. A temporary Vec
+            // would make allocation freedom depend on compiler optimization.
+            coefs: std::array::from_fn(|_| {
+                Wrapping(coefs.next().expect("iterator must match its exact length"))
+            }),
+        }
+    }
+
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), EXTENSION_DEGREE);
         let mut poly_coefs = [Z128::ZERO; EXTENSION_DEGREE];
@@ -906,6 +917,17 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
 }
 
 impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSION_DEGREE> {
+    fn from_u128_iter(mut coefs: impl ExactSizeIterator<Item = u128>) -> Self {
+        assert_eq!(coefs.len(), EXTENSION_DEGREE);
+        Self {
+            // Preserve the PRF encoding: each AES block contributes its low 64 bits.
+            // Using the high half for another coefficient would change the protocol.
+            coefs: std::array::from_fn(|_| {
+                Wrapping(coefs.next().expect("iterator must match its exact length") as u64)
+            }),
+        }
+    }
+
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), EXTENSION_DEGREE);
         let mut poly_coefs = [Z64::ZERO; EXTENSION_DEGREE];
