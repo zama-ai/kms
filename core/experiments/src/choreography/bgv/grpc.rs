@@ -552,7 +552,8 @@ impl Choreography for ExperimentalGrpcChoreography {
                     )
                 })?
                 .get_levelksw()?
-                .new_prss_session_state(session_id);
+                .new_prss_session_state(session_id, base_session.my_role())
+                .map_err(|err| tonic::Status::internal(err.to_string()))?;
 
             let mut small_session =
                 SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
