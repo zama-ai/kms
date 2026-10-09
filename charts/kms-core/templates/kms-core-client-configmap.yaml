@@ -68,7 +68,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = {{ include "kmsPeerPublicPrefix" (dict "peer" . "root" $) | quote }}
+    object_folder = {{ (.prefix | default (printf "PUB-p%d" (int .id))) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -80,7 +80,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = {{ include "kmsIndexedPublicPrefix" (dict "id" $i "root" $) | quote }}
+    object_folder = "PUB-p{{ int $i }}"
       {{ end }}
       {{- end }}
 
@@ -159,7 +159,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = {{ include "kmsPeerPublicPrefix" (dict "peer" . "root" $) | quote }}
+    object_folder = {{ (.prefix | default (printf "PUB-p%d" (int .id))) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -171,7 +171,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = {{ include "kmsIndexedPublicPrefix" (dict "id" $i "root" $) | quote }}
+    object_folder = "PUB-p{{ int $i }}"
         {{ end }}
       {{- end }}
 
