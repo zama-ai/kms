@@ -75,8 +75,13 @@ cfg_if::cfg_if! {
             std::sync::LazyLock::new(|| env_usize("MPC_DKG_TUNIFORM_PAR_MIN_CHUNK", 4096));
         /// PRSS / PRZS / mask batch generation: a few AES-PRF evaluations per item.
         /// Env: `MPC_PRSS_PAR_MIN_CHUNK` (default 1024).
+        /// Panics on initialization if the configured size is zero.
         pub(crate) static PRSS_GEN_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =
-            std::sync::LazyLock::new(|| env_usize("MPC_PRSS_PAR_MIN_CHUNK", 1024));
+            std::sync::LazyLock::new(|| {
+                let chunk = env_usize("MPC_PRSS_PAR_MIN_CHUNK", 1024);
+                assert!(chunk > 0, "MPC_PRSS_PAR_MIN_CHUNK must be at least 1");
+                chunk
+            });
         /// d-value reconstruction in triple/square generation (nsmall offline) : heavy per item
         /// (a Shamir reconstruction).
         /// Env: `MPC_D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK` (default 256).

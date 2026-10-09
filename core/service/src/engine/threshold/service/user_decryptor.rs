@@ -242,7 +242,7 @@ impl<
                     let prss_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PrssDerive);
                     let mut prss_state = session_maker
-                        .prss_state_z128(session_id, epoch_id)
+                        .prss_state_z128(session_id, epoch_id, my_role)
                         .await
                         .map_err(|e| {
                             anyhow::anyhow!(
@@ -798,8 +798,17 @@ mod tests {
         );
 
         let epoch_id = EpochId::new_random(rng);
-        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
+        let prss_setup_z64 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
 
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
