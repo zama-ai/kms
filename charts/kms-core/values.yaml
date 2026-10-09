@@ -1,8 +1,13 @@
 # Configuration for the KMS peers
 # This is used to define the number of peers and their IDs
 kmsPeers:
-  # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
+  # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1.
+  # This is my_id. It is not the pod name or the vault folder.
   # id: 1
+  # Optional TLS subject. When set, it is used as-is and is not suffixed with the party id.
+  # name: partner-acme
+  # Optional StatefulSet ordinal. Defaults to id, so existing pod names stay put.
+  # ordinal: 0
   # The number of peers managed by the StatefulSets
   count: 1
 
@@ -57,6 +62,7 @@ kmsCore:
     #  - id: 1
     #    host: kms-core-1
     #    port: 50001
+    #    prefix: PUB-p1
     #    ca_certificate:
     #      pem: |
     #        -----BEGIN CERTIFICATE-----
@@ -161,6 +167,8 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
+      # Empty keeps this party's CA and TLS key at PUB-p<id>.
+      # A value here is the folder for those objects, for example PUB-partner-acme.
       prefix: ""
   privateVault:
     s3:

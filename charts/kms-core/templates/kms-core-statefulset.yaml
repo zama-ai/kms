@@ -13,7 +13,7 @@ metadata:
 spec:
   replicas: {{ .Values.kmsPeers.count }}
   ordinals:
-    start: {{ include "kmsPeersStartID" . }}
+    start: {{ if hasKey .Values.kmsPeers "ordinal" }}{{ .Values.kmsPeers.ordinal }}{{ else }}{{ include "kmsPeersStartID" . }}{{ end }}
   podManagementPolicy: Parallel
   updateStrategy:
     type: RollingUpdate

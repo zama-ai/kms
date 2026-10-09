@@ -35,6 +35,51 @@ centralized
 {{ default 1 .Values.kmsPeers.id }}
 {{- end -}}
 
+{{/* Pod ordinal for a party id. Without kmsPeers.ordinal this is the party id. */}}
+{{- define "kmsPodSuffix" -}}
+{{- $root := .root -}}
+{{- $partyId := .partyId | int -}}
+{{- if hasKey $root.Values.kmsPeers "ordinal" -}}
+{{- $startID := include "kmsPeersStartID" $root | int -}}
+{{- add (sub $partyId $startID) (int $root.Values.kmsPeers.ordinal) | int -}}
+{{- else -}}
+{{- $partyId -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Public folder for this party's CA and TLS key. Empty prefix keeps PUB-p<id>. */}}
+{{- define "kmsOwnPublicPrefix" -}}
+{{- if .Values.kmsCore.publicVault.s3.prefix -}}
+{{- .Values.kmsCore.publicVault.s3.prefix -}}
+{{- else -}}
+PUB-p{{ .Values.kmsPeers.id }}
+{{- end -}}
+{{- end -}}
+
+{{/* dict peer, root. Peer prefix, else this party's vault prefix, else PUB-p<id>. */}}
+{{- define "kmsPeerPublicPrefix" -}}
+{{- $peer := .peer -}}
+{{- $root := .root -}}
+{{- if $peer.prefix -}}
+{{- $peer.prefix -}}
+{{- else if and $root.Values.kmsCore.publicVault.s3.prefix (eq (int $peer.id) ($root.Values.kmsPeers.id | default 0 | int)) -}}
+{{- $root.Values.kmsCore.publicVault.s3.prefix -}}
+{{- else -}}
+PUB-p{{ int $peer.id }}
+{{- end -}}
+{{- end -}}
+
+{{/* dict id, root. Same rule for a synthesized party id. */}}
+{{- define "kmsIndexedPublicPrefix" -}}
+{{- $id := .id | int -}}
+{{- $root := .root -}}
+{{- if and $root.Values.kmsCore.publicVault.s3.prefix (eq $id ($root.Values.kmsPeers.id | default 0 | int)) -}}
+{{- $root.Values.kmsCore.publicVault.s3.prefix -}}
+{{- else -}}
+PUB-p{{ $id }}
+{{- end -}}
+{{- end -}}
+
 {{- define "kmsNetworkTunnelQueueCount" -}}
 {{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.queueCount -}}
 {{- if and $configured (gt (int $configured) 0) -}}
@@ -300,9 +345,10 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
+{{- $peerPrefix := include "kmsPeerPublicPrefix" (dict "peer" . "root" $) }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
-CERT_PATH="PUB-p{{ .id }}/CACert/cert.pem"
+CERT_PATH="{{ $peerPrefix }}/CACert/cert.pem"
 echo "Fetching CA cert for party {{ .id }} from: ${S3_BASE_URL}/${CERT_PATH}"
 # Retry logic: wait for certificate to appear (for parallel deployments)
 MAX_RETRIES=30
@@ -325,8 +371,8 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 done
 {{- else }}
 # For AWS enclave: use S3 list to discover the cert path
-echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
-BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix={{ $peerPrefix }}/CACert/"
+BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $peerPrefix }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 echo "Found bucket path: ${BUCKET_PATH_{{ .id }}}"
 if [ -n "${BUCKET_PATH_{{ .id }}}" ]; then
   curl -s -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${BUCKET_PATH_{{ .id }}}"
@@ -339,9 +385,10 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
+{{- $ownPrefix := include "kmsOwnPublicPrefix" . }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to key.pem
-KEY_PATH="PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/key.pem"
+KEY_PATH="{{ $ownPrefix }}/PrivateKey/key.pem"
 echo "Fetching private key from: ${S3_BASE_URL}/${KEY_PATH}"
 # Retry logic: wait for private key to appear (for parallel deployments)
 MAX_RETRIES=30
@@ -364,8 +411,8 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 done
 {{- else }}
 # For AWS enclave: use S3 list to discover the key path
-echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
-KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/PrivateKey/"
+KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
 echo "Found key bucket path: ${KEY_BUCKET_PATH}"
 if [ -n "${KEY_BUCKET_PATH}" ]; then
   curl -s -o ./key_pem "${S3_BASE_URL}/${KEY_BUCKET_PATH}"

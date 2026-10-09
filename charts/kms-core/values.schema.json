@@ -9,6 +9,8 @@
       "type": "object",
       "properties": {
         "id": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
+        "name": { "type": "string", "minLength": 1 },
+        "ordinal": { "type": "integer", "minimum": 0 },
         "count": { "type": "integer", "minimum": 1 }
       }
     },
@@ -412,6 +414,7 @@
               "id": { "type": "integer", "minimum": 1 },
               "host": { "type": "string" },
               "port": { "$ref": "#/definitions/port" },
+              "prefix": { "type": "string", "minLength": 1 },
               "ca_certificate": { "$ref": "#/definitions/pemOrPath" }
             }
           }
