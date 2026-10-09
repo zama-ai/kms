@@ -251,7 +251,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     #[instrument(
         name = "PRSS-INIT (BGV)",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn prss_init(
         &self,
@@ -355,7 +355,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     #[instrument(
         name = "DKG-PREPROC (BGV)",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn preproc_key_gen(
         &self,
@@ -462,7 +462,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     #[instrument(
         name = "DKG (BGV)",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn threshold_key_gen(
         &self,
@@ -696,7 +696,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     #[instrument(
         name = "DDEC (BGV)",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn threshold_decrypt(
         &self,
@@ -946,7 +946,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     #[instrument(
         name = "Reshare (BGV)",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn reshare(
         &self,
