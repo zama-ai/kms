@@ -392,7 +392,7 @@ spec:
       {{- $_ := set $nodeSelector $key $value }}
       {{- end }}
       {{- end }}
-      {{- $corePodName := printf "%s-%d" (include "kmsCoreName" .) (include "kmsPodSuffix" (dict "root" . "partyId" (include "kmsPeersStartID" .)) | int) }}
+      {{- $corePodName := printf "%s-%d" (include "kmsCoreName" .) (include "kmsPeersStartID" . | int) }}
       {{- $corePod := lookup "v1" "Pod" .Release.Namespace $corePodName }}
       {{- with $corePod }}
       {{- with .spec.nodeName }}

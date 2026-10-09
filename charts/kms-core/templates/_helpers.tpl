@@ -35,18 +35,6 @@ centralized
 {{ default 1 .Values.kmsPeers.id }}
 {{- end -}}
 
-{{/* Pod ordinal for a party id. Without kmsPeers.ordinal this is the party id. */}}
-{{- define "kmsPodSuffix" -}}
-{{- $root := .root -}}
-{{- $partyId := .partyId | int -}}
-{{- if hasKey $root.Values.kmsPeers "ordinal" -}}
-{{- $startID := include "kmsPeersStartID" $root | int -}}
-{{- add (sub $partyId $startID) (int $root.Values.kmsPeers.ordinal) | int -}}
-{{- else -}}
-{{- $partyId -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "kmsNetworkTunnelQueueCount" -}}
 {{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.queueCount -}}
 {{- if and $configured (gt (int $configured) 0) -}}

@@ -23,11 +23,7 @@ spec:
   selector:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsCoreName }}
-{{- $ordinalStart := .Values.kmsPeers.id | int }}
-{{- if hasKey .Values.kmsPeers "ordinal" }}
-{{- $ordinalStart = .Values.kmsPeers.ordinal | int }}
-{{- end }}
-{{- range $coreId := untilStep ($ordinalStart | int) (add $ordinalStart (.Values.kmsPeers.count | int) | int) 1 }}
+{{- range $coreId := untilStep (.Values.kmsPeers.id | int) (.Values.kmsPeers.count | add .Values.kmsPeers.id | int) 1 }}
 ---
 apiVersion: v1
 kind: Service

@@ -185,8 +185,8 @@ data:
         {{- range $i := $peersIDList }}
     [[threshold.peers]]
     party_id = {{ int $i }}
-    mpc_identity = {{ (printf "%s-%d" $kmsCoreName (include "kmsPodSuffix" (dict "root" $ "partyId" $i) | int)) | quote }}
-    address = {{ (printf "%s-%d" $kmsCoreName (include "kmsPodSuffix" (dict "root" $ "partyId" $i) | int)) | quote }}
+    mpc_identity = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
+    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     port = {{ int $.Values.kmsCore.ports.peer }}
         {{- end }}
       {{- end }}
