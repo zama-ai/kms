@@ -291,6 +291,7 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}/{{ .Values.kmsCore.publicVault.s3.bucke
 S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 {{- end }}
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
+{{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
@@ -327,6 +328,7 @@ if [ -n "${BUCKET_PATH_{{ .id }}}" ]; then
 else
   echo "WARNING: No CA cert found for party {{ .id }}"
 fi
+{{- end }}
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
