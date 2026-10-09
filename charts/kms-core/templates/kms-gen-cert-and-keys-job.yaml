@@ -3,7 +3,7 @@
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
 {{- $currentPeerID := default $peersStartID .Values.kmsPeers.id | int }}
-{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" (default "" .Values.kmsPeers.id)) }}
+{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $currentPeerID) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -187,7 +187,7 @@ spec:
 
               # Generate certificate using kms-gen-tls-certs binary (only for this party)
               /app/kms/core/service/bin/kms-gen-tls-certs \
-                --ca-names {{ $currentHostname }} \
+                --ca-names {{ $currentHostname | quote }} \
                 --output-dir /tmp/certs \
                 --num-cores 0 \
                 --force-self-signed-non-ca \
@@ -341,7 +341,7 @@ spec:
 
               # Upload certificate for party {{ $currentPeerID }}
               echo "Uploading certificate for party {{ $currentPeerID }}..."
-              if ! aws s3 cp /tmp/certs/cert_{{ $currentHostname }}.pem \
+              if ! aws s3 cp "/tmp/certs/cert_{{ $currentHostname }}.pem" \
                 s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/CACert/cert.pem \
                 --region {{ .Values.kmsCore.aws.region }}; then
                 echo "ERROR: Failed to upload certificate for party {{ $currentPeerID }}"
@@ -351,7 +351,7 @@ spec:
 
               # Upload private key for party {{ $currentPeerID }}
               echo "Uploading private key for party {{ $currentPeerID }}..."
-              if ! aws s3 cp /tmp/certs/key_{{ $currentHostname }}.pem \
+              if ! aws s3 cp "/tmp/certs/key_{{ $currentHostname }}.pem" \
                 s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/{{ $publicPrefix }}/PrivateKey/key.pem \
                 --region {{ .Values.kmsCore.aws.region }}; then
                 echo "ERROR: Failed to upload private key for party {{ $currentPeerID }}"

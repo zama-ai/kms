@@ -127,6 +127,8 @@ jobs:
             --set kmsCore.privateVault.awskms.rootKeySpec=invalid
           expect_invalid "invalid Kubernetes resource quantity" 'cpu' \
             --set-string kmsCore.resources.requests.cpu=invalid
+          expect_invalid "unsafe party name" 'kmsPeers\.name|/kmsPeers/name' \
+            --set kmsPeers.name='sbi;rm'
           expect_invalid "empty migration epoch list" 'epochIds' \
             --set-json 'kmsCore.migration.contextAssociations=[{"contextId":"0x0700000000000000000000000000000000000000000000000000000000000001","epochIds":[]}]'
 
@@ -144,7 +146,8 @@ jobs:
             --set kmsPeers.count=1 \
             --set kmsPeers.id=1 \
             --set kmsCore.thresholdMode.thresholdValue=4 \
-            --set kmsCore.thresholdMode.omitPeers=true 2>&1); then
+            --set kmsCore.thresholdMode.omitPeers=true \
+            --set kmsCore.thresholdMode.tls.enabled=true 2>&1); then
             echo "omitPeers should allow a party count other than 3*t+1" >&2
             echo "$output" >&2
             exit 1
@@ -153,6 +156,8 @@ jobs:
             echo "omitPeers rendered a peer list" >&2
             exit 1
           fi
+          grep -Fq 'KEY_PATH="PUB-p1/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq 'export KMS_CA_PEM_1=' <<<"$output"
 
           if ! output=$(helm template test charts/kms-core \
             --set kmsCore.thresholdMode.enabled=true \
@@ -169,6 +174,7 @@ jobs:
             exit 1
           fi
           grep -Fq 'tls_subject = "partner-acme"' <<<"$output"
+          grep -Fq -- '--ca-names "partner-acme"' <<<"$output"
           grep -Fq 'KEY_PATH="PUB-partner-acme/PrivateKey/key.pem"' <<<"$output"
           grep -Fq 'pod-name: test-core-1' <<<"$output"
           if grep -Fq 'PUB-p1/' <<<"$output"; then
