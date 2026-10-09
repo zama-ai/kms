@@ -721,10 +721,7 @@ indexed by per-module `.ron` manifests. The loader in
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
 
-Custodian-backup fixtures exist for 0.15.0 only. The feature ships first in 0.15
-and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted
-and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather
-than kept as a compatibility target.
+Custodian-backup fixtures exist for 0.15.0 and later. The feature ships first in 0.15 and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather than kept as a compatibility target.
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).

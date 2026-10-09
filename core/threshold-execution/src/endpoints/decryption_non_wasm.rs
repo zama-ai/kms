@@ -687,8 +687,10 @@ where
         .init(&mut base_session)
         .await
         .unwrap();
-    SmallSession::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
-        .unwrap()
+    let prss_state = prss_setup
+        .new_prss_session_state(session_id, base_session.my_role())
+        .unwrap();
+    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
 }
 
 /// Generically compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts.
@@ -1597,7 +1599,7 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let session = SmallSession::new_from_prss_state(
                 base_session,
-                prss_setup.new_prss_session_state(session_id),
+                prss_setup.new_prss_session_state(session_id, role).unwrap(),
             )
             .unwrap();
             let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
@@ -1609,7 +1611,9 @@ mod tests {
                 masked_partial_decrypt(key_share, &large_ct, key_type, &mut prep).unwrap();
             let packing_via_session = large_ct.packing_factor() as u32;
 
-            let mut prss_state = prss_setup.new_prss_session_state(prss_session_id);
+            let mut prss_state = prss_setup
+                .new_prss_session_state(prss_session_id, role)
+                .unwrap();
             let ct = match key_type {
                 SnsDecryptionKeyType::SnsKey => LowLevelCiphertextAndKeys::BigStandard(large_ct),
                 SnsDecryptionKeyType::SnsCompressionKey => {
