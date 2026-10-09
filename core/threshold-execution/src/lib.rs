@@ -12,6 +12,8 @@ pub mod small_execution {
     pub mod offline;
     pub mod prf;
     pub mod prss;
+    #[cfg(test)]
+    mod prss_known_answer_tests;
 }
 pub mod random;
 pub mod endpoints {
