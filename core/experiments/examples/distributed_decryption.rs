@@ -7,7 +7,6 @@
 //!
 //! This is an example where we setup a testing runtime that runs 4 parties on the same machine.
 //! You can run it with `cargo run -F testing --example distributed_decryption`.
-use aes_prng::AesRng;
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
@@ -22,6 +21,7 @@ use threshold_execution::{
     },
 };
 use threshold_types::network::NetworkMode;
+use threshold_types::rng::AesRng;
 
 #[tokio::main]
 async fn main() {

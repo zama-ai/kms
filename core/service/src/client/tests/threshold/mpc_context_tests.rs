@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use kms_grpc::{
     RequestId,
     kms::v1::DestroyMpcContextRequest,
@@ -8,6 +7,7 @@ use rand::SeedableRng;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
 };
+use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 
 use crate::{

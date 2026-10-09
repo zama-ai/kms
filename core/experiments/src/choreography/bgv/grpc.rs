@@ -1,10 +1,10 @@
 //! gRPC-based choreography for experimental features
 //! This is meant for testing and benchmarking, and definitely not for production use.
 
-use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use threshold_types::rng::AesRng;
 
 use super::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
 #[cfg(feature = "measure_memory")]
@@ -552,7 +552,8 @@ impl Choreography for ExperimentalGrpcChoreography {
                     )
                 })?
                 .get_levelksw()?
-                .new_prss_session_state(session_id);
+                .new_prss_session_state(session_id, base_session.my_role())
+                .map_err(|err| tonic::Status::internal(err.to_string()))?;
 
             let mut small_session =
                 SmallSession::new_from_prss_state(base_session, prss_state).unwrap();

@@ -565,8 +565,8 @@ mod tests {
         encryption::{Encryption, PkeScheme, PkeSchemeType},
         signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
     };
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn internal_custodian_context_zero_role_should_fail() {

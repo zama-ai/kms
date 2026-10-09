@@ -717,7 +717,6 @@ mod tests {
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -730,6 +729,7 @@ mod tests {
         online::preprocessing::create_memory_factory,
         small_execution::prss::PRSSSetup,
     };
+    use threshold_types::rng::AesRng;
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
@@ -769,13 +769,22 @@ mod tests {
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );
+        let role = threshold_types::role::Role::indexed_from_one(1);
         let prss_setup_z128 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };
         let prss_setup_z64 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };

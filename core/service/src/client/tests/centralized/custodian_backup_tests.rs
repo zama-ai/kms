@@ -26,7 +26,6 @@ use crate::vault::storage::{
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
-use aes_prng::AesRng;
 use kms_grpc::kms::v1::{
     CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
 };
@@ -36,6 +35,7 @@ use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use rand::SeedableRng;
 use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use tonic::transport::Channel;
 

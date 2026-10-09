@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use algebra::poly::Poly;
 use algebra::poly::lagrange_interpolation_with_polys;
 use algebra::poly::lagrange_polynomials;
@@ -8,6 +7,7 @@ use algebra::structure_traits::FromU128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use rand::SeedableRng;
+use threshold_types::rng::AesRng;
 
 fn bench_lagrange_poly(c: &mut Criterion) {
     // params are (num_parties, threshold, max_errors)

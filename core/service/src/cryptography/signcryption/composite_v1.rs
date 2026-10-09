@@ -177,8 +177,8 @@ mod tests {
     use crate::cryptography::encryption::PkeSchemeType;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"COMPV1TT";
 

@@ -3,7 +3,6 @@ use std::time::Duration;
 
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
-use aes_prng::AesRng;
 use algebra::structure_traits::{ErrorCorrect, Invert};
 use futures_util::future::join_all;
 use itertools::Itertools;
@@ -13,6 +12,7 @@ use threshold_execution::runtime::sessions::base_session::{BaseSession, BaseSess
 use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 use threshold_execution::small_execution::prf::PRSSConversions;
 use threshold_execution::small_execution::prss::DerivePRSSState;
+use threshold_types::rng::AesRng;
 use threshold_types::session_id::SessionId;
 
 /// Fills tracing span fields with aggregate network and memory stats for multiple parallel sessions:
@@ -127,7 +127,9 @@ pub fn create_small_sessions<
     base_sessions
         .into_iter()
         .map(|base_session| {
-            let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+            let prss_state = prss_setup
+                .new_prss_session_state(base_session.session_id(), base_session.my_role())
+                .unwrap();
             GenericSmallSessionStruct::new_from_prss_state(base_session, prss_state).unwrap()
         })
         .collect_vec()

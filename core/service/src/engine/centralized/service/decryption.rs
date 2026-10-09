@@ -503,9 +503,9 @@ pub async fn get_public_decryption_result_impl<
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use aes_prng::AesRng;
     use kms_grpc::{RequestId, kms::v1::TypedCiphertext};
     use tfhe::xof_key_set::CompressedXofKeySet;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -576,10 +576,10 @@ pub(crate) mod tests {
 
 #[cfg(test)]
 mod tests_public_decryption {
-    use aes_prng::AesRng;
     use kms_grpc::{RequestId, kms::v1::TypedCiphertext};
     use kms_grpc::{kms::v1::SigningSchemeType, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         dummy_domain,
@@ -912,10 +912,10 @@ mod tests_public_decryption {
 
 #[cfg(test)]
 mod test_user_decryption {
-    use aes_prng::AesRng;
     use kms_grpc::{RequestId, kms::v1::TypedCiphertext};
     use kms_grpc::{kms::v1::SigningSchemeType, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,

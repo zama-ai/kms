@@ -2,7 +2,6 @@
 //!
 //! Run with `cargo bench -p threshold-algebra --bench reconstruction`.
 
-use aes_prng::AesRng;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
@@ -19,6 +18,7 @@ use threshold_algebra::{
     sharing::shamir::{InputOp, RevealOp, ShamirSharings},
     structure_traits::Sample,
 };
+use threshold_types::rng::AesRng;
 
 macro_rules! benchmark_honest_reconstruction {
     ($group:expr, $ring:ty, $ring_name:literal, $parameters:expr) => {

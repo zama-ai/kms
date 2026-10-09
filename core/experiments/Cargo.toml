@@ -10,7 +10,6 @@ license.workspace = true
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
-aes-prng.workspace = true
 algebra = { workspace = true, default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true

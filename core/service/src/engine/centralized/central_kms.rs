@@ -47,7 +47,6 @@ use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_recovery_material,
 };
 use crate::vault::{Vault, adopt_custodian_context, storage::Storage};
-use aes_prng::AesRng;
 use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
@@ -79,6 +78,7 @@ use threshold_execution::{
     tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
     zk::ceremony::public_parameters_by_trusted_setup,
 };
+use threshold_types::rng::AesRng;
 
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -1237,7 +1237,6 @@ pub(crate) mod tests {
         store_versioned_at_request_id,
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -1250,6 +1249,7 @@ pub(crate) mod tests {
     use threshold_execution::keyset_config::StandardKeySetConfig;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+    use threshold_types::rng::AesRng;
 
     /// Generate a fresh `CentralizedTestingKeys` bundle for a single test.
     async fn test_keys() -> CentralizedTestingKeys {

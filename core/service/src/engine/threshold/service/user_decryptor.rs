@@ -35,13 +35,13 @@ use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
-        SmallOfflineNoiseFloodSession, partial_decrypt_using_noiseflooding,
+        DecryptionMode, LowLevelCiphertextAndKeys, partial_decrypt_using_noiseflooding,
         secure_partial_decrypt_using_bitdec,
     },
-    runtime::sessions::small_session::SmallSession,
+    small_execution::prss::SecurePRSSState,
     tfhe_internals::private_keysets::PrivateKeySet,
 };
+use threshold_types::role::Role;
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Code, Request, Response};
@@ -90,19 +90,22 @@ use crate::{
 use super::ThresholdFheKeys;
 
 /// A serialized partial plaintext share kept behind a zeroizing guard.
-type PartialDecryption = (ZeroizingWriter, u32, std::time::Duration);
+type PartialDecryption = (ZeroizingWriter, u32);
 
+/// Computes this party's noise-flooded partial decryption of a ciphertext.
+///
+/// Partial decryption is local: it needs this party's PRSS state for the request's session and its
+/// role, but no networking.
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
-    type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
-        noiseflood_session: &mut Self::Prep,
+        prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
+        my_role: Role,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
-        std::time::Duration,
     )>
     where
         ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve;
@@ -112,36 +115,26 @@ pub struct SecureNoiseFloodPartialDecryptor;
 
 #[tonic::async_trait]
 impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
-    type Prep = SmallOfflineNoiseFloodSession<
-        { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        SmallSession<ResiduePolyF4Z128>,
-    >;
-
     async fn partial_decrypt(
-        noiseflood_session: &mut Self::Prep,
+        prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
+        my_role: Role,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
-        std::time::Duration,
     )>
     where
         ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
-        partial_decrypt_using_noiseflooding(noiseflood_session, ct, secret_key_share).await
+        partial_decrypt_using_noiseflooding(prss_state, my_role, ct, secret_key_share).await
     }
 }
 
 pub struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodPartialDecryptor<
-            Prep = SmallOfflineNoiseFloodSession<
-                { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                SmallSession<ResiduePolyF4Z128>,
-            >,
-        > + 'static,
+    Dec: NoiseFloodPartialDecryptor + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -156,12 +149,7 @@ pub struct RealUserDecryptor<
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodPartialDecryptor<
-            Prep = SmallOfflineNoiseFloodSession<
-                { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                SmallSession<ResiduePolyF4Z128>,
-            >,
-        > + 'static,
+    Dec: NoiseFloodPartialDecryptor + 'static,
 > RealUserDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for user decryption which carries out the actual threshold decryption using noise
@@ -200,6 +188,10 @@ impl<
 
         let mut all_signcrypted_cts = vec![];
 
+        let my_role = session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not get my role: {e}"))?;
         let rng = Arc::new(Mutex::new(rng));
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
@@ -245,18 +237,19 @@ impl<
 
             let pdec: Result<PartialDecryption, anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let session_timer =
-                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::SessionCreate);
-                    let session = session_maker
-                        .make_small_async_session_z128(session_id, context_id, epoch_id)
+                    // Noise-flooded partial decryption is local, so only the PRSS state is
+                    // needed: no network session is set up.
+                    let prss_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PrssDerive);
+                    let mut prss_state = session_maker
+                        .prss_state_z128(session_id, epoch_id, my_role)
                         .await
                         .map_err(|e| {
                             anyhow::anyhow!(
                                 "Could not prepare ddec data for noiseflood decryption: {e}",
                             )
                         })?;
-                    drop(session_timer);
-                    let mut noiseflood_session = Dec::Prep::new(session);
+                    drop(prss_timer);
 
                     // Only `Small` ciphertexts need switch&squash; the closure (and hence the
                     // lazy key decompression it triggers) does not run for the Big* variants.
@@ -266,20 +259,28 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
+                    let partial_decrypt_started_at = std::time::Instant::now();
                     let partial_decrypt_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
                     let pdec =
-                        Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
+                        Dec::partial_decrypt(&mut prss_state, my_role, ct, &keys.private_keys)
+                            .await;
+                    let partial_decrypt_duration = partial_decrypt_started_at.elapsed();
                     drop(partial_decrypt_timer);
 
                     let res = match pdec {
-                        Ok((partial_dec, packing_factor, time)) => {
+                        Ok((partial_dec, packing_factor)) => {
+                            tracing::debug!(
+                                "User decryption {req_id} in session {session_id} partially decrypted type {:?} in {} ms",
+                                fhe_type,
+                                partial_decrypt_duration.as_millis(),
+                            );
                             let partial_dec = Zeroizing::new(pack_residue_poly(&partial_dec));
                             // Wipe the serialized partial plaintext after signcryption.
                             let mut pdec_serialized = ZeroizingWriter::new();
                             bc2wrap::serialize_into(&*partial_dec, &mut pdec_serialized)?;
 
-                            (pdec_serialized, packing_factor, time)
+                            (pdec_serialized, packing_factor)
                         }
                         Err(e) => {
                             return Err(anyhow!("Failed user decryption with noiseflooding: {e}"));
@@ -300,6 +301,7 @@ impl<
                         })?;
                     drop(session_timer);
 
+                    let partial_decrypt_started_at = std::time::Instant::now();
                     let partial_decrypt_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
                     let pdec = secure_partial_decrypt_using_bitdec(
@@ -309,10 +311,16 @@ impl<
                         &keys.key_switching_key()?,
                     )
                     .await;
+                    let partial_decrypt_duration = partial_decrypt_started_at.elapsed();
                     drop(partial_decrypt_timer);
 
                     let res = match pdec {
-                        Ok((partial_dec, time)) => {
+                        Ok(partial_dec) => {
+                            tracing::debug!(
+                                "User decryption {req_id} in session {session_id} partially decrypted type {:?} in {} ms",
+                                fhe_type,
+                                partial_decrypt_duration.as_millis(),
+                            );
                             // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
                             // Wipe the serialized partial plaintext after signcryption.
                             let mut pdec_serialized = ZeroizingWriter::new();
@@ -320,7 +328,7 @@ impl<
 
                             // packing factor is always 1 with bitdec for now
                             // we may optionally pack it later
-                            (pdec_serialized, 1, time)
+                            (pdec_serialized, 1)
                         }
                         Err(e) => return Err(anyhow!("Failed user decryption with bitdec: {e}")),
                     };
@@ -334,7 +342,7 @@ impl<
             };
 
             let (partial_signcryption, packing_factor) = match pdec {
-                Ok((pdec_serialized, packing_factor, time)) => {
+                Ok((pdec_serialized, packing_factor)) => {
                     let signcrypt_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::Signcrypt);
                     let enc_res = {
@@ -352,9 +360,8 @@ impl<
                     drop(signcrypt_timer);
 
                     tracing::debug!(
-                        "User decryption {req_id} in session {session_id} completed for type {:?}. Partial decrypt took {:?} ms",
-                        fhe_type,
-                        time.as_millis()
+                        "User decryption {req_id} in session {session_id} completed for type {:?}",
+                        fhe_type
                     );
                     // LEGACY: for legacy reasons we return the inner payload only
                     (enc_res.payload, packing_factor)
@@ -371,10 +378,6 @@ impl<
             drop(inner_timer);
         }
 
-        let my_role = session_maker
-            .my_role(&context_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("Could not get my role: {e}"))?;
         let threshold = session_maker
             .threshold(&context_id)
             .await
@@ -449,12 +452,7 @@ impl<
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodPartialDecryptor<
-            Prep = SmallOfflineNoiseFloodSession<
-                { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                SmallSession<ResiduePolyF4Z128>,
-            >,
-        > + 'static,
+    Dec: NoiseFloodPartialDecryptor + 'static,
 > UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
 {
     // Mirrors the public decryption span: `context_id`/`epoch_id` are only known after request
@@ -691,7 +689,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::engine::rng_source::test_rng_source;
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -701,6 +698,7 @@ mod tests {
     use threshold_execution::{
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
+    use threshold_types::rng::AesRng;
 
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -720,25 +718,16 @@ mod tests {
 
     #[tonic::async_trait]
     impl NoiseFloodPartialDecryptor for DummyNoiseFloodPartialDecryptor {
-        type Prep = SmallOfflineNoiseFloodSession<
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            SmallSession<ResiduePolyF4Z128>,
-        >;
-
         async fn partial_decrypt(
-            _noiseflood_session: &mut Self::Prep,
+            _prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
+            _my_role: Role,
             _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
             Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
             u32,
-            std::time::Duration,
         )> {
-            Ok((
-                Zeroizing::new(vec![]),
-                1,
-                std::time::Duration::from_millis(100),
-            ))
+            Ok((Zeroizing::new(vec![]), 1))
         }
     }
 
@@ -809,8 +798,17 @@ mod tests {
         );
 
         let epoch_id = EpochId::new_random(rng);
-        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
+        let prss_setup_z64 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
 
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,

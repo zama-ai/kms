@@ -23,8 +23,6 @@ threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", packa
 threshold_networking_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, tag = "v0.14.0-0" }
 threshold_types_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, tag = "v0.14.0-0" }
 hashing_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, tag = "v0.14.0-0" }
-#error-utils_0_14_0 = { path = "./core/error-utils", default-features = false }
-#thread-handles_0_14_0 = { path = "./core/thread-handles" }
 
 # Dependencies for the 0.14.0 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
