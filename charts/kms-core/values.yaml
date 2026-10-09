@@ -48,6 +48,10 @@ kmsCore:
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
+    # When true, render no [[threshold.peers]] and skip the 3*t+1 party check.
+    # The server then boots with no peer list and reads the committee from storage.
+    # An empty peersList still synthesizes peers from kmsPeers.count unless this is set.
+    omitPeers: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
     peersList: []
     #  - id: 1
