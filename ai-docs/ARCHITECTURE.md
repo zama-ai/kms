@@ -603,8 +603,9 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
-| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
-| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload prefixed by the schemes the stored entries name | boot fails |
+| Current private keygen and CRS metadata with a stored domain pass `verify_response_signatures`, the check a client runs on a result, as if the client had requested the schemes the stored entries name and knew only the node's own keys | boot fails |
+| Current private keygen and CRS metadata without a stored domain carry no entry beyond ECDSA, since they predate per-scheme signatures; nothing else of them can be checked | boot fails |
+| Current private keygen and CRS metadata list their per-scheme `signatures` in canonical order without repeats, and carry an `external_signature` when they carry a domain | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
@@ -648,8 +649,9 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
-signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
-entries of the other schemes sign the serialized result payload inside a composite preimage, 
+signing address, and `external_signature` must equal the ECDSA entry, as a client requires.
+Older metadata versions upgrade with no domain and stay unverifiable. The
+entries of the other schemes sign the serialized result payload inside a composite preimage,
 which binds the canonical scheme set and payload type. A node that cannot derive a scheme's key,
 because it holds no root seed, fails boot on such an entry rather than passing it over.
 

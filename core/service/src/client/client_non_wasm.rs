@@ -155,7 +155,7 @@ impl Client {
                 dsep,
                 internal_bytes: &[],
                 payload,
-                eip712_hash: Some(sol_type.eip712_signing_hash(domain)),
+                eip712_hash: sol_type.eip712_signing_hash(domain),
             },
             &self.signing_schemes,
             &ExpectedSigner::Discover {
@@ -649,6 +649,27 @@ mod tests {
             for (case, signature) in &invalid {
                 assert!(check(signature.clone()).is_err(), "{case}, legacy={legacy}");
             }
+        }
+
+        // Beside a valid list entry, the legacy field has to be a copy of that entry.
+        let list = [TypedSignature {
+            scheme: SigningSchemeType::Ecdsa256k1.as_wire(),
+            signature: valid.clone(),
+        }];
+        assert_eq!(
+            verify_with_legacy(&client, &list, &valid, &payload())
+                .unwrap()
+                .0,
+            PARTY
+        );
+        for (case, signature) in &invalid {
+            let err = verify_with_legacy(&client, &list, signature, &payload())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("differs from its ECDSA entry"),
+                "a bad {case} legacy field beside a valid list entry: {err}"
+            );
         }
     }
 }
