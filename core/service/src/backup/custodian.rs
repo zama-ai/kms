@@ -70,11 +70,14 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 "Invalid custodian role in CustodianRecoveryOutput"
             ));
         }
-        let backup_output = &value.backup_output.ok_or_else(|| {
-            anyhow::anyhow!("backup output not part of the custodian recovery output")
-        })?;
+        let backup_output = value
+            .backup_output
+            .ok_or_else(|| {
+                anyhow::anyhow!("backup output not part of the custodian recovery output")
+            })?
+            .try_into()?;
         Ok(InternalCustodianRecoveryOutput {
-            signcryption: backup_output.try_into()?,
+            signcryption: backup_output,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
     }

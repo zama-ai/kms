@@ -94,11 +94,3 @@ impl TryFrom<OperatorBackupOutput> for UnifiedSigncryption {
         Ok(UnifiedSigncryption::new(value.signcryption, pke_type))
     }
 }
-
-impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &OperatorBackupOutput) -> Result<Self, Self::Error> {
-        Self::try_from(value.clone())
-    }
-}
