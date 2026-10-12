@@ -171,6 +171,11 @@ name = "meta_store"
 harness = false
 required-features = ["testing"]
 
+[[bench]]
+name = "pdec_offload"
+harness = false
+required-features = ["testing"]
+
 
 [features]
 default = ["non-wasm"]

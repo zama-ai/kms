@@ -65,6 +65,9 @@ use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_types::rng::AesRng;
 use tracing::error;
 
+#[cfg(feature = "testing")]
+pub mod pdec_bench;
+
 // Domain separators for cryptographic operations to ensure domain separation
 
 /// Domain separator for request ID hashing
