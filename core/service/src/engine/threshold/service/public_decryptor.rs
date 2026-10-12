@@ -26,7 +26,6 @@ use observability::{
     },
 };
 use tfhe::FheTypes;
-use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
         DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
@@ -176,10 +175,8 @@ impl<
             CiphertextFormat::SmallCompressed => keys.decompression_key(),
             _ => None,
         };
-        let low_level_ct = spawn_compute_bound(move || {
-            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
-        })
-        .await??;
+        let low_level_ct =
+            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -612,24 +609,15 @@ impl<
                 request_id: Some(req_id.into()),
             };
 
-            // Compute expensive signatures OUTSIDE the lock
-            let signed = spawn_compute_bound(move || {
-                sign_public_decryption_result(
-                    &sigkey,
-                    &signing_schemes,
-                    payload,
-                    &ext_handles_bytes,
-                    extra_data,
-                    &eip712_domain,
-                )
-            })
-            .await;
-            let res = match signed {
-                Ok(Ok(values)) => Ok(values),
-                Err(e) | Ok(Err(e)) => Err(format!(
-                    "Failed to sign decryption result for request {req_id}: {e:?}"
-                )),
-            };
+            let res = sign_public_decryption_result(
+                &sigkey,
+                &signing_schemes,
+                payload,
+                &ext_handles_bytes,
+                extra_data,
+                &eip712_domain,
+            )
+            .map_err(|e| format!("Failed to sign decryption result for request {req_id}: {e:?}"));
 
             update_req_in_meta_store(
                 &meta_store,
