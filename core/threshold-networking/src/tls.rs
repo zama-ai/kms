@@ -13,15 +13,22 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use tokio_rustls::rustls::{
     DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme,
     client::{
-        WebPkiServerVerifier,
-        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        ClientConfig, ResolvesClientCert, WebPkiServerVerifier,
+        danger::{
+            DangerousClientConfigBuilder, HandshakeSignatureValid, ServerCertVerified,
+            ServerCertVerifier,
+        },
     },
-    crypto::{CryptoProvider, WebPkiSupportedAlgorithms},
+    crypto::{
+        CryptoProvider, WebPkiSupportedAlgorithms,
+        aws_lc_rs::{default_provider, kx_group},
+    },
     pki_types::{CertificateDer, ServerName, UnixTime},
     server::{
-        WebPkiClientVerifier,
+        ResolvesServerCert, ServerConfig, WebPkiClientVerifier,
         danger::{ClientCertVerified, ClientCertVerifier},
     },
+    version::TLS13,
 };
 use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
 
@@ -152,6 +159,32 @@ impl std::fmt::Debug for AttestedVerifier {
         let f = f.field("mock_enclave", &self.mock_enclave);
         f.finish()
     }
+}
+
+/// Constructs mutually authenticated P2P TLS configurations with hybrid-only key exchange.
+///
+/// Both endpoints require TLS 1.3 and prefer [`kx_group::X25519MLKEM768`] over [`kx_group::SECP256R1MLKEM768`].
+/// Returns an error if the provider cannot support TLS 1.3.
+pub fn build_p2p_tls_config<R>(
+    verifier: Arc<AttestedVerifier>,
+    cert_resolver: Arc<R>,
+) -> Result<(ServerConfig, ClientConfig), Error>
+where
+    R: ResolvesServerCert + ResolvesClientCert + 'static,
+{
+    let mut provider = default_provider();
+    provider.kx_groups = vec![kx_group::X25519MLKEM768, kx_group::SECP256R1MLKEM768];
+    let provider = Arc::new(provider);
+    let server_config = ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&TLS13])?
+        .with_client_cert_verifier(verifier.clone())
+        .with_cert_resolver(cert_resolver.clone());
+    let client_config = DangerousClientConfigBuilder {
+        cfg: ClientConfig::builder_with_provider(provider).with_protocol_versions(&[&TLS13])?,
+    }
+    .with_custom_certificate_verifier(verifier)
+    .with_client_cert_resolver(cert_resolver);
+    Ok((server_config, client_config))
 }
 
 impl AttestedVerifier {
@@ -883,6 +916,180 @@ pub async fn generate_mock_tls_cert_with_attestation(
             },
             pcr_values,
         ))
+    }
+}
+
+#[cfg(test)]
+mod p2p_tests {
+    use super::*;
+    use rcgen::{
+        CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, PKCS_ECDSA_P256_SHA256,
+    };
+    use std::{collections::HashMap, time::Duration};
+    use threshold_types::{party::MpcIdentity, session_id::SessionId};
+    use tokio_rustls::{
+        TlsAcceptor, TlsConnector,
+        rustls::{
+            NamedGroup, PeerIncompatible,
+            pki_types::PrivateKeyDer,
+            sign::{CertifiedKey, SingleCertAndKey},
+        },
+    };
+
+    async fn handshake(
+        server: ServerConfig,
+        client: ClientConfig,
+    ) -> (
+        std::io::Result<tokio_rustls::server::TlsStream<tokio::io::DuplexStream>>,
+        std::io::Result<tokio_rustls::client::TlsStream<tokio::io::DuplexStream>>,
+    ) {
+        let (server_io, client_io) = tokio::io::duplex(16384);
+        let acceptor = TlsAcceptor::from(Arc::new(server));
+        let connector = TlsConnector::from(Arc::new(client));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                acceptor.accept(server_io),
+                connector.connect("p2p-test".try_into().unwrap(), client_io),
+            )
+        })
+        .await
+        .expect("TLS handshake timed out")
+    }
+
+    #[tokio::test]
+    async fn p2p_tls_requires_hybrid_key_exchange() {
+        let _ = default_provider().install_default();
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut params = CertificateParams::new(vec!["p2p-test".to_string()]).unwrap();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "p2p-test");
+        params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+        let cert = params.self_signed(&key).unwrap();
+        let cert_resolver = Arc::new(SingleCertAndKey::from(
+            CertifiedKey::from_der(
+                vec![cert.der().clone()],
+                PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+                &default_provider(),
+            )
+            .unwrap(),
+        ));
+        let verifier = Arc::new(
+            AttestedVerifier::new(
+                None,
+                false,
+                #[cfg(feature = "insecure")]
+                false,
+            )
+            .unwrap(),
+        );
+        let (server, client) = build_p2p_tls_config(verifier.clone(), cert_resolver).unwrap();
+        verifier
+            .add_context(
+                SessionId::new(&"hybrid-only").unwrap(),
+                HashMap::from([(
+                    MpcIdentity("p2p-test".to_string()),
+                    x509_parser::pem::parse_x509_pem(cert.pem().as_bytes())
+                        .unwrap()
+                        .1,
+                )]),
+                None,
+            )
+            .unwrap();
+
+        for config_groups in [
+            &server.crypto_provider().kx_groups,
+            &client.crypto_provider().kx_groups,
+        ] {
+            assert_eq!(
+                config_groups
+                    .iter()
+                    .map(|group| group.name())
+                    .collect::<Vec<_>>(),
+                vec![NamedGroup::X25519MLKEM768, NamedGroup::secp256r1MLKEM768],
+            );
+        }
+
+        for group in [
+            kx_group::X25519MLKEM768,
+            kx_group::SECP256R1MLKEM768,
+            kx_group::X25519,
+            kx_group::SECP256R1,
+            kx_group::SECP384R1,
+            kx_group::MLKEM768,
+            kx_group::MLKEM1024,
+        ] {
+            let mut provider = default_provider();
+            provider.kx_groups = vec![group];
+            let provider = Arc::new(provider);
+            let peer_server = ServerConfig::builder_with_provider(provider.clone())
+                .with_protocol_versions(&[&TLS13])
+                .unwrap()
+                .with_client_cert_verifier(verifier.clone())
+                .with_cert_resolver(server.cert_resolver.clone());
+            let peer_client = DangerousClientConfigBuilder {
+                cfg: ClientConfig::builder_with_provider(provider)
+                    .with_protocol_versions(&[&TLS13])
+                    .unwrap(),
+            }
+            .with_custom_certificate_verifier(verifier.clone())
+            .with_client_cert_resolver(client.client_auth_cert_resolver.clone());
+
+            for (server_result, client_result) in [
+                handshake(server.clone(), peer_client).await,
+                handshake(peer_server, client.clone()).await,
+            ] {
+                if matches!(
+                    group.name(),
+                    NamedGroup::X25519MLKEM768 | NamedGroup::secp256r1MLKEM768
+                ) {
+                    let server_stream = server_result.unwrap();
+                    let client_stream = client_result.unwrap();
+                    assert_eq!(
+                        server_stream.get_ref().1.protocol_version(),
+                        Some(tokio_rustls::rustls::ProtocolVersion::TLSv1_3)
+                    );
+                    assert_eq!(
+                        server_stream
+                            .get_ref()
+                            .1
+                            .negotiated_key_exchange_group()
+                            .unwrap()
+                            .name(),
+                        group.name()
+                    );
+                    assert_eq!(
+                        client_stream
+                            .get_ref()
+                            .1
+                            .negotiated_key_exchange_group()
+                            .unwrap()
+                            .name(),
+                        group.name()
+                    );
+                    assert!(server_stream.get_ref().1.peer_certificates().is_some());
+                    assert!(client_stream.get_ref().1.peer_certificates().is_some());
+                } else {
+                    let error = server_result.unwrap_err();
+                    assert!(
+                        matches!(
+                            error
+                                .get_ref()
+                                .and_then(|error| error.downcast_ref::<Error>()),
+                            Some(Error::PeerIncompatible(
+                                PeerIncompatible::NoKxGroupsInCommon
+                            ))
+                        ),
+                        "unexpected rejection for {:?}: {error}",
+                        group.name(),
+                    );
+                    assert!(client_result.is_err(), "client accepted {:?}", group.name());
+                }
+            }
+        }
     }
 }
 
