@@ -680,8 +680,8 @@ fn authenticate_public_decrypt_response(
     // Verify the signature(s) carried by the response. This is pure authenticity and does not
     // depend on the (not-yet-established) consensus.
     // The deprecated internal `signature` and `external_signature` fields are checked alongside
-    // `signatures`, as user decryption checks them, so a response stays verifiable without an
-    // EIP-712 domain. TODO(0.16): drop the two fields and their arguments.
+    // `signatures`, as user decryption checks them.
+    // TODO(0.16): drop the two fields and their arguments.
     if let Err(e) = check_public_decrypt_signatures(
         trusted_ctx,
         cur_payload,
