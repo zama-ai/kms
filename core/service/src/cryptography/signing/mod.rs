@@ -502,6 +502,15 @@ impl HasSigningScheme for UnifiedPublicSigKey {
 /// id, the set of keys that party has published.
 pub type SchemeVerfKeys = HashMap<u32, VerfKeySet>;
 
+/// The verification key `party_id` published for `scheme`, if it published one.
+pub fn verf_key_for(
+    keys: &SchemeVerfKeys,
+    party_id: u32,
+    scheme: SigningSchemeType,
+) -> Option<&UnifiedPublicSigKey> {
+    keys.get(&party_id).and_then(|keys| keys.get(scheme))
+}
+
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
 #[cfg(feature = "non-wasm")]
 pub fn unified_sign(
