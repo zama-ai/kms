@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use super::CompletedParties;
 use crate::clock::{AtomicDuration, AtomicInstant};
 use crate::ggen::SendValueRequest;
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use bytes::Bytes;
-use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use observability::metrics::{self, NetworkDebugEvent};
 use threshold_types::network::{NetworkMode, Networking, RoundClock};
@@ -41,7 +41,7 @@ pub struct NetworkSession {
     // Observe tokio lock is needed since it must be held across an await point
     pub(crate) round_counter: tokio::sync::RwLock<usize>,
     // Set keeping track of all servers that have already completed the session (i.e. servers which we are out-of-sync with)
-    pub(crate) completed_parties: Arc<DashSet<RoleKind>>,
+    pub(crate) completed_parties: Arc<CompletedParties>,
     /// Number of bytes sent by this session. Stored as an atomic (not a lock)
     /// since it is a simple accumulator that is never read-modified-written
     /// across an await point.
@@ -371,7 +371,7 @@ impl NetworkSession {
         session_id: SessionId,
         sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         receiving_channels: MessageQueueStore,
-        completed_parties: Arc<DashSet<RoleKind>>,
+        completed_parties: Arc<CompletedParties>,
         network_mode: NetworkMode,
         conf: CoreToCoreNetworkConfig,
     ) -> Self {
@@ -407,6 +407,7 @@ impl NetworkSession {
     ///   period.
     /// - A plain tick while the sender is *not* completed yields
     ///   [`RecvOutcome::Retry`] (keep waiting), never a spurious abort.
+    /// - A completion notification starts the grace period without waiting for a tick.
     /// - The grace period is entered only once the sender has declared the
     ///   session complete, and only then can its timeout produce
     ///   [`RecvOutcome::Aborted`].
@@ -423,16 +424,14 @@ impl NetworkSession {
             _ = tick_interval.tick() => {
                 metrics::METRICS
                     .increment_network_event(NetworkDebugEvent::ReceiveWaitTimeout);
-                if self.completed_parties.contains(&sender.get_role_kind()) {
-                    // The sender has said the session is complete: wait one more
-                    // grace period for any lingering in-flight message, but still
-                    // deliver it if it arrives before the timeout.
-                    tokio::select! {
-                        _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => RecvOutcome::Aborted,
-                        local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
-                    }
-                } else {
-                    RecvOutcome::Retry
+                RecvOutcome::Retry
+            },
+            _ = self.completed_parties.wait_for_completion(sender.get_role_kind()) => {
+                // The sender has said the session is complete: wait one more grace period for any lingering in-flight
+                // message, but still deliver it if it arrives before the timeout.
+                tokio::select! {
+                    _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => RecvOutcome::Aborted,
+                    local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
                 }
             },
             local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
@@ -460,23 +459,25 @@ impl NetworkSession {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use dashmap::{DashMap, DashSet};
+    use dashmap::DashMap;
+    use futures_util::poll;
     use tokio::sync::Mutex;
     use tokio::sync::mpsc::channel;
     use tokio::task::JoinSet;
+    use tokio::time::{Duration, Instant, interval_at, timeout};
 
+    use super::RecvOutcome;
     use crate::clock::{AtomicDuration, AtomicInstant};
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
         ChannelPair, CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, ReceiverState,
         TlsExtensionGetter,
     };
-    use crate::sending_service::NetworkSession;
+    use crate::sending_service::{CompletedParties, NetworkSession};
     use std::collections::HashMap;
     use std::net::IpAddr;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
-    use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
@@ -1005,7 +1006,7 @@ mod tests {
             // messages to the networking service in this test
             sending_channels: HashMap::new(),
             receiving_channels: message_store,
-            completed_parties: Arc::new(DashSet::new()),
+            completed_parties: Arc::new(CompletedParties::default()),
             round_counter: tokio::sync::RwLock::new(0),
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
@@ -1150,7 +1151,7 @@ mod tests {
             session_id: SessionId::from(0),
             sending_channels: HashMap::new(),
             receiving_channels: message_store,
-            completed_parties: Arc::new(DashSet::new()),
+            completed_parties: Arc::new(CompletedParties::default()),
             round_counter: tokio::sync::RwLock::new(0),
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
@@ -1691,17 +1692,15 @@ mod tests {
     }
 
     /// Regression test for the bug fixed in PR #624.
+    /// A message that arrives during the completed-party grace period reaches the caller.
     ///
     /// Scenario (2 parties, role 1 is receiver, role 2 is sender):
-    /// 1. Role 2 is marked as a `completed_parties`.
-    /// 2. Role 1 calls `receive` for role 2. No message is in the queue yet, so the `tick_interval`
-    ///    fires and we enter the "grace period".
-    /// 3. While we are inside that grace-period, Role 2 sends a message
+    /// 1. Role 2 is marked as completed.
+    /// 2. Role 1 calls `receive` for role 2 with an empty queue, entering the grace period.
+    /// 3. Role 2 sends a message during that grace period.
     ///
-    /// Before the fix, that message was received from the channel but the branch evaluated to
-    /// `None`, so the packet was silently discarded and the loop kept spinning until the
-    /// session was aborted. After the fix, the in-flight message is
-    /// returned.
+    /// The grace-period branch must return the packet, rather than consume it
+    /// and leave the caller waiting until the session aborts.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_message_not_dropped_during_completed_grace_period() {
         let ip_addr = "127.0.0.1".parse().unwrap();
@@ -1751,9 +1750,8 @@ mod tests {
         // (don't go through the gRPC API for simplicity)
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
 
-        // Mark role 2 as a completed party: this is the precondition that activates the buggy
-        // grace-period branch in `receive`.
-        let completed_parties = Arc::new(DashSet::new());
+        // Mark role 2 as completed to enter the grace-period branch in `receive`.
+        let completed_parties = Arc::new(CompletedParties::default());
         completed_parties.insert(role_2.get_role_kind());
 
         // Use a 1s waiting time.
@@ -1775,21 +1773,19 @@ mod tests {
         };
 
         let expected = vec![42u8; 8];
-        let expected_clone = expected.clone();
-        // Send the message *after* the first tick has fired (1s) but before the grace-period
-        // sleep (another 1s) elapses,
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            tx_2.send(NetworkRoundValue {
-                round_counter: 0,
-                value: expected_clone.into(),
-            })
-            .await
-            .unwrap();
-        });
+        let receive = session.receive(&role_2);
+        tokio::pin!(receive);
+        // Enter the grace period before the message arrives.
+        assert!(poll!(&mut receive).is_pending());
+        tx_2.send(NetworkRoundValue {
+            round_counter: 0,
+            value: expected.clone().into(),
+        })
+        .await
+        .unwrap();
 
         // Bound the whole receive so a regression times out.
-        let actual = tokio::time::timeout(Duration::from_secs(10), session.receive(&role_2))
+        let actual = timeout(Duration::from_secs(10), receive)
             .await
             .expect("receive should not time out; a timeout means the message was dropped")
             .expect("receive should return the in-flight message, not an abort error");
@@ -1798,5 +1794,69 @@ mod tests {
             actual, expected,
             "the message that arrived during the completed-party grace period must be delivered"
         );
+    }
+
+    // If a peer reports session completion before receive starts, receive enters the grace period
+    // without waiting for the next timer tick. This allows in-flight messages to arrive.
+    #[tokio::test]
+    async fn completion_before_receive_starts_grace_without_waiting_for_tick() {
+        let peer = Role::indexed_from_one(2);
+        let completed = Arc::new(CompletedParties::default());
+        let session = NetworkSession::new(
+            Identity::new("127.0.0.1".into(), 1, None),
+            SessionId::from(0),
+            HashMap::new(),
+            MessageQueueStore::new_uninitialized(DashMap::new()),
+            Arc::clone(&completed),
+            NetworkMode::Async,
+            test_config(1),
+        );
+        let (_tx, mut rx) = channel(1);
+        let period = Duration::from_secs(3600);
+        let mut tick = interval_at(Instant::now() + period, period);
+
+        completed.insert(peer.get_role_kind());
+        let receive = session.recv_next(&mut rx, &mut tick, &peer);
+        tokio::pin!(receive);
+        // Completion starts a grace period; it does not abort immediately.
+        assert!(poll!(&mut receive).is_pending());
+
+        let outcome = timeout(Duration::from_secs(5), receive)
+            .await
+            .expect("completion must not wait for the one-hour tick");
+        assert!(matches!(outcome, RecvOutcome::Aborted));
+    }
+
+    // When a peer signals they have completed a session we wait for a "grace period" to let messages from them arrive to
+    // us. This test ensures that we start the grace period as soon as we know they have completed, rather than wait
+    // another tick and then start the grace period.
+    #[tokio::test]
+    async fn completion_during_receive_starts_grace_without_waiting_for_tick() {
+        let peer = Role::indexed_from_one(2);
+        let completed = Arc::new(CompletedParties::default());
+        let session = NetworkSession::new(
+            Identity::new("127.0.0.1".into(), 1, None),
+            SessionId::from(0),
+            HashMap::new(),
+            MessageQueueStore::new_uninitialized(DashMap::new()),
+            Arc::clone(&completed),
+            NetworkMode::Async,
+            test_config(1),
+        );
+        let (_tx, mut rx) = channel(1);
+        let period = Duration::from_secs(3600);
+        let mut tick = interval_at(Instant::now() + period, period);
+
+        let receive = session.recv_next(&mut rx, &mut tick, &peer);
+        tokio::pin!(receive);
+        assert!(poll!(&mut receive).is_pending());
+        completed.insert(peer.get_role_kind());
+        // Completion starts a grace period; it does not abort immediately.
+        assert!(poll!(&mut receive).is_pending());
+
+        let outcome = timeout(Duration::from_secs(5), receive)
+            .await
+            .expect("completion must not wait for the one-hour tick");
+        assert!(matches!(outcome, RecvOutcome::Aborted));
     }
 }

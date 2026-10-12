@@ -71,6 +71,7 @@ However, this does not allow changes to be made to the test metadata scheme itse
 - `backward-compatibility/generate-v0.13.20` - For KMS v0.13.20
 - `backward-compatibility/generate-v0.14.0` - For KMS v0.14.0
 - `backward-compatibility/generate-v0.15.0` - For KMS v0.15.0
+- `backward-compatibility/generate-v0.16.0` - For KMS v0.16.0
 
 Each generator uses the exact dependencies from its target KMS version.
 
@@ -97,6 +98,9 @@ make generate-backward-compatibility-v0.14.0
 
 # Generate only v0.15.0 data
 make generate-backward-compatibility-v0.15.0
+
+# Generate only v0.16.0 data
+make generate-backward-compatibility-v0.16.0
 
 ```
 WARNING: Frozen-version targets are for exceptional investigation only. They can produce non-deterministic bytes and may append duplicate metadata with older generator code. Changes based on generating a frozen version should NEVER be committed to the repo.

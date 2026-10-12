@@ -113,8 +113,8 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 ///
 /// The versions up to 0.14.0 keep no per-scheme signature list. Their upgrade steps
 /// (`Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2`, and the CRS twin)
-/// rebuild the single ECDSA entry from `external_signature`. Version 0.15.0 keeps the
-/// list, and its generator writes it empty.
+/// rebuild the single ECDSA entry from `external_signature`. Versions 0.15.0 and 0.16.0
+/// keep the list, and their generators write it empty.
 ///
 /// A version without an entry here is an error: every new fixture has to name the value
 /// that its stored bytes must produce.
@@ -126,7 +126,7 @@ fn expected_scheme_signatures(
         "0.13.0" | "0.13.10" | "0.13.20" | "0.14.0" => Ok(StoredTypedSignature::ecdsa_only(
             external_signature.to_vec(),
         )),
-        "0.15.0" => Ok(Vec::new()),
+        "0.15.0" | "0.16.0" => Ok(Vec::new()),
         other => Err(format!(
             "no expected per-scheme signature list for stored version {other}"
         )),

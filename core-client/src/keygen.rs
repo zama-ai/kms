@@ -3,7 +3,7 @@ use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
-    SigVerificationMaterial, dummy_domain,
+    SigVerificationMaterial,
 };
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
@@ -674,6 +674,7 @@ pub(crate) async fn do_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
+    cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
     num_parties: usize,
     fhe_params: FheParameter,
@@ -685,9 +686,7 @@ pub(crate) async fn do_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
-    // this function is only used for testing.
-    let domain = dummy_domain();
+    let domain = cc_conf.default_domain()?;
     let pp_req = internal_client.preproc_request(
         &req_id,
         Some(fhe_params),
@@ -761,10 +760,12 @@ pub(crate) async fn do_preproc(
     Ok(req_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "insecure")]
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    cc_conf: &CoreClientConfig,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -774,9 +775,7 @@ pub(crate) async fn do_partial_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
-    // this function is only used for testing.
-    let domain = dummy_domain();
+    let domain = cc_conf.default_domain()?;
     let pp_req = internal_client.partial_preproc_request(
         &req_id,
         Some(fhe_params),
@@ -839,6 +838,29 @@ pub(crate) async fn do_partial_preproc(
     }
 
     Ok(req_id)
+}
+
+/// Check every signature each preprocessing response carries, under every scheme
+/// the client requested, and that each was produced by a known KMS party.
+pub(crate) fn check_preproc_responses(
+    internal_client: &Client,
+    request_id: &RequestId,
+    verify_material: &SigVerificationMaterial,
+    responses: &[KeyGenPreprocResult],
+) -> anyhow::Result<()> {
+    for response in responses {
+        internal_client.process_preproc_response(
+            request_id,
+            &verify_material.domain,
+            response,
+            verify_material.extra_data.clone(),
+        )?;
+    }
+    tracing::info!(
+        "Verified the signatures on {} preprocessing responses for {request_id}",
+        responses.len()
+    );
+    Ok(())
 }
 
 pub(crate) async fn get_preproc_keygen_responses(
@@ -946,6 +968,7 @@ pub(crate) async fn get_preproc_keygen_responses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dummy_domain;
     use kms_grpc::{
         rpc_types::{PrivDataType, PubDataType, ecdsa_signatures},
         solidity_types::KeygenVerification,

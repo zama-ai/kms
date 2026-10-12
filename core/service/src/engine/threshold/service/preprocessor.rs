@@ -769,13 +769,22 @@ mod tests {
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );
+        let role = threshold_types::role::Role::indexed_from_one(1);
         let prss_setup_z128 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };
         let prss_setup_z64 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };

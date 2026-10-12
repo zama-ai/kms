@@ -50,7 +50,7 @@ fn bench_prss(c: &mut Criterion) {
         })
         .unwrap();
 
-    let mut state = prss.new_prss_session_state(sid);
+    let mut state = prss.new_prss_session_state(sid, bench_role).unwrap();
 
     for size in &sizes {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {

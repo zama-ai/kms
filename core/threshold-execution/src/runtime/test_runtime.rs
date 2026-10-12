@@ -207,6 +207,9 @@ where
             .await
             .unwrap();
         let sid = session.session_id();
-        SmallSession::new_from_prss_state(session, prss_setup.new_prss_session_state(sid)).unwrap()
+        let prss_state = prss_setup
+            .new_prss_session_state(sid, session.my_role())
+            .unwrap();
+        SmallSession::new_from_prss_state(session, prss_state).unwrap()
     }
 }

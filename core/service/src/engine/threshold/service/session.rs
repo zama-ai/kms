@@ -702,7 +702,9 @@ impl SessionMaker {
             .make_base_session(session_id, context_id, network_mode)
             .await?;
 
-        let prss_state = self.prss_state_z128(session_id, epoch_id).await?;
+        let prss_state = self
+            .prss_state_z128(session_id, epoch_id, base_session.my_role())
+            .await?;
 
         let session = SmallSession {
             base_session,
@@ -719,15 +721,16 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         epoch_id: EpochId,
+        role: Role,
     ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
         let epoch_map_guard = self.epoch_map.read().await;
         let prss_setup_extended = epoch_map_guard
             .get(&epoch_id)
             .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-        Ok(prss_setup_extended
+        prss_setup_extended
             .prss
             .prss_setup_z128
-            .new_prss_session_state(session_id))
+            .new_prss_session_state(session_id, role)
     }
 
     /// Derives the Z64 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
@@ -735,15 +738,16 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         epoch_id: EpochId,
+        role: Role,
     ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z64>> {
         let epoch_map_guard = self.epoch_map.read().await;
         let prss_setup_extended = epoch_map_guard
             .get(&epoch_id)
             .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-        Ok(prss_setup_extended
+        prss_setup_extended
             .prss
             .prss_setup_z64
-            .new_prss_session_state(session_id))
+            .new_prss_session_state(session_id, role)
     }
 
     async fn make_small_session_z64(
@@ -757,7 +761,9 @@ impl SessionMaker {
             .make_base_session(session_id, context_id, network_mode)
             .await?;
 
-        let prss_state = self.prss_state_z64(session_id, epoch_id).await?;
+        let prss_state = self
+            .prss_state_z64(session_id, epoch_id, base_session.my_role())
+            .await?;
 
         let session = SmallSession {
             base_session,
@@ -1120,8 +1126,9 @@ impl ImmutableSessionMaker {
         &self,
         session_id: SessionId,
         epoch_id: EpochId,
+        role: Role,
     ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
-        self.inner.prss_state_z128(session_id, epoch_id).await
+        self.inner.prss_state_z128(session_id, epoch_id, role).await
     }
 
     pub(crate) async fn make_small_async_session_z64(
@@ -1274,7 +1281,7 @@ mod tests {
         let epoch_id = EpochId::new_random(&mut AesRng::seed_from_u64(5));
         let error = session_maker
             .make_immutable()
-            .prss_state_z128(SessionId::from(1), epoch_id)
+            .prss_state_z128(SessionId::from(1), epoch_id, Role::indexed_from_one(1))
             .await
             .err()
             .expect("an unknown epoch cannot supply a PRSS state");
