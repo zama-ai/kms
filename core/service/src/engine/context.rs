@@ -1,10 +1,11 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use alloy_primitives::Address;
 use kms_grpc::{identifiers::ContextId, kms::v1::SchemeDigest};
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_networking::tls::{ReleasePCRValues, extract_subject_from_cert};
@@ -578,21 +579,29 @@ impl ContextInfo {
             ));
         }
 
-        // A signer address identifies one node across contexts, so two nodes must not share it.
-        // A node without a listed signer address is not counted.
-        let mut signers = Vec::new();
-        for node in &self.mpc_nodes {
-            if let Some(signer) = node.ecdsa_signer_address()? {
-                signers.push(signer);
+        // A signer verf key digest identifies one node across contexts, so two nodes must not share the same digest.
+        for scheme in SigningSchemeType::iter() {
+            let mut seen: HashMap<&[u8], &str> = HashMap::new();
+            for node in &self.mpc_nodes {
+                let Some(digest) = node.scheme_digests.get(&scheme) else {
+                    continue;
+                };
+                if digest.len() != scheme.expected_digest_len() {
+                    anyhow::bail!(
+                        "Invalid {scheme} digest length {} for node {} in context {}",
+                        digest.len(),
+                        node.mpc_identity,
+                        self.context_id()
+                    );
+                }
+                if let Some(other) = seen.insert(digest, &node.mpc_identity) {
+                    anyhow::bail!(
+                        "{ERR_DUPLICATE_SIGNERS} {}: nodes {other} and {} share a {scheme} digest",
+                        self.context_id(),
+                        node.mpc_identity
+                    );
+                }
             }
-        }
-        let unique_signers: std::collections::HashSet<_> = signers.iter().collect();
-        if unique_signers.len() != signers.len() {
-            return Err(anyhow::anyhow!(
-                "{} {}",
-                ERR_DUPLICATE_SIGNERS,
-                self.context_id()
-            ));
         }
 
         // check that each CA certificate subject matches its mpc_identity
