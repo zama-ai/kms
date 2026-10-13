@@ -68,7 +68,7 @@ impl SignInput {
             &identity,
             schemes,
             &DSEP_PUBLIC_DECRYPTION,
-            eip712_hash.as_slice(),
+            &eip712_hash,
             &signed_payload,
         )
         .unwrap();
@@ -119,7 +119,7 @@ impl SignInput {
                         &self.identity,
                         &self.schemes,
                         &DSEP_PUBLIC_DECRYPTION,
-                        self.eip712_hash.as_slice(),
+                        &self.eip712_hash,
                         &self.signed_payload,
                     )?,
                 );

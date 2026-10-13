@@ -509,7 +509,7 @@ where
     T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let eip712_hash = sol_type.eip712_signing_hash(domain);
-    let signatures = sign_result_entries(identity, schemes, dsep, eip712_hash.as_slice(), payload)?;
+    let signatures = sign_result_entries(identity, schemes, dsep, &eip712_hash, payload)?;
     // The deprecated field is required even when the request does not include ECDSA.
     let external_signature = match signatures
         .first()

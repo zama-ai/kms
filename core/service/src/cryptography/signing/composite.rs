@@ -264,7 +264,7 @@ pub fn sign_result_entries<T>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
-    eip712_hash: &[u8],
+    eip712_hash: &B256,
     payload: &T,
 ) -> Result<Vec<StoredTypedSignature>, SigningError>
 where
@@ -278,16 +278,8 @@ where
         .iter()
         .map(|&scheme| {
             let signature = match scheme {
-                SigningSchemeType::Ecdsa256k1 => {
-                    let hash = B256::try_from(eip712_hash).map_err(|_| {
-                        SigningError::Sign(format!(
-                            "EIP-712 signing hash must be 32 bytes, got {}",
-                            eip712_hash.len()
-                        ))
-                    })?;
-                    eip712_sign_hash(identity.ecdsa(), &hash)
-                        .map_err(|e| SigningError::Sign(e.to_string()))?
-                }
+                SigningSchemeType::Ecdsa256k1 => eip712_sign_hash(identity.ecdsa(), eip712_hash)
+                    .map_err(|e| SigningError::Sign(e.to_string()))?,
                 _ => identity
                     .unified_sign_with(scheme, dsep, &signed)?
                     .to_bytes(),
@@ -458,18 +450,22 @@ mod tests {
     fn result_entries_split_ecdsa_from_the_rest() {
         let mut rng = AesRng::seed_from_u64(20);
         let identity = seeded_identity(&mut rng);
-        let schemes = [
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::Ed25519,
+        let requested = [
             SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ed25519,
         ];
-        let eip712_hash = [0x11u8; 32];
+        let eip712_hash = B256::repeat_byte(0x11);
         let payload = msg();
-        let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
+        let bound = scheme_bound_preimage(&requested, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
-        assert_eq!(entries.len(), 3);
+            sign_result_entries(&identity, &requested, DSEP, &eip712_hash, &payload).unwrap();
+        assert_eq!(
+            entry_schemes(&entries),
+            canonical_schemes(&requested).unwrap()
+        );
 
         for entry in &entries {
             if entry.scheme == SigningSchemeType::Ecdsa256k1 {
@@ -488,7 +484,7 @@ mod tests {
             tfhe::safe_serialization::safe_serialize(&payload, &mut bare, SAFE_SER_SIZE_LIMIT)
                 .unwrap();
             assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
-            assert!(unified_verify(DSEP, &eip712_hash, &sig, &vk).is_err());
+            assert!(unified_verify(DSEP, eip712_hash.as_slice(), &sig, &vk).is_err());
         }
     }
 
@@ -502,26 +498,11 @@ mod tests {
             &identity,
             &[SigningSchemeType::Ecdsa256k1],
             DSEP,
-            hash.as_slice(),
+            &hash,
             &msg(),
         )
         .unwrap();
         assert_eq!(entries[0].signature, signature);
-    }
-
-    #[test]
-    fn result_entries_reject_an_invalid_eip712_hash() {
-        let mut rng = AesRng::seed_from_u64(23);
-        let identity = seeded_identity(&mut rng);
-        let err = sign_result_entries(
-            &identity,
-            &[SigningSchemeType::Ecdsa256k1],
-            DSEP,
-            &[0u8; 31],
-            &msg(),
-        )
-        .unwrap_err();
-        assert!(matches!(err, SigningError::Sign(message) if message.contains("must be 32 bytes")));
     }
 
     /// Result entries use the same ordering convention as [`sign_composite`]:
@@ -536,8 +517,14 @@ mod tests {
             SigningSchemeType::MlDsa65,
             SigningSchemeType::Ed25519,
         ];
-        let entries =
-            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg()).unwrap();
+        let entries = sign_result_entries(
+            &identity,
+            &requested,
+            DSEP,
+            &B256::from([0x11u8; 32]),
+            &msg(),
+        )
+        .unwrap();
 
         assert_eq!(
             entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
@@ -556,7 +543,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
         assert!(matches!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg()),
+            sign_result_entries(&identity, &[], DSEP, &B256::ZERO, &msg()),
             Err(SigningError::EmptySchemeSet)
         ));
     }

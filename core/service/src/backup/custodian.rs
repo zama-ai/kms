@@ -43,25 +43,25 @@ const ERR_WEAK_BACKUP_ENCRYPTION_KEY: &str =
     "Backup encryption key does not use the backup encryption scheme";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianRecoveryOutputVersions {
-    V0(InternalCustodianRecoveryOutput),
+pub enum TransferableCustodianRecoveryOutputVersions {
+    V0(TransferableCustodianRecoveryOutput),
 }
 
 /// This is the message that a custodian sends to an operator after starting recovery.
 ///
 /// The payload of the signcryption is a `BackupMaterial` that contains the decrypted backup share for an operator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianRecoveryOutputVersions)]
-pub struct InternalCustodianRecoveryOutput {
+#[versionize(TransferableCustodianRecoveryOutputVersions)]
+pub struct TransferableCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
 }
 
-impl Named for InternalCustodianRecoveryOutput {
+impl Named for TransferableCustodianRecoveryOutput {
     const NAME: &'static str = "backup::CustodianRecoveryOutput";
 }
 
-impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
+impl TryFrom<CustodianRecoveryOutput> for TransferableCustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
@@ -70,23 +70,23 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 "Invalid custodian role in CustodianRecoveryOutput"
             ));
         }
-        let backup_output = &value.backup_output.ok_or_else(|| {
-            anyhow::anyhow!("backup output not part of the custodian recovery output")
-        })?;
-        Ok(InternalCustodianRecoveryOutput {
-            signcryption: UnifiedSigncryption::new(
-                backup_output.signcryption.clone(),
-                backup_output.pke_type.try_into()?,
-            ),
+        let backup_output = value
+            .backup_output
+            .ok_or_else(|| {
+                anyhow::anyhow!("backup output not part of the custodian recovery output")
+            })?
+            .try_into()?;
+        Ok(TransferableCustodianRecoveryOutput {
+            signcryption: backup_output,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
     }
 }
 
-impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
+impl TryFrom<TransferableCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
-    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+    fn try_from(value: TransferableCustodianRecoveryOutput) -> Result<Self, Self::Error> {
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
@@ -402,22 +402,7 @@ impl Custodian {
         backup: &InnerOperatorBackupOutput,
         operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        self.verify_reencrypt_inner(
-            rng,
-            backup,
-            operator_verification_key,
-            operator_ephem_enc_key,
-        )
-    }
-
-    fn verify_reencrypt_inner<R: Rng + CryptoRng>(
-        &self,
-        rng: &mut R,
-        backup: &InnerOperatorBackupOutput,
-        operator_verification_key: &VerfKeySet,
-        operator_ephem_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
+    ) -> Result<TransferableCustodianRecoveryOutput, BackupError> {
         let operator_id = operator_verification_key
             .id(BACKUP_SIGNING_SCHEMES)
             .map_err(|e| {
@@ -502,7 +487,7 @@ impl Custodian {
             "Signed re-encrypted share for operator id: {}",
             hex::encode(&operator_id)
         );
-        Ok(InternalCustodianRecoveryOutput {
+        Ok(TransferableCustodianRecoveryOutput {
             signcryption,
             custodian_role: self.role,
         })
@@ -538,7 +523,7 @@ impl Custodian {
         }
     }
 
-    pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {
+    pub fn private_dec_key(&self) -> &UnifiedPrivateEncKey {
         &self.dec_key
     }
 
