@@ -1727,7 +1727,8 @@ impl<
                             epoch_id,
                             &old_key_id,
                             epoch_id,
-                            sk.ecdsa(),
+                            &sk,
+                            &signing_schemes,
                             &eip712_domain,
                             Arc::clone(&meta_store),
                         )

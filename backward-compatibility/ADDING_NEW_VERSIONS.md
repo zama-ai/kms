@@ -104,7 +104,7 @@ generate-backward-compatibility-v0.14.0:
 	cd backward-compatibility/generate-v0.14.0 && cargo run --release
 ```
 
-6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen (some excptions on this rule is if we have to make backport some fixes and make a minor release from one of the v0.13.x versions). `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
+6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen (one exception to this rule is when we have to backport fixes and make a minor release from one of the v0.13.x versions). `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
 In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later, and froze all prior backward compatibility data, defined in `FROZEN_BWC_VERSIONS`.
 
 7. **Test the new generator**:
@@ -125,6 +125,8 @@ make test-backward-compatibility-local
 | `generate-v0.13.10` | `backward-compatibility-generate-v0-13-10` | v0.13.10 | — | Frozen |
 | `generate-v0.13.20` | `backward-compatibility-generate-v0-13-20` | v0.13.20 | — | Frozen |
 | `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.8.0, tfhe 1.6.2, alloy 1.6.0, serde 1.0.228 | Deterministic |
+| `generate-v0.15.0` | `backward-compatibility-generate-v0-15-0` | v0.15.0 | tfhe-versionable 0.8.0, tfhe 1.8.1, alloy 1.7.1, serde 1.0.229 | Deterministic |
+| `generate-v0.16.0` | `backward-compatibility-generate-v0-16-0` | v0.16.0 | tfhe-versionable 0.8.0, tfhe 1.8.1, alloy 1.7.1, serde 1.0.229 | Deterministic |
 
 **Note**: v0.11.0 and v0.11.1 require separate generators due to incompatible alloy and tfhe versions.
 
