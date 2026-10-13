@@ -1,4 +1,4 @@
-//! Temporary entry points for public decryption microbenchmarks.
+//! Public-decryption benchmark helpers.
 
 use super::*;
 use crate::cryptography::signing::test_support::seeded_identity;
@@ -18,6 +18,7 @@ pub struct SignInput {
     response_bytes: Vec<u8>,
     sol_type: PublicDecryptVerification,
     eip712_hash: B256,
+    external_signature: Vec<u8>,
     signed_payload: PublicDecSignedPayload,
 }
 
@@ -25,8 +26,6 @@ pub struct SignInput {
 #[derive(Clone, Copy)]
 pub enum SignStage {
     Full,
-    EncodeMessage,
-    SerializePayload,
     LegacySignature,
     Eip712Signature,
     SchemeEntries,
@@ -35,7 +34,7 @@ pub enum SignStage {
 impl SignInput {
     /// Creates a deterministic signing request with a specified batch size and scheme set.
     pub fn new(batch_size: usize, wide: bool, schemes: &[SigningSchemeType]) -> Self {
-        let mut rng = AesRng::seed_from_u64(0x503d_ec);
+        let mut rng = AesRng::seed_from_u64(0x0050_3dec);
         let identity = seeded_identity(&mut rng);
         let plaintexts = (0..batch_size)
             .map(|i| {
@@ -64,6 +63,9 @@ impl SignInput {
         let sol_type =
             compute_public_decryption_message(&handles, &payload.plaintexts, &extra_data).unwrap();
         let eip712_hash = sol_type.eip712_signing_hash(&domain);
+        let external_signature =
+            crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)
+                .unwrap();
         let signed_payload = public_dec_payload(&response_bytes, &extra_data);
         // Warm the derived-key cache before timing request signing.
         crate::cryptography::signing::composite::sign_result_entries(
@@ -72,6 +74,7 @@ impl SignInput {
             &DSEP_PUBLIC_DECRYPTION,
             eip712_hash.as_slice(),
             &signed_payload,
+            Some(&external_signature),
         )
         .unwrap();
         Self {
@@ -84,6 +87,7 @@ impl SignInput {
             response_bytes,
             sol_type,
             eip712_hash,
+            external_signature,
             signed_payload,
         }
     }
@@ -100,16 +104,6 @@ impl SignInput {
                     self.extra_data,
                     &self.domain,
                 )?);
-            }
-            SignStage::EncodeMessage => {
-                std::hint::black_box(compute_public_decryption_message(
-                    &self.handles,
-                    &self.payload.plaintexts,
-                    &self.extra_data,
-                )?);
-            }
-            SignStage::SerializePayload => {
-                std::hint::black_box(bc2wrap::serialize(&self.payload)?);
             }
             SignStage::LegacySignature => {
                 std::hint::black_box(internal_sign(
@@ -133,6 +127,7 @@ impl SignInput {
                         &DSEP_PUBLIC_DECRYPTION,
                         self.eip712_hash.as_slice(),
                         &self.signed_payload,
+                        Some(&self.external_signature),
                     )?,
                 );
             }

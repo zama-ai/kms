@@ -172,7 +172,7 @@ harness = false
 required-features = ["testing"]
 
 [[bench]]
-name = "pdec_offload"
+name = "pdec"
 harness = false
 required-features = ["testing"]
 

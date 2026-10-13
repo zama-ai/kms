@@ -65,6 +65,7 @@ use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_types::rng::AesRng;
 use tracing::error;
 
+// Bench helpers
 #[cfg(feature = "testing")]
 pub mod pdec_bench;
 
@@ -516,6 +517,7 @@ where
         dsep,
         eip712_hash.as_slice(),
         payload,
+        Some(&external_signature),
     )?;
     Ok((external_signature, signatures))
 }

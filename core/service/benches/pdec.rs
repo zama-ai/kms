@@ -1,4 +1,4 @@
-//! Temporary public decryption offload benchmarks. Do not commit this harness.
+//! Public-decryption deserialization and signing benchmarks.
 
 use bytes::Bytes;
 use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group};
@@ -15,8 +15,6 @@ use kms_lib::{
     },
 };
 use std::{
-    alloc::{GlobalAlloc, Layout, System},
-    cell::Cell,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -27,85 +25,6 @@ use tfhe::{
 };
 use thread_handles::{init_rayon_thread_pool, spawn_compute_bound};
 use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
-
-struct CountingAllocator;
-
-#[derive(Clone, Copy, Default)]
-struct Counts {
-    allocations: u64,
-    requested_bytes: u64,
-    deallocations: u64,
-}
-
-thread_local! {
-    static COUNTS: Cell<Option<Counts>> = const { Cell::new(None) };
-}
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        COUNTS
-            .try_with(|counter| {
-                if let Some(mut counts) = counter.get() {
-                    counts.allocations += 1;
-                    counts.requested_bytes += layout.size() as u64;
-                    counter.set(Some(counts));
-                }
-            })
-            .ok();
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        COUNTS
-            .try_with(|counter| {
-                if let Some(mut counts) = counter.get() {
-                    counts.allocations += 1;
-                    counts.requested_bytes += layout.size() as u64;
-                    counter.set(Some(counts));
-                }
-            })
-            .ok();
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        COUNTS
-            .try_with(|counter| {
-                if let Some(mut counts) = counter.get() {
-                    counts.allocations += 1;
-                    counts.requested_bytes += new_size as u64;
-                    counter.set(Some(counts));
-                }
-            })
-            .ok();
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        COUNTS
-            .try_with(|counter| {
-                if let Some(mut counts) = counter.get() {
-                    counts.deallocations += 1;
-                    counter.set(Some(counts));
-                }
-            })
-            .ok();
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-fn count_allocations<R>(f: impl FnOnce() -> R) -> (R, Counts) {
-    COUNTS.with(|counter| {
-        assert!(counter.get().is_none());
-        counter.set(Some(Counts::default()));
-    });
-    let output = f();
-    let counts = COUNTS.with(|counter| counter.replace(None).unwrap());
-    (output, counts)
-}
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -184,13 +103,11 @@ fn signing_cases() -> Vec<(&'static str, SignInput)> {
     let combined = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
     vec![
         ("ecdsa/u64/b1", SignInput::new(1, false, &ecdsa)),
-        ("ecdsa/u64/b8", SignInput::new(8, false, &ecdsa)),
-        ("ecdsa/u64/b32", SignInput::new(32, false, &ecdsa)),
-        ("ecdsa/u256/b1", SignInput::new(1, true, &ecdsa)),
-        ("ecdsa/u256/b8", SignInput::new(8, true, &ecdsa)),
         ("ed25519/u64/b1", SignInput::new(1, false, &ed25519)),
         ("mldsa65/u64/b1", SignInput::new(1, false, &mldsa)),
         ("ecdsa+mldsa65/u64/b1", SignInput::new(1, false, &combined)),
+        ("ecdsa+mldsa65/u64/b8", SignInput::new(8, false, &combined)),
+        ("ecdsa+mldsa65/u256/b8", SignInput::new(8, true, &combined)),
     ]
 }
 
@@ -200,16 +117,10 @@ fn pdec_handoff(c: &mut Criterion) {
     group.sample_size(30);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
+    // Empty work isolates the Rayon handoff.
     group.bench_function("noop", |b| {
         b.to_async(&runtime).iter(|| async {
             black_box(spawn_compute_bound(|| black_box(1usize)).await.unwrap());
-        });
-    });
-    group.bench_function("oneshot_roundtrip", |b| {
-        b.to_async(&runtime).iter(|| async {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            tx.send(black_box(1usize)).unwrap();
-            black_box(rx.await.unwrap());
         });
     });
     group.finish();
@@ -227,17 +138,21 @@ fn pdec_deserialize(c: &mut Criterion) {
         let bytes = fixture.bytes;
         let parsed = parse_list(&bytes);
         let extracted = extract_first(&parsed, fhe_type);
+        // Parsing stops before GLWE expansion.
         group.bench_with_input(
             BenchmarkId::new("parse_list", fixture.name),
             &bytes,
             |b, bytes| b.iter(|| black_box(parse_list(bytes))),
         );
+        // First-element access expands the packed GLWE.
         group.bench_function(BenchmarkId::new("extract_first", fixture.name), |b| {
             b.iter(|| black_box(extract_first(&parsed, fhe_type)));
         });
+        // The service clones the extracted ciphertext.
         group.bench_function(BenchmarkId::new("clone_underlying", fixture.name), |b| {
             b.iter(|| clone_underlying(&extracted));
         });
+        // The caller parses, extracts, and clones the ciphertext.
         group.bench_with_input(
             BenchmarkId::new("direct", fixture.name),
             &bytes,
@@ -259,6 +174,7 @@ fn pdec_deserialize(c: &mut Criterion) {
                 );
             },
         );
+        // The Rayon variant adds a pool handoff to the same work.
         group.bench_with_input(
             BenchmarkId::new("rayon", fixture.name),
             &bytes,
@@ -291,32 +207,58 @@ fn pdec_deserialize(c: &mut Criterion) {
 fn pdec_sign(c: &mut Criterion) {
     let cases = signing_cases();
     let runtime = runtime();
-    let stages = [
-        ("full", SignStage::Full),
-        ("encode_message", SignStage::EncodeMessage),
-        ("serialize_payload", SignStage::SerializePayload),
-        ("legacy_signature", SignStage::LegacySignature),
-        ("eip712_signature", SignStage::Eip712Signature),
-        ("scheme_entries", SignStage::SchemeEntries),
-    ];
     let mut group = c.benchmark_group("pdec/sign");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
     for (name, fixture) in cases {
-        for (stage_name, stage) in stages {
+        // The caller signs the complete result.
+        group.bench_with_input(BenchmarkId::new("full", name), &fixture, |b, fixture| {
+            b.iter_batched(
+                || fixture.clone(),
+                |input| input.run(SignStage::Full).unwrap(),
+                BatchSize::SmallInput,
+            );
+        });
+        // Scheme entries reuse the prepared external signature.
+        group.bench_with_input(
+            BenchmarkId::new("scheme_entries", name),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || fixture.clone(),
+                    |input| input.run(SignStage::SchemeEntries).unwrap(),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        if name == "ecdsa/u64/b1" {
+            // The legacy ECDSA field remains in the wire response.
             group.bench_with_input(
-                BenchmarkId::new(stage_name, name),
+                BenchmarkId::new("legacy_signature", name),
                 &fixture,
                 |b, fixture| {
                     b.iter_batched(
                         || fixture.clone(),
-                        |input| black_box(input.run(stage).unwrap()),
+                        |input| input.run(SignStage::LegacySignature).unwrap(),
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            // The external EIP-712 field remains in the wire response.
+            group.bench_with_input(
+                BenchmarkId::new("eip712_signature", name),
+                &fixture,
+                |b, fixture| {
+                    b.iter_batched(
+                        || fixture.clone(),
+                        |input| input.run(SignStage::Eip712Signature).unwrap(),
                         BatchSize::SmallInput,
                     );
                 },
             );
         }
+        // The Rayon variant signs the same complete result.
         group.bench_with_input(
             BenchmarkId::new("rayon_full", name),
             &fixture,
@@ -324,12 +266,10 @@ fn pdec_sign(c: &mut Criterion) {
                 b.to_async(&runtime).iter_batched(
                     || fixture.clone(),
                     |input| async move {
-                        black_box(
-                            spawn_compute_bound(move || input.run(SignStage::Full))
-                                .await
-                                .unwrap()
-                                .unwrap(),
-                        );
+                        spawn_compute_bound(move || input.run(SignStage::Full))
+                            .await
+                            .unwrap()
+                            .unwrap();
                     },
                     BatchSize::SmallInput,
                 );
@@ -339,158 +279,10 @@ fn pdec_sign(c: &mut Criterion) {
     group.finish();
 }
 
-fn allocation_report() {
-    const REPS: usize = 20;
-    let runtime = runtime();
-    runtime
-        .block_on(spawn_compute_bound(|| black_box(1usize)))
-        .unwrap();
-    fn report<'a>(name: &str, mut sample: Box<dyn FnMut() -> (Counts, Counts) + 'a>) {
-        let mut caller = Counts::default();
-        let mut worker = Counts::default();
-        for _ in 0..REPS {
-            let (c, w) = sample();
-            caller.allocations += c.allocations;
-            caller.requested_bytes += c.requested_bytes;
-            caller.deallocations += c.deallocations;
-            worker.allocations += w.allocations;
-            worker.requested_bytes += w.requested_bytes;
-            worker.deallocations += w.deallocations;
-        }
-        println!(
-            "{name}: caller allocs={:.1} bytes={:.1} frees={:.1}; worker allocs={:.1} bytes={:.1} frees={:.1}",
-            caller.allocations as f64 / REPS as f64,
-            caller.requested_bytes as f64 / REPS as f64,
-            caller.deallocations as f64 / REPS as f64,
-            worker.allocations as f64 / REPS as f64,
-            worker.requested_bytes as f64 / REPS as f64,
-            worker.deallocations as f64 / REPS as f64
-        );
-    }
-    report(
-        "handoff/noop",
-        Box::new(|| {
-            let ((_, worker), caller) = count_allocations(|| {
-                runtime.block_on(async {
-                    spawn_compute_bound(|| count_allocations(|| black_box(1usize)))
-                        .await
-                        .unwrap()
-                })
-            });
-            (caller, worker)
-        }),
-    );
-    for fixture in ciphertext_fixtures() {
-        let bytes = fixture.bytes;
-        let fhe_type = fixture.fhe_type;
-        let parsed = parse_list(&bytes);
-        let extracted = extract_first(&parsed, fhe_type);
-        report(
-            &format!("deserialize/parse_list/{}", fixture.name),
-            Box::new(|| {
-                let (_, caller) = count_allocations(|| black_box(parse_list(&bytes)));
-                (caller, Counts::default())
-            }),
-        );
-        report(
-            &format!("deserialize/extract_first/{}", fixture.name),
-            Box::new(|| {
-                let (_, caller) = count_allocations(|| black_box(extract_first(&parsed, fhe_type)));
-                (caller, Counts::default())
-            }),
-        );
-        report(
-            &format!("deserialize/clone_underlying/{}", fixture.name),
-            Box::new(|| {
-                let (_, caller) = count_allocations(|| clone_underlying(&extracted));
-                (caller, Counts::default())
-            }),
-        );
-        report(
-            &format!("deserialize/direct/{}", fixture.name),
-            Box::new(|| {
-                let (_, caller) = count_allocations(|| {
-                    black_box(
-                        deserialize_to_low_level(
-                            fhe_type,
-                            CiphertextFormat::BigCompressed,
-                            &bytes,
-                            None,
-                        )
-                        .unwrap(),
-                    )
-                });
-                (caller, Counts::default())
-            }),
-        );
-        report(
-            &format!("deserialize/rayon/{}", fixture.name),
-            Box::new(|| {
-                let input = bytes.clone();
-                let ((_, worker), caller) = count_allocations(|| {
-                    runtime.block_on(async {
-                        spawn_compute_bound(move || {
-                            count_allocations(|| {
-                                black_box(
-                                    deserialize_to_low_level(
-                                        fhe_type,
-                                        CiphertextFormat::BigCompressed,
-                                        &input,
-                                        None,
-                                    )
-                                    .unwrap(),
-                                )
-                            })
-                        })
-                        .await
-                        .unwrap()
-                    })
-                });
-                (caller, worker)
-            }),
-        );
-    }
-    for (name, fixture) in signing_cases() {
-        for (stage_name, stage) in [
-            ("full", SignStage::Full),
-            ("encode", SignStage::EncodeMessage),
-            ("serialize", SignStage::SerializePayload),
-            ("legacy_sig", SignStage::LegacySignature),
-            ("eip712_sig", SignStage::Eip712Signature),
-            ("schemes", SignStage::SchemeEntries),
-        ] {
-            report(
-                &format!("sign/{stage_name}/{name}"),
-                Box::new(|| {
-                    let input = fixture.clone();
-                    let (_, caller) = count_allocations(|| black_box(input.run(stage).unwrap()));
-                    (caller, Counts::default())
-                }),
-            );
-        }
-        report(
-            &format!("sign/rayon_full/{name}"),
-            Box::new(|| {
-                let input = fixture.clone();
-                let ((_, worker), caller) = count_allocations(|| {
-                    runtime.block_on(async {
-                        spawn_compute_bound(move || {
-                            count_allocations(|| black_box(input.run(SignStage::Full).unwrap()))
-                        })
-                        .await
-                        .unwrap()
-                    })
-                });
-                (caller, worker)
-            }),
-        );
-    }
-}
-
 #[derive(Clone)]
 enum LoadWork {
     Deserialize(FheTypes, Bytes),
-    Sign(SignInput),
+    Sign(Box<SignInput>),
 }
 
 async fn run_load_work(work: &LoadWork, rayon: bool) {
@@ -525,7 +317,7 @@ async fn run_load_work(work: &LoadWork, rayon: bool) {
             }
         }
         LoadWork::Sign(input) => {
-            let input = input.clone();
+            let input = (**input).clone();
             if rayon {
                 spawn_compute_bound(move || input.run(SignStage::Full))
                     .await
@@ -634,11 +426,19 @@ fn load_report(smoke: bool) {
     };
     let u64_work = deserialization("u64");
     let u256_work = deserialization("u256");
-    let sign_work = LoadWork::Sign(SignInput::new(1, false, &[SigningSchemeType::Ecdsa256k1]));
+    let sign_work = LoadWork::Sign(Box::new(SignInput::new(
+        1,
+        false,
+        &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+    )));
     let cases = [
+        // Uint64 jobs represent shorter deserialization work.
         ("u64", vec![u64_work.clone()]),
+        // Uint256 jobs represent the longest deserialization work.
         ("u256", vec![u256_work.clone()]),
-        ("sign_ecdsa", vec![sign_work.clone()]),
+        // Paired jobs include ECDSA and ML-DSA signing.
+        ("sign_mixed", vec![sign_work.clone()]),
+        // Mixed jobs combine both ciphertext widths with paired signing.
         ("mixed", vec![u64_work, u256_work, sign_work]),
     ];
     for (name, work) in cases {
@@ -714,8 +514,6 @@ fn smoke() {
     for (_, fixture) in signing_cases() {
         for stage in [
             SignStage::Full,
-            SignStage::EncodeMessage,
-            SignStage::SerializePayload,
             SignStage::LegacySignature,
             SignStage::Eip712Signature,
             SignStage::SchemeEntries,
@@ -733,8 +531,6 @@ fn smoke() {
 fn main() {
     if std::env::var_os("PDEC_SMOKE").is_some() {
         smoke();
-    } else if std::env::var_os("PDEC_ALLOC_REPORT").is_some() {
-        allocation_report();
     } else if std::env::var_os("PDEC_LOAD_REPORT").is_some() {
         load_report(false);
     } else if std::env::var_os("PDEC_LOAD_SMOKE").is_some() {

@@ -2212,6 +2212,7 @@ mod tests {
             &DSEP_PUBLIC_DECRYPTION,
             &[0u8; 32],
             &signed,
+            None,
         )
         .unwrap()
         .iter()
@@ -2280,6 +2281,7 @@ mod tests {
             &DSEP_PUBLIC_DECRYPTION,
             &[0u8; 32],
             &signed,
+            None,
         )
         .unwrap()
         .iter()

@@ -66,7 +66,11 @@ use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signatures::eip712_sign_hash;
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
+#[cfg(feature = "non-wasm")]
+use alloy_primitives::B256;
 use hashing::DomainSep;
 use serde::Serialize;
 use std::io::Write;
@@ -255,6 +259,8 @@ where
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
+/// A supplied `ecdsa_signature` must sign `eip712_hash` with `identity.ecdsa()`;
+/// release builds do not check it.
 #[cfg(feature = "non-wasm")]
 pub fn sign_result_entries<T>(
     identity: &NodeSigningIdentity,
@@ -262,6 +268,7 @@ pub fn sign_result_entries<T>(
     dsep: &DomainSep,
     eip712_hash: &[u8],
     payload: &T,
+    ecdsa_signature: Option<&[u8]>,
 ) -> Result<Vec<StoredTypedSignature>, SigningError>
 where
     T: Serialize + Versionize + Named,
@@ -275,14 +282,30 @@ where
         .map(|&scheme| {
             let signature = match scheme {
                 SigningSchemeType::Ecdsa256k1 => {
-                    let hash = alloy_primitives::B256::try_from(eip712_hash).map_err(|_| {
-                        SigningError::Sign(format!(
-                            "EIP-712 signing hash must be 32 bytes, got {}",
-                            eip712_hash.len()
-                        ))
-                    })?;
-                    crate::cryptography::signing::ecdsa::eip712_sign_hash(identity.ecdsa(), &hash)
-                        .map_err(|e| SigningError::Sign(e.to_string()))?
+                    // NOTE: Re-using the signature we were passed. This assumes that the caller produced the signature
+                    // with the [`NodeSigningIdentity`]'s `ecdsa()` method but that is only checked in debug builds.
+                    if let Some(signature) = ecdsa_signature {
+                        debug_assert!(
+                            B256::try_from(eip712_hash)
+                                .ok()
+                                .and_then(|hash| {
+                                    super::ecdsa::recover_address_from_eip712_hash(&hash, signature)
+                                        .ok()
+                                })
+                                .is_some_and(|address| address == identity.verf_key().address()),
+                            "supplied ECDSA signature must cover the EIP-712 hash under this identity"
+                        );
+                        signature.to_vec()
+                    } else {
+                        let hash = B256::try_from(eip712_hash).map_err(|_| {
+                            SigningError::Sign(format!(
+                                "EIP-712 signing hash must be 32 bytes, got {}",
+                                eip712_hash.len()
+                            ))
+                        })?;
+                        eip712_sign_hash(identity.ecdsa(), &hash)
+                            .map_err(|e| SigningError::Sign(e.to_string()))?
+                    }
                 }
                 _ => identity
                     .unified_sign_with(scheme, dsep, &signed)?
@@ -464,7 +487,7 @@ mod tests {
         let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
+            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload, None).unwrap();
         assert_eq!(entries.len(), 3);
 
         for entry in &entries {
@@ -488,6 +511,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn result_entries_reuse_the_supplied_ecdsa_signature() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let identity = seeded_identity(&mut rng);
+        let hash = B256::from([0x11u8; 32]);
+        let signature = eip712_sign_hash(identity.ecdsa(), &hash).unwrap();
+        let entries = sign_result_entries(
+            &identity,
+            &[SigningSchemeType::Ecdsa256k1],
+            DSEP,
+            hash.as_slice(),
+            &msg(),
+            Some(&signature),
+        )
+        .unwrap();
+        assert_eq!(entries[0].signature, signature);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "supplied ECDSA signature must cover the EIP-712 hash")]
+    fn result_entries_reject_a_supplied_signature_from_another_key() {
+        let mut rng = AesRng::seed_from_u64(23);
+        let identity = seeded_identity(&mut rng);
+        let other = seeded_identity(&mut rng);
+        let hash = B256::from([0x11u8; 32]);
+        let signature = eip712_sign_hash(other.ecdsa(), &hash).unwrap();
+        let _ = sign_result_entries(
+            &identity,
+            &[SigningSchemeType::Ecdsa256k1],
+            DSEP,
+            hash.as_slice(),
+            &msg(),
+            Some(&signature),
+        );
+    }
+
     /// Result entries use the same ordering convention as [`sign_composite`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
@@ -503,7 +563,7 @@ mod tests {
         let canonical = canonical_schemes(&requested).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg()).unwrap();
+            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg(), None).unwrap();
 
         assert_eq!(
             entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
@@ -518,7 +578,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
         assert!(matches!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg()),
+            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg(), None),
             Err(SigningError::EmptySchemeSet)
         ));
     }
