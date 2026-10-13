@@ -1030,6 +1030,54 @@ mod tests {
         assert_eq!(my_role, Some(Role::indexed_from_one(3)));
     }
 
+    /// A four-node context in which each node has a distinct digest for each scheme.
+    fn four_node_context_with_all_schemes() -> ContextInfo {
+        let mut digests: [SchemeDigests; 4] = Default::default();
+        for (i, node_digests) in digests.iter_mut().enumerate() {
+            let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+            *node_digests = SchemeDigests::from_ecdsa_verification_key(&verification_key);
+            for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1)
+            {
+                node_digests
+                    .insert(scheme, vec![i as u8 + 1; scheme.expected_digest_len()])
+                    .unwrap();
+            }
+        }
+        four_node_context(digests)
+    }
+
+    #[tokio::test]
+    async fn test_context_info_distinct_digests_of_all_schemes() {
+        let context = four_node_context_with_all_schemes();
+        // `verify` reads a signing key from storage, but no node needs to match it.
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+
+        context.verify(&storage).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_context_info_duplicate_non_ecdsa_digest() {
+        let mut context = four_node_context_with_all_schemes();
+        // Only the ML-DSA-65 digest of node 4 repeats the one of node 3.
+        let scheme = SigningSchemeType::MlDsa65;
+        let duplicate = context.mpc_nodes[2]
+            .scheme_digests
+            .get(&scheme)
+            .unwrap()
+            .to_vec();
+        context.mpc_nodes[3]
+            .scheme_digests
+            .insert(scheme, duplicate)
+            .unwrap();
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let err = context.verify(&storage).await.unwrap_err().to_string();
+        assert!(err.contains(ERR_DUPLICATE_SIGNERS), "{err}");
+        assert!(err.contains(&scheme.to_string()), "{err}");
+    }
+
     const ALL_SCHEMES: [SigningSchemeType; 5] = [
         SigningSchemeType::Ecdsa256k1,
         SigningSchemeType::Ed25519,
