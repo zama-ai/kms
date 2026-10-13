@@ -138,3 +138,18 @@ jobs:
             exit 1
           fi
           grep -Fq "threshold mode requires 3*t+1 parties" <<<"$output"
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.count=1 \
+            --set kmsPeers.id=1 \
+            --set kmsCore.thresholdMode.thresholdValue=4 \
+            --set kmsCore.thresholdMode.omitPeers=true 2>&1); then
+            echo "omitPeers should allow a party count other than 3*t+1" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          if grep -Fq "[[threshold.peers]]" <<<"$output"; then
+            echo "omitPeers rendered a peer list" >&2
+            exit 1
+          fi
