@@ -113,36 +113,39 @@ pub(crate) const PHI_COUNTER_BITS: u32 = 120;
 /// Largest phi bound: `-bd1 + (AES mod 2 * bd1)` must not overflow an `i128`.
 pub(crate) const PHI_MAX_BOUND: u128 = 1 << 126;
 
-/// Returns true if the `count` counters starting at `ctr` are all below `2^bits`.
-fn counters_fit(ctr: u128, count: u128, bits: u32) -> bool {
-    count == 0 || ctr.checked_add(count).is_some_and(|end| end <= 1 << bits)
+/// Returns true if the `count` counters starting at `ctr` are all below `2^ctr_cap`.
+fn counters_fit(ctr: u128, count: u128, ctr_cap: u32) -> bool {
+    count == 0
+        || ctr
+            .checked_add(count)
+            .is_some_and(|end| end <= 1 << ctr_cap)
 }
 
-/// Returns an error unless the `count` counters starting at `ctr` are all below `2^bits`.
+/// Returns an error unless the `count` counters starting at `ctr` are all below `2^ctr_cap`.
 /// Request entry points call this once per request. The PRFs below then assert the same bound, so a failure there is
 /// a bug: a larger counter would overlap the index bytes and repeat PRF inputs.
 pub(crate) fn check_counter_range(
     prf: &str,
     ctr: u128,
     count: u128,
-    bits: u32,
+    ctr_cap: u32,
 ) -> anyhow::Result<()> {
-    if counters_fit(ctr, count, bits) {
+    if counters_fit(ctr, count, ctr_cap) {
         Ok(())
     } else {
         Err(anyhow_error_and_log(format!(
-            "{prf} counters must stay below 2^{bits}, but the request needs {count} counters from {ctr}"
+            "{prf} counters must stay below 2^{ctr_cap}, but the request needs {count} counters from {ctr}"
         )))
     }
 }
 
-/// Panics unless the `count` counters starting at `ctr` are all below `2^bits`.
+/// Panics unless the `count` counters starting at `ctr` are all below `2^ctr_cap`.
 #[inline(always)]
-fn assert_counter_range(prf: &str, ctr: u128, count: u128, bits: u32) {
+fn assert_counter_range(prf: &str, ctr: u128, count: u128, ctr_cap: u32) {
     // Request entry points reject such ranges with an error first (see `check_counter_range`).
     assert!(
-        counters_fit(ctr, count, bits),
-        "{prf} counters from {ctr} (count {count}) reach 2^{bits}; the caller did not check the range"
+        counters_fit(ctr, count, ctr_cap),
+        "{prf} counters from {ctr} (count {count}) reach 2^{ctr_cap}; the caller did not check the range"
     );
 }
 
