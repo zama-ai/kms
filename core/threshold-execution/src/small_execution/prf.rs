@@ -8,7 +8,7 @@
 
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::{
-    Aes128, Block as AesBlock,
+    Aes128Enc, Block as AesBlock,
     cipher::{BlockCipherEncrypt, KeyInit},
 };
 pub use algebra::PRSSConversions;
@@ -42,7 +42,7 @@ pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY
 
 #[derive(Debug, Clone)]
 pub(crate) struct PhiAes {
-    aes: Aes128,
+    aes: Aes128Enc,
 }
 
 impl PhiAes {
@@ -57,14 +57,14 @@ impl PhiAes {
         xor_u8_arr_in_place(&mut phi_key, &sid.to_le_bytes());
 
         PhiAes {
-            aes: Aes128::new(&phi_key.into()),
+            aes: Aes128Enc::new(&phi_key.into()),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ChiAes {
-    aes: Aes128,
+    aes: Aes128Enc,
 }
 
 impl ChiAes {
@@ -78,14 +78,14 @@ impl ChiAes {
         xor_u8_arr_in_place(&mut chi_key, &sid.to_le_bytes());
 
         ChiAes {
-            aes: Aes128::new(&chi_key.into()),
+            aes: Aes128Enc::new(&chi_key.into()),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct PsiAes {
-    aes: Aes128,
+    aes: Aes128Enc,
 }
 
 impl PsiAes {
@@ -99,7 +99,7 @@ impl PsiAes {
         xor_u8_arr_in_place(&mut psi_key, &sid.to_le_bytes());
 
         PsiAes {
-            aes: Aes128::new(&psi_key.into()),
+            aes: Aes128Enc::new(&psi_key.into()),
         }
     }
 }
@@ -189,7 +189,7 @@ const AES_BATCH: usize = 8;
 /// Cold path: scalar psi/chi for checks and for rings with several AES blocks per coefficient.
 /// The PRSS/PRZS kernels use [`accumulate_psi_counters`] and [`accumulate_chi_counters`] instead.
 #[inline(always)]
-fn encrypt_indexed_prf_blocks<Z, F>(aes: &Aes128, ctr: u128, block_indices: F) -> Z
+fn encrypt_indexed_prf_blocks<Z, F>(aes: &Aes128Enc, ctr: u128, block_indices: F) -> Z
 where
     Z: Ring + PRSSConversions,
     F: Fn(usize, usize) -> u128,
@@ -258,7 +258,7 @@ fn accumulate_counter_blocks<
     const COUNTERS: usize,
     const DEGREE: usize,
 >(
-    aes: &Aes128,
+    aes: &Aes128Enc,
     ctr: u128,
     indices: u128,
     coefficient: Z,
@@ -294,7 +294,7 @@ fn accumulate_counter_blocks<
 /// same PRF.
 #[inline(always)]
 fn accumulate_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
-    aes: &Aes128,
+    aes: &Aes128Enc,
     ctr: u128,
     indices: u128,
     coefficient: Z,
@@ -360,7 +360,11 @@ mod tests {
 
     // Encode the counter and indices byte by byte, without using the production block writer.
     // This provides an independent reference for the scalar and batched PRFs' input layout.
-    fn original_encoding<Z: Ring + PRSSConversions>(aes: &Aes128, ctr: u128, j: Option<u8>) -> Z {
+    fn original_encoding<Z: Ring + PRSSConversions>(
+        aes: &Aes128Enc,
+        ctr: u128,
+        j: Option<u8>,
+    ) -> Z {
         let num = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
         let mut blocks: Vec<AesBlock> = (0..Z::EXTENSION_DEGREE * num)
             .map(|idx| {
