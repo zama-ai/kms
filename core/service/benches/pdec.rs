@@ -232,9 +232,9 @@ fn pdec_sign(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
-        // Scheme entries reuse the prepared external signature.
+        // Requested schemes sign the prepared hash or payload.
         group.bench_with_input(
-            BenchmarkId::new("scheme_entries", name),
+            BenchmarkId::new("requested_signatures", name),
             &fixture,
             |b, fixture| {
                 b.iter_batched(
