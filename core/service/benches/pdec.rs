@@ -1,4 +1,7 @@
-//! Public-decryption deserialization and signing benchmarks.
+//! Measures whether public-decryption deserialization and signing warrant a Rayon handoff.
+//!
+//! Criterion isolates deserialization and signing stages. A concurrent-load harness compares
+//! direct execution with Rayon while it records throughput, latency, and Tokio timer delay.
 
 use bytes::Bytes;
 use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group};
@@ -26,6 +29,7 @@ use tfhe::{
 use thread_handles::{init_rayon_thread_pool, spawn_compute_bound};
 use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 
+/// Creates a single-thread Tokio runtime for the isolated benchmarks.
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -46,10 +50,12 @@ enum Extracted {
     Uint(tfhe::SquashedNoiseFheUint),
 }
 
+/// Deserializes a compressed list without extracting a ciphertext.
 fn parse_list(bytes: &Bytes) -> CompressedList {
     safe_deserialize(std::io::Cursor::new(bytes), SAFE_SER_SIZE_LIMIT).unwrap()
 }
 
+/// Extracts the first ciphertext from a parsed list.
 fn extract_first(list: &CompressedList, fhe_type: FheTypes) -> Extracted {
     match fhe_type {
         FheTypes::Bool => Extracted::Bool(list.get(0).unwrap().unwrap()),
@@ -57,6 +63,7 @@ fn extract_first(list: &CompressedList, fhe_type: FheTypes) -> Extracted {
     }
 }
 
+/// Clones the low-level ciphertext that the service returns.
 fn clone_underlying(extracted: &Extracted) {
     match extracted {
         Extracted::Bool(ct) => {
@@ -68,6 +75,7 @@ fn clone_underlying(extracted: &Extracted) {
     }
 }
 
+/// Builds one serialized BigCompressed ciphertext for each measured type.
 fn ciphertext_fixtures() -> Vec<CiphertextFixture> {
     let key = generate_client_fhe_key(BC_PARAMS_SNS, tfhe::Tag::default(), None);
     tfhe::set_server_key(key.generate_server_key());
@@ -96,6 +104,7 @@ fn ciphertext_fixtures() -> Vec<CiphertextFixture> {
     fixtures
 }
 
+/// Builds signing inputs for individual and paired signature schemes.
 fn signing_cases() -> Vec<(&'static str, SignInput)> {
     let ecdsa = [SigningSchemeType::Ecdsa256k1];
     let ed25519 = [SigningSchemeType::Ed25519];
@@ -111,6 +120,7 @@ fn signing_cases() -> Vec<(&'static str, SignInput)> {
     ]
 }
 
+/// Measures a Rayon handoff with negligible worker computation.
 fn pdec_handoff(c: &mut Criterion) {
     let runtime = runtime();
     let mut group = c.benchmark_group("pdec/handoff");
@@ -126,6 +136,7 @@ fn pdec_handoff(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures deserialization stages and direct versus Rayon execution.
 fn pdec_deserialize(c: &mut Criterion) {
     let fixtures = ciphertext_fixtures();
     let runtime = runtime();
@@ -204,6 +215,7 @@ fn pdec_deserialize(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures signing stages and direct versus Rayon execution.
 fn pdec_sign(c: &mut Criterion) {
     let cases = signing_cases();
     let runtime = runtime();
@@ -285,6 +297,7 @@ enum LoadWork {
     Sign(Box<SignInput>),
 }
 
+/// Executes one load operation on the Tokio task or the Rayon pool.
 async fn run_load_work(work: &LoadWork, rayon: bool) {
     match work {
         LoadWork::Deserialize(fhe_type, bytes) => {
@@ -330,6 +343,7 @@ async fn run_load_work(work: &LoadWork, rayon: bool) {
     }
 }
 
+/// Returns a sample at the requested percentile after sorting the samples.
 fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
     if samples.is_empty() {
         return Duration::ZERO;
@@ -338,6 +352,7 @@ fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
     samples[(samples.len() - 1) * percentile / 100]
 }
 
+/// Reports throughput, operation latency, and Tokio timer delay for one load trial.
 async fn load_trial(
     name: &str,
     work: Arc<Vec<LoadWork>>,
@@ -398,6 +413,7 @@ async fn load_trial(
     );
 }
 
+/// Compares direct and Rayon execution across work mixes and concurrency levels.
 fn load_report(smoke: bool) {
     let thread_count = |name: &str, default| {
         std::env::var(name)
@@ -475,6 +491,7 @@ fn load_report(smoke: bool) {
 
 criterion_group!(benches, pdec_handoff, pdec_deserialize, pdec_sign);
 
+/// Runs each isolated benchmark path once to check fixture and operation setup.
 fn smoke() {
     let runtime = runtime();
     eprintln!(
@@ -528,6 +545,7 @@ fn smoke() {
     eprintln!("pdec benchmark smoke check passed");
 }
 
+/// Selects the smoke, load, or Criterion benchmark mode.
 fn main() {
     if std::env::var_os("PDEC_SMOKE").is_some() {
         smoke();
