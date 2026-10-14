@@ -876,8 +876,8 @@ fn spawn_public_decrypt_sync(
             .await;
             let mut ctr = 0_usize;
 
-            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
-            // rejected the submission. Both are recoverable by re-sending the exact same request.
+            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the meta store is full.
+            // Retry either status with the exact same request.
             while matches!(
                 response.as_ref().map_err(|e| e.code()),
                 Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
@@ -1719,8 +1719,8 @@ fn spawn_user_decrypt_sync(
             .await;
             let mut ctr = 0_usize;
 
-            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
-            // rejected the submission. Both are recoverable by re-sending the exact same request.
+            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the meta store is full.
+            // Retry either status with the exact same request.
             while matches!(
                 response.as_ref().map_err(|e| e.code()),
                 Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
@@ -2506,6 +2506,10 @@ mod tests {
     fn rpc_diagnostics_track_status_in_flight_and_post_quorum_work() {
         let diagnostics = RpcDiagnostics::default();
         diagnostics.record::<()>(RpcPhase::Submit, &Ok(()));
+        diagnostics.record::<()>(
+            RpcPhase::Submit,
+            &Err(tonic::Status::resource_exhausted("meta store is full")),
+        );
         diagnostics.record::<()>(RpcPhase::Result, &Ok(()));
 
         let first = diagnostics.start(RpcPhase::Result);
@@ -2522,6 +2526,7 @@ mod tests {
 
         let snapshot = diagnostics.snapshot();
         assert_eq!(snapshot.submit_status["ok"], 1);
+        assert_eq!(snapshot.submit_status["resource_exhausted"], 1);
         assert_eq!(snapshot.result_status["ok"], 1);
         assert_eq!(snapshot.outstanding_result_rpcs, 1);
         assert_eq!(snapshot.result_peak_in_flight, 2);

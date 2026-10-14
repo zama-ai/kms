@@ -178,8 +178,7 @@ pub struct BandwidthBenchmarkConfig {
     /// Max benchmark runs allowed to execute concurrently on a node. Each run spawns up to
     /// `max_sessions` sessions, every one allocating a payload the networking layer clones per
     /// peer, so N in-flight requests multiply peak memory and outbound peer traffic by N. The
-    /// endpoint takes no rate-limiter permit, so concurrency is bounded here instead; it is a
-    /// diagnostic, so serializing runs is acceptable.
+    /// limit bounds this resource usage. The endpoint is diagnostic, so serial execution is acceptable.
     #[validate(range(min = 1))]
     pub max_concurrent_runs: usize,
 }

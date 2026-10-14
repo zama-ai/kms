@@ -109,6 +109,7 @@ _Other Operations_:
 **Common Error Types** (the `error` label; gRPC status codes are mapped to these via `map_tonic_code_to_metric_err_tag`):
 
 - `failed_precondition` - Precondition not met (tonic `FailedPrecondition`)
+- `resource_exhausted` - Admission capacity is exhausted, for example when a meta store is full (tonic `ResourceExhausted`).
 - `cancelled` - Operation cancelled (tonic `Cancelled`)
 - `invalid_argument` - Invalid argument provided (tonic `InvalidArgument`)
 - `aborted` - Operation aborted (tonic `Aborted`)
@@ -200,8 +201,8 @@ _Other Operations_:
 #### Other Gauges
 
 - **Type**: Gauge
-- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_tokio_alive_tasks`, `kms_tokio_global_queue_depth`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
-- **Alarm**: e.g. alert if `kms_rate_limiter_usage` saturates or `kms_active_sessions` looks abnormal.
+- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_tokio_alive_tasks`, `kms_tokio_global_queue_depth`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
+- **Alarm**: Alert if `kms_active_sessions` looks abnormal.
 
 ### Metric Tags
 

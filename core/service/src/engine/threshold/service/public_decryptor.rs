@@ -960,6 +960,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, epoch_id, ct_buf, mut public_decryptor) =
+            setup_public_decryptor(&mut rng).await;
+        public_decryptor.pub_dec_meta_store = MetaStore::new(1, 0);
+        let _pending = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+        let err = public_decryptor
+            .public_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        let err = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;

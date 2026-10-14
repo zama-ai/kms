@@ -744,6 +744,33 @@ mod tests_public_decryption {
     }
 
     #[tokio::test]
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
+        let (mut kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        kms.pub_dec_meta_store = crate::util::meta_store::MetaStore::new(1, 0);
+        let _pending = kms
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
+        let (_, ct) = make_test_msg_ct(&pk, true);
+        let request = make_valid_request(request_id, key_id, ct, &domain);
+        let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_already_exists").unwrap();
@@ -1093,6 +1120,34 @@ mod test_user_decryption {
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::NotFound);
         }
+    }
+
+    #[tokio::test]
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
+        let (mut kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        kms.user_dec_meta_store = crate::util::meta_store::MetaStore::new(1, 0);
+        let _pending = kms
+            .user_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
+        let (_, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, _) = make_test_pk(&mut rng);
+        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
+        let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

@@ -735,7 +735,7 @@ pub(crate) async fn preproc_and_keygen(
                 }
             });
         }
-        // Ensure preprocessing is done, otherwise we risk getting blocked by the rate limiter in keygen
+        // Wait for preprocessing before the keygen phase shuts down more parties.
         preprocset.join_all().await;
 
         // Taking back ownership of the clients to remove those we need to crash

@@ -157,15 +157,11 @@ async fn test_central_close_after_drop() -> Result<()> {
 }
 
 /// Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large.
-///
-/// This test uses RAM storage with custom rate limiter config (not the builder pattern)
-/// because it needs fine-grained control over the rate limiter settings.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_largecipher() -> Result<()> {
     let keys = default_keys().await;
 
-    // Setup with RAM storage and custom rate limiter
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
         new_pub_ram_storage_from_existing_keys(
             &keys.pub_fhe_keys,

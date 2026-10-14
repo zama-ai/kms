@@ -41,8 +41,8 @@ import "kms.v1.proto";
 // `Unavailable` - An async request is not done yet. The caller can retry at a
 // later point and may obtain the result.
 //
-// `ResourceExhausted` - The request is being rate limited, wait until the
-// existing tasks are done before retrying.
+// `ResourceExhausted` - The meta store is full or the bandwidth benchmark has
+// reached its concurrency limit. Wait until existing tasks finish, then retry.
 //
 // `AlreadyExists` - This happens when making a request with an existing ID,
 // the caller should not retry in this case.
