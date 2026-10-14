@@ -287,6 +287,12 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
   Each party also rejects a key unless it has a non-empty public-key digest and exactly one
   non-empty server-key or compressed-keyset digest before role dispatch.
+  Set 1 and both-sets parties compare the stored private key's ClassicPBS parameters with the
+  request before cloning its shares. Every role uses the same TFHE conformance check for
+  requested compressed keysets before execution, including the dedicated OPRF key.
+  Set 1 and both-sets parties check their stored compressed keysets before cloning private shares.
+  A parameter mismatch returns `InvalidArgument`. Uncompressed material skips public conformance
+  checks and will be deprecated in favor of compressed keysets.
   The resharing session matches the parties of the two contexts by MPC identity.
   A party with the same MPC identity in both contexts is a `Both` party, and the
   session connects to it at its set 2 URL. The URL is not compared. The request
