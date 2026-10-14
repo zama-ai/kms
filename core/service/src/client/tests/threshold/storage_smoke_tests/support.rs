@@ -5,15 +5,18 @@ use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::{
     DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
+use crate::dummy_domain;
 use crate::vault::storage::{
     StorageType, file::FileStorage, store_versioned_at_request_and_epoch_id,
     store_versioned_at_request_id, test_support::EntryDigest, test_support::digest_entry,
     tests::TestType,
 };
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::{DestroyMpcEpochRequest, EpochResultResponse};
+use kms_grpc::kms::v1::{
+    DestroyMpcEpochRequest, DestroyMpcEpochResponse, EpochResultResponse, SigningSchemeType,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
@@ -147,18 +150,19 @@ pub(super) async fn create_prss_epoch(
 async fn destroy_epoch(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     epoch_id: EpochId,
-) -> Vec<(u32, Result<Response<kms_grpc::kms::v1::Empty>, Status>)> {
+) -> Vec<(u32, Result<Response<DestroyMpcEpochResponse>, Status>)> {
+    let request = DestroyMpcEpochRequest {
+        epoch_id: Some(epoch_id.into()),
+        domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+        extra_data: Vec::new(),
+        signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()],
+    };
     let mut tasks = JoinSet::new();
     for (party_id, client) in clients {
         let party_id = *party_id;
         let mut client = client.clone();
         tasks.spawn(async move {
-            let result = client
-                .destroy_mpc_epoch(DestroyMpcEpochRequest {
-                    epoch_id: Some(epoch_id.into()),
-                    extra_data: Vec::new(),
-                })
-                .await;
+            let result = client.destroy_mpc_epoch(request).await;
             (party_id, result)
         });
     }

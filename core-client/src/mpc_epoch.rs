@@ -9,11 +9,11 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{
         DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo,
-        SigningSchemeType,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{PubDataType, alloy_to_protobuf_domain},
 };
+use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
@@ -499,22 +499,28 @@ pub(crate) async fn do_new_epoch(
 
 pub(crate) async fn do_destroy_mpc_epoch(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    cc_conf: &CoreClientConfig,
+    signing_schemes: &[SigningSchemeType],
     epoch_id: &EpochId,
 ) -> anyhow::Result<()> {
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`), consistent with
+    // the keygen/CRS commands.
+    let domain = alloy_to_protobuf_domain(&cc_conf.default_domain()?)?;
+    let request = DestroyMpcEpochRequest {
+        epoch_id: Some((*epoch_id).into()),
+        domain: Some(domain),
+        extra_data: Vec::new(),
+        signing_schemes: signing_schemes
+            .iter()
+            .map(|scheme| scheme.as_wire())
+            .collect(),
+    };
+
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
-        let epoch_cloned = (*epoch_id).into();
-        req_tasks.spawn(async move {
-            cur_client
-                .destroy_mpc_epoch(DestroyMpcEpochRequest {
-                    epoch_id: Some(epoch_cloned),
-                    domain: todo!(),
-                    extra_data: Vec::new(),
-                    signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()], // todo sghould come from cli arguments
-                })
-                .await
-        });
+        let req_cloned = request.clone();
+        req_tasks.spawn(async move { cur_client.destroy_mpc_epoch(req_cloned).await });
     }
     while let Some(inner) = req_tasks.join_next().await {
         let _ = inner??;
