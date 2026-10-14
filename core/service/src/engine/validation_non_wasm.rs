@@ -1159,13 +1159,15 @@ pub(crate) struct VerifiedDestroyMpcContext {
 pub(crate) fn unpack_destroy_mpc_context_req(
     req: &DestroyMpcContextRequest,
 ) -> anyhow::Result<VerifiedDestroyMpcContext> {
-    let context_id = parse_mpc_context_for_destruction(&req.context_id)?;
+    let context_id: ContextId =
+        parse_optional_grpc_request_id(&req.context_id, RequestIdParsingErr::Context)?;
     let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-    let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)?;
+    let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(VerifiedDestroyMpcContext {
         context_id,
         domain,
-        extra_data: req.extra_data,
+        extra_data: req.extra_data.clone(),
         signing_schemes,
     })
 }

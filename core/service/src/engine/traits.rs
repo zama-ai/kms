@@ -13,7 +13,7 @@ use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
-use crate::engine::validation::VerifiedDestroyMpcContext;
+use crate::engine::base::VerifiedDestroyMpcContext;
 
 use super::base::KmsFheKeyHandles;
 

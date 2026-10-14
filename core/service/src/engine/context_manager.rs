@@ -9,14 +9,15 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::cryptography::signing::composite::sign_result_entries;
-use crate::engine::base::DSEP_DESTROY_CONTEXT;
+use crate::engine::base::{
+    DSEP_DESTROY_CONTEXT, VerifiedDestroyMpcContext, stored_scheme_signatures_to_proto,
+};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    RequestIdParsingErr, VerifiedDestroyMpcContext, parse_grpc_request_id,
-    parse_optional_grpc_request_id, unpack_destroy_mpc_context_req,
+    RequestIdParsingErr, parse_optional_grpc_request_id, unpack_destroy_mpc_context_req,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,
@@ -32,6 +33,7 @@ use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
+use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
@@ -126,18 +128,52 @@ where
         Ok(false)
     }
 
-    async fn parse_mpc_context_for_destruction(
+    /// The signed confirmation that `verified.context_id` was destroyed together with
+    /// `destroyed_epoch_ids`.
+    fn sign_destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> anyhow::Result<ContextId> {
-        let proto_context_id = request
-            .into_inner()
-            .context_id
-            .ok_or_else(|| anyhow::anyhow!("context_id is required"))?;
-        let context_id =
-            parse_grpc_request_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
-
-        Ok(context_id)
+        verified: &VerifiedDestroyMpcContext,
+        destroyed_epoch_ids: &[EpochId],
+    ) -> Result<DestroyMpcContextResponse, MetricedError> {
+        let context_id = verified.context_id;
+        let identity = self.base_kms.signing_identity().map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        let payload = DestroyMpcContextPayload {
+            destroyed_context_id: Some(context_id.into()),
+            destroyed_epoch_ids: destroyed_epoch_ids.iter().map(|c| c.into()).collect(),
+            extra_data: verified.extra_data.clone(),
+        };
+        let eip712_hash = ContextDestructionVerification::new(
+            &context_id,
+            &destroyed_epoch_ids,
+            verified.extra_data.clone(),
+        )
+        .eip712_signing_hash(&verified.domain);
+        let signatures = sign_result_entries(
+            &identity,
+            &verified.signing_schemes,
+            &DSEP_DESTROY_CONTEXT,
+            &eip712_hash,
+            &payload,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        Ok(DestroyMpcContextResponse {
+            payload: Some((&payload).into()),
+            signatures: stored_scheme_signatures_to_proto(&signatures),
+        })
     }
 
     async fn new_custodian_context(
@@ -967,32 +1003,11 @@ where
         let mut guarded_priv_storage = private_storage.lock().await;
 
         // Ensure we can sign the result before stating to modify the local storage
-        let identity = self
-            .signing_identity()
-            .map_err(|e| MetricedError::new(OP_DESTROY_MPC_CONTEXT, None, e, Code::Internal))?;
-        let payload = DestroyMpcContextPayload {
-            destroyed_context_id: Some(verified.context_id.into()),
-            destroyed_epoch_ids: destroyed_epoch_ids.iter().map(|c| c.into()).collect(),
-            extra_data: verified.extra_data.clone(),
-        };
-        let eip712_hash = ContextDestructionVerification::new(
-            &verified.context_id,
-            &destroyed_epoch_ids,
-            verified.extra_data.clone(),
-        )
-        .eip712_signing_hash(&verified.domain);
-        let signatures = sign_result_entries(
-            &identity,
-            &verified.signing_schemes,
-            &DSEP_DESTROY_CONTEXT,
-            &eip712_hash,
-            &payload,
-        )
-        .iter()
-        .map(|s| s.into())
-        .collect::<Vec<_>>();
+        let response = self
+            .inner
+            .sign_destroy_mpc_context(&verified, &destroyed_epoch_ids)?;
 
-        // Now actually destroyt the context
+        // Now actually destroy the context
         delete_context_from_storage(&mut *guarded_priv_storage, &verified.context_id)
             .await
             .map_err(|e| {
@@ -1024,10 +1039,7 @@ where
             "Destroyed MPC context"
         );
 
-        Ok(Response::new(DestroyMpcContextResponse {
-            payload: Some(payload),
-            signatures,
-        }))
+        Ok(Response::new(response))
     }
 
     async fn new_custodian_context(
@@ -1392,34 +1404,12 @@ where
         let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
 
-        // Ensure we can sign the result before stating to modify the local storage
-        let identity = self
-            .base
-            .signing_identity()
-            .map_err(|e| MetricedError::new(OP_DESTROY_MPC_CONTEXT, None, e, Code::Internal))?;
-        let payload = DestroyMpcContextPayload {
-            destroyed_context_id: Some(verified.context_id.into()),
-            destroyed_epoch_ids: destroyed_epoch_ids.iter().map(|c| c.into()).collect(),
-            extra_data: verified.extra_data.clone(),
-        };
-        let eip712_hash = ContextDestructionVerification::new(
-            &verified.context_id,
-            &destroyed_epoch_ids,
-            verified.extra_data.clone(),
-        )
-        .eip712_signing_hash(&verified.domain);
-        let signatures = sign_result_entries(
-            &identity,
-            &verified.signing_schemes,
-            &DSEP_DESTROY_CONTEXT,
-            &eip712_hash,
-            &payload,
-        )
-        .iter()
-        .map(|s| s.into())
-        .collect::<Vec<_>>();
+        // Sign before deleting the context, so that a signing failure leaves the context in place.
+        let response = self
+            .inner
+            .sign_destroy_mpc_context(&verified, &destroyed_epoch_ids)?;
 
-        // Now actually destroyt the context
+        // Now actually destroy the context
         delete_context_from_storage(&mut *guarded_priv_storage, &verified.context_id)
             .await
             .map_err(|e| {
@@ -1452,10 +1442,7 @@ where
             "Destroyed MPC context"
         );
 
-        Ok(Response::new(DestroyMpcContextResponse {
-            payload: Some(payload),
-            signatures,
-        }))
+        Ok(Response::new(response))
     }
     async fn new_custodian_context(
         &self,
