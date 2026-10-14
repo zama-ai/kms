@@ -33,17 +33,21 @@ use futures_util::{
 use itertools::Itertools;
 use kms_grpc::{
     ContextId, EpochId,
-    kms::v1::{
-        CrsGenResult, DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, KeyGenResult,
-        NewMpcEpochRequest, PreviousEpochInfo, RequestId,
+    kms::{
+        self,
+        v1::{
+            CrsGenResult, DestroyMpcEpochRequest, DestroyMpcEpochResponse, Empty,
+            EpochResultResponse, KeyDigest, KeyGenResult, NewMpcEpochRequest, PreviousEpochInfo,
+            RequestId,
+        },
     },
-    rpc_types::{PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType, optional_protobuf_to_alloy_domain},
     utils::tonic_result::BoxedStatus,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
-use tfhe::Versionize;
+use tfhe::{Versionize, named::Named};
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     config::BatchParams,
@@ -72,12 +76,15 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 use crate::{
-    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
+    cryptography::signing::{
+        SigningSchemeType, composite::sign_result_entries, identity::NodeSigningIdentity,
+    },
     engine::{
         base::{
-            CrsGenMetadata, KeyGenMetadata, compute_info_compressed_keygen_from_digests,
-            compute_info_crs_from_digest, compute_info_standard_keygen_from_digests,
-            retrieve_parameters, stored_scheme_signatures_to_proto,
+            CrsGenMetadata, DSEP_DESTROY_EPOCH, KeyGenMetadata,
+            compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
+            compute_info_standard_keygen_from_digests, retrieve_parameters,
+            stored_scheme_signatures_to_proto,
         },
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
@@ -140,6 +147,42 @@ pub struct EpochData {
 
 impl tfhe::named::Named for EpochData {
     const NAME: &'static str = "kms::EpochData";
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum DestroyMpcEpochPayloadVersions {
+    V0(DestroyMpcEpochPayload),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(DestroyMpcEpochPayloadVersions)]
+pub struct DestroyMpcEpochPayload {
+    pub destroyed_epoch_id: EpochId,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for DestroyMpcEpochPayload {
+    const NAME: &'static str = "DestroyMpcEpochPayload";
+}
+
+impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
+        Ok(DestroyMpcEpochPayload {
+            destroyed_epoch_id: value.destroyed_epoch_id.try_into()?,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl DestroyMpcEpochPayload {
+    pub fn from_inner_request(inner: &kms::v1::DestroyMpcEpochPayload) -> anyhow::Result<Self> {
+        Ok(DestroyMpcEpochPayload {
+            destroyed_epoch_id: inner.destroyed_epoch_id.try_into()?,
+            extra_data: inner.extra_data.clone(),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -1523,7 +1566,7 @@ impl<
         epoch_id: &EpochId,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         if !session_maker.epoch_exists(epoch_id).await {
             return Err(MetricedError::new(
                 OP_DESTROY_EPOCH,
@@ -1564,7 +1607,7 @@ impl<
         })?;
 
         tracing::info!("Epoch {} destroyed successfully", epoch_id);
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     /// Takes the exclusive lifecycle lease of the epoch and then erases it through
@@ -1572,10 +1615,7 @@ impl<
     ///
     /// In case anything goes wrong, an error will be returned and epoch meta-data will remain in the RAM despite being deleted from disk.
     /// This is to allow the caller to retry the operation until it succeeds.
-    async fn destroy_epoch_with_lease(
-        &self,
-        epoch_id: &EpochId,
-    ) -> Result<Response<Empty>, MetricedError> {
+    async fn destroy_epoch_with_lease(&self, epoch_id: &EpochId) -> Result<(), MetricedError> {
         let _destruction_lease = self
             .session_maker
             .try_get_epoch_destruction_lease(epoch_id)
@@ -1842,6 +1882,38 @@ impl<
                 .boxed(),
         })
     }
+
+    async fn destroy_mpc_epochs(
+        &self,
+        epoch_ids: &[EpochId],
+    ) -> Result<Vec<EpochId>, MetricedError> {
+        let mut destroyed_epochs = Vec::new();
+        let mut first_error: Option<MetricedError> = None;
+        for epoch_id in epoch_ids {
+            if !self.session_maker.epoch_exists(epoch_id).await {
+                tracing::info!(
+                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
+                );
+                continue;
+            }
+
+            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
+            // caller learns that some shares may remain and can retry. Later failures are logged via their own
+            // `MetricedError` drop handling.
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+                continue;
+            }
+            destroyed_epochs.push(*epoch_id);
+        }
+
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(destroyed_epochs),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -2014,14 +2086,54 @@ impl<
     async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError> {
         let inner = request.into_inner();
-        let epoch_id: EpochId =
-            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
-                |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument),
-            )?;
+        let parsed_payload = DestroyMpcEpochPayload::from_inner_request(&inner).map_err(|e| {
+            MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument)
+        })?;
+        let some_epoch_id = Some(parsed_payload.destroyed_epoch_id.into());
+        let schemes =
+            SigningSchemeType::resolve_requested(&inner.signing_schemes).map_err(|e| {
+                MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
+            })?;
+        let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_EPOCH,
+                some_epoch_id,
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        // Convert here to avoid risking a failure after actually deleting content
+        let response_payload = parsed_payload.try_into().map_err(|e| {
+            MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
+        })?;
+        let identity = self
+            .base_kms
+            .signing_identity()
+            .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
+        let eip712_hash = EpochDestructionVerification::new(
+            &parsed_payload.destroyed_epoch_id,
+            &parsed_payload.extra_data,
+        )
+        .eip712_signing_hash(&domain);
+        // Ensure we can sign the result before actually destroying, since it is a falliable operation
+        let signatures = sign_result_entries(
+            &identity,
+            &schemes,
+            &DSEP_DESTROY_EPOCH,
+            &eip712_hash,
+            &parsed_payload,
+        )
+        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
+        let response_signatures = signatures.iter().map(|s| s.try_into()?).collect::<Vec<_>>();
+        self.destroy_epoch_with_lease(&parsed_payload.destroyed_epoch_id)
+            .await?;
 
-        self.destroy_epoch_with_lease(&epoch_id).await
+        Ok(Response::new(DestroyMpcEpochResponse {
+            payload: Some(response_payload),
+            signatures: response_signatures,
+        }))
     }
 
     async fn destroy_epochs_for_context(
@@ -2030,38 +2142,6 @@ impl<
     ) -> Result<Vec<EpochId>, MetricedError> {
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
-    }
-
-    async fn destroy_mpc_epochs(
-        &self,
-        epoch_ids: &[EpochId],
-    ) -> Result<Vec<EpochId>, MetricedError> {
-        let mut destroyed_epochs = Vec::new();
-        let mut first_error: Option<MetricedError> = None;
-        for epoch_id in epoch_ids {
-            if !self.session_maker.epoch_exists(epoch_id).await {
-                tracing::info!(
-                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
-                );
-                continue;
-            }
-
-            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
-            // caller learns that some shares may remain and can retry. Later failures are logged via their own
-            // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-                continue;
-            }
-            destroyed_epochs.push(*epoch_id);
-        }
-
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(destroyed_epochs),
-        }
     }
 
     async fn get_epoch_result(
