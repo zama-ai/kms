@@ -1,5 +1,4 @@
 use self::threshold::{ThresholdPartyConf, TlsConf};
-use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -33,8 +32,6 @@ pub struct CoreConfig {
     pub private_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub backup_vault: Option<VaultConfig>,
-    #[validate(nested)]
-    pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
     pub bandwidth_benchmark: Option<BandwidthBenchmarkConfig>,
     #[validate(nested)]
@@ -370,10 +367,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{
-        conf::threshold::{TlsCert, TlsConf, TlsKey},
-        util::rate_limiter::RateLimiterConfig,
-    };
+    use crate::conf::threshold::{TlsCert, TlsConf, TlsKey};
 
     fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
         VaultConfig {
@@ -512,11 +506,6 @@ mod tests {
             })
         );
 
-        assert_eq!(
-            core_config.rate_limiter_conf.unwrap(),
-            RateLimiterConfig::default()
-        );
-
         let core_to_core_net = threshold_config.core_to_core_net;
         assert_eq!(core_to_core_net.message_limit, Some(70));
         assert_eq!(core_to_core_net.multiplier, Some(2.0));
@@ -611,10 +600,6 @@ mod tests {
                 path: PathBuf::from("./keys"),
                 prefix: None,
             })
-        );
-        assert_eq!(
-            core_config.rate_limiter_conf.unwrap(),
-            RateLimiterConfig::default()
         );
         assert!(
             core_config.threshold.is_none(),

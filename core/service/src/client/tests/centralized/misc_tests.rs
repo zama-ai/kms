@@ -21,7 +21,6 @@ cfg_if::cfg_if! {
         use tfhe::FheTypes;
         use kms_grpc::kms::v1::TypedCiphertext;
         use crate::engine::base::derive_request_id;
-        use crate::util::rate_limiter::RateLimiterConfig;
         use crate::engine::centralized::central_kms::tests::default_keys;
         use crate::dummy_domain;
         use crate::client::client_wasm::Client;
@@ -165,15 +164,6 @@ async fn test_central_close_after_drop() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_largecipher() -> Result<()> {
     let keys = default_keys().await;
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 1,
-        user_decrypt: 100,
-        crsgen: 1,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
 
     // Setup with RAM storage and custom rate limiter
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
@@ -190,7 +180,6 @@ async fn test_largecipher() -> Result<()> {
         .await
         .unwrap(),
         None,
-        Some(rate_limiter_conf),
     )
     .await;
 

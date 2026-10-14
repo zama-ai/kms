@@ -380,25 +380,13 @@ async fn test_ratelimiter() -> Result<()> {
     use crate::consts::TEST_PARAM;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
-    use crate::util::rate_limiter::RateLimiterConfig;
     use kms_grpc::kms::v1::FheParameter;
-
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 1,
-        user_decrypt: 1,
-        crsgen: 100, // Consume entire bucket on first request
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("ratelimiter")
         .with_party_count(4)
         .with_threshold(1)
         .with_prss() // Need PRSS for CRS gen
-        .with_rate_limiter(rate_limiter_conf)
         .build()
         .await?;
 
