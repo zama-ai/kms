@@ -1148,11 +1148,16 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     })
 }
 
+/// A validated and parsed `DestroyMpcContext` request.
 #[derive(Debug)]
-pub(crate) struct VerifiedDestroyMpcContext {
+pub struct VerifiedDestroyMpcContext {
+    /// The context to destroy.
     pub context_id: ContextId,
+    /// The EIP-712 domain the confirmation is signed under.
     pub domain: Eip712Domain,
+    /// Extra data bound into the signatures and echoed back in the response.
     pub extra_data: Vec<u8>,
+    /// The schemes to sign the confirmation under.
     pub signing_schemes: Vec<SigningSchemeType>,
 }
 

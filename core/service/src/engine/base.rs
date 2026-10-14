@@ -345,19 +345,6 @@ impl From<&DestroyMpcContextPayload> for kms::v1::DestroyMpcContextPayload {
     }
 }
 
-/// A validated and parsed `DestroyMpcContext` request.
-#[derive(Debug)]
-pub struct VerifiedDestroyMpcContext {
-    /// The context to destroy.
-    pub context_id: ContextId,
-    /// The EIP-712 domain the confirmation is signed under.
-    pub domain: Eip712Domain,
-    /// Extra data bound into the signatures and echoed back in the response.
-    pub extra_data: Vec<u8>,
-    /// The schemes to sign the confirmation under.
-    pub signing_schemes: Vec<SigningSchemeType>,
-}
-
 /// The result payload that every non-ECDSA scheme signs for a preprocessing
 /// result.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

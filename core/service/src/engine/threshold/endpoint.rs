@@ -1,6 +1,3 @@
-use crate::cryptography::signing::composite::sign_composite;
-#[cfg(not(feature = "insecure"))]
-use crate::cryptography::signing::composite::sign_result_entries;
 use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
@@ -10,7 +7,6 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
-use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{metrics::METRICS, metrics_names::*};

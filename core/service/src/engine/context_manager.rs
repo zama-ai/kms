@@ -9,15 +9,14 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::cryptography::signing::composite::sign_result_entries;
-use crate::engine::base::{
-    DSEP_DESTROY_CONTEXT, VerifiedDestroyMpcContext, stored_scheme_signatures_to_proto,
-};
+use crate::engine::base::{DSEP_DESTROY_CONTEXT, stored_scheme_signatures_to_proto};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    RequestIdParsingErr, parse_optional_grpc_request_id, unpack_destroy_mpc_context_req,
+    RequestIdParsingErr, VerifiedDestroyMpcContext, parse_optional_grpc_request_id,
+    unpack_destroy_mpc_context_req,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,

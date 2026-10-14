@@ -9,13 +9,12 @@ use tfhe::FheTypes;
 use tonic::Request;
 use tonic::Response;
 
+use super::base::KmsFheKeyHandles;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
-use crate::engine::base::VerifiedDestroyMpcContext;
-
-use super::base::KmsFheKeyHandles;
+use crate::engine::validation::VerifiedDestroyMpcContext;
 
 pub trait BaseKms {
     fn sign<T: Serialize + AsRef<[u8]>>(

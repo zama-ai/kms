@@ -34,22 +34,17 @@ use futures_util::{
 use itertools::Itertools;
 use kms_grpc::{
     ContextId, EpochId,
-    kms::{
-        self,
-        v1::{
-            CrsGenResult, DestroyMpcEpochRequest, DestroyMpcEpochResponse, Empty,
-            EpochResultResponse, KeyDigest, KeyGenResult, NewMpcEpochRequest, PreviousEpochInfo,
-            RequestId,
-        },
+    kms::v1::{
+        CrsGenResult, DestroyMpcEpochRequest, DestroyMpcEpochResponse, Empty, EpochResultResponse,
+        KeyDigest, KeyGenResult, NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
     rpc_types::{PrivDataType, PubDataType, optional_protobuf_to_alloy_domain},
-    solidity_types::EpochDestructionVerification,
     utils::tonic_result::BoxedStatus,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
-use tfhe::{Versionize, named::Named};
+use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     config::BatchParams,
@@ -83,7 +78,7 @@ use crate::{
     },
     engine::{
         base::{
-            CrsGenMetadata, DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload, KeyGenMetadata,
+            CrsGenMetadata, DSEP_DESTROY_EPOCH, KeyGenMetadata,
             compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             compute_info_standard_keygen_from_digests, retrieve_parameters,
             stored_scheme_signatures_to_proto,
@@ -2060,12 +2055,9 @@ impl<
             .base_kms
             .signing_identity()
             .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
-        let payload = DestroyMpcEpochPayload {
-            destroyed_epoch_id: epoch_id,
-            extra_data: inner.extra_data.clone(),
-        };
-        let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())
-            .eip712_signing_hash(&domain);
+        let payload = destroy_epoch_payload(&epoch_id, &inner.extra_data);
+        let eip712_hash =
+            destroy_epoch_sol_type(&epoch_id, &inner.extra_data).eip712_signing_hash(&domain);
         // Ensure we can sign the result before actually destroying, since it is a fallible operation
         let signatures = sign_result_entries(
             &identity,
