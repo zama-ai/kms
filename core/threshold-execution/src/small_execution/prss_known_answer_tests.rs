@@ -2,6 +2,7 @@
 //!
 //! - OpenSSL outputs for single psi and chi evaluations pin the AES inputs, independently of the Rust encoders.
 //! - Known-good digests of PRSS, PRZS and mask outputs, recorded on main branch at commit `0e427a1d9` (Oct 8 2026).
+//!   Releases v0.13.22 and v0.15.0-1 were checked to produce the same digests.
 //!
 //! Parties running different versions must compute identical shares for the same setup, session, role and counters,
 //! so a changed digest is a protocol change. On failure the test prints the current table.

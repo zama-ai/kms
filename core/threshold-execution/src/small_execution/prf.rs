@@ -4,7 +4,11 @@
 //! PRZS kernels in `prss.rs`, and `phi_range` for masks. `psi` and `chi` evaluate one counter. They serve the
 //! checks, rings with several AES blocks per coefficient, and tests.
 //!
-//! Request entry points check counter ranges once with `check_counter_range`. The PRFs assert the same bounds.
+//! Counter and bound checks:
+//! - The request entry points in `prss.rs` (`prss_next_vec`, `przs_next_vec`, `mask_next_vec`, `prss_check` and
+//!   `przs_check`) validate the whole counter range once, with `check_counter_range`. On failure they return an error
+//!   and leave the session counters unchanged.
+//! - The PRFs in this module do not return errors. They `assert!` the same bounds and panic on violation.
 
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::{
