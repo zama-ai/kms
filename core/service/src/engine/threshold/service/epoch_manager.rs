@@ -39,6 +39,7 @@ use kms_grpc::{
         KeyDigest, KeyGenResult, NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
     rpc_types::{PrivDataType, PubDataType, optional_protobuf_to_alloy_domain},
+    solidity_types::EpochDestructionVerification,
     utils::tonic_result::BoxedStatus,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
@@ -2055,9 +2056,13 @@ impl<
             .base_kms
             .signing_identity()
             .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
-        let payload = destroy_epoch_payload(&epoch_id, &inner.extra_data);
+        let payload = engine::DestroyMpcEpochPayload {
+            destroyed_epoch_id: epoch_id.clone(),
+            extra_data: inner.extra_data.clone(),
+        };
         let eip712_hash =
-            destroy_epoch_sol_type(&epoch_id, &inner.extra_data).eip712_signing_hash(&domain);
+            EpochDestructionVerification::new(epoch_id.clone(), inner.extra_data.clone())
+                .eip712_signing_hash(&domain);
         // Ensure we can sign the result before actually destroying, since it is a fallible operation
         let signatures = sign_result_entries(
             &identity,
