@@ -696,12 +696,36 @@ message NewMpcContextRequest {
 // Request to destroy the MPC context.
 // Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
+  // The context to destroy
   RequestId context_id = 1;
+
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 2;
+
+  // Extra meta data used in the signature
+  bytes extra_data = 3;
+
+  // The signature schemes to include in the response `signatures` field.
+  repeated SigningSchemeType signing_schemes = 4;
 }
 
 message DestroyMpcContextResponse {
+  DestroyMpcContextPayload payload = 1;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 2;
+}
+
+message DestroyMpcContextPayload {
+    // The ID of the context that was destroyed
+  RequestId destroyed_context_id = 1;
+
   // The ID of the epochs destroyed as part of the context.
-  repeated RequestId epoch_ids = 1;
+  repeated RequestId destroyed_epoch_ids = 2;
+  
+  // Extra meta data used in the signature
+  bytes extra_data = 3;
 }
 
 message NewCustodianContextRequest {
@@ -958,7 +982,34 @@ message EpochResultResponse {
 }
 
 message DestroyMpcEpochRequest {
+  // The epoch ID to destroy
   RequestId epoch_id = 1;
+  
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 2;
+
+  // Extra meta data used in the signature
+  bytes extra_data = 3;
+
+  // The signature schemes to include in the `signatures` field
+  repeated SigningSchemeType signing_schemes = 4;
+}
+
+message DestroyMpcEpochResponse {
+  // The payload signed as part of the epoch destruction
+  DestroyMpcEpochPayload payload = 1;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 2;
+}
+
+message DestroyMpcEpochPayload {
+  // The ID of the epoch destroyed
+  RequestId destroyed_epoch_id = 1;
+  
+  // Extra meta data used in the signature
+  bytes extra_data = 2;
 }
 
 enum BandwidthKind {

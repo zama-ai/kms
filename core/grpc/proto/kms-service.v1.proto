@@ -405,6 +405,7 @@ service CoreServiceEndpoint {
   // * `context_id` - Context ID of the MPC context to destroy.
   //
   // # Returns
+  // TODO update
   // * `epoch_ids` - The epochs associated with the context that was destroyed alongside the context. May be empty for a
   //   context that has no epochs or a repeated call.
   //
@@ -455,7 +456,10 @@ service CoreServiceEndpoint {
   //
   // # Conditions
   // *  No `KeyGen`, `CrsGen`, `AbortKeyGen`, or `AbortCrsGen` call may be executed concurrently!
-  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
+  //
+  // # Returns
+  // * TODO
+  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.DestroyMpcEpochResponse);
 
   // Constructs a new custodian context.
   //

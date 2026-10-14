@@ -60,7 +60,7 @@ pub trait ContextManager {
     async fn destroy_mpc_context(
         &self,
         request: Request<DestroyMpcContextRequest>,
-    ) -> Result<(), MetricedError>; // Observe that this needs to be linked to a call to destroy associated epochs, hence the method does not return a Response type
+    ) -> Result<Response<DestroyMpcContextResponse>, MetricedError>;
 
     async fn new_custodian_context(
         &self,
@@ -87,10 +87,10 @@ pub trait EpochManager {
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError>;
 
-    async fn destroy_mpc_epoch(
+    async fn get_epoch_result(
         &self,
-        request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, MetricedError>;
+        request: Request<RequestId>,
+    ) -> Result<Response<EpochResultResponse>, MetricedError>;
 
     /// Destroy every epoch in `epoch_ids` as part of a context destruction.
     ///
@@ -98,10 +98,10 @@ pub trait EpochManager {
     /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
     /// fails; the first deletion error is returned only after all attempts, so a failed run can be
     /// retried until no shares remain.
-    async fn destroy_mpc_epochs(
+    async fn destroy_mpc_epoch(
         &self,
-        epoch_ids: &[EpochId],
-    ) -> Result<Vec<EpochId>, MetricedError>;
+        request: Request<DestroyMpcEpochRequest>,
+    ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError>;
 
     /// Destroy every epoch associated with `context_id`.
     /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
@@ -109,11 +109,6 @@ pub trait EpochManager {
         &self,
         context_id: &ContextId,
     ) -> Result<Vec<EpochId>, MetricedError>;
-
-    async fn get_epoch_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<EpochResultResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]

@@ -1,3 +1,6 @@
+use crate::cryptography::signing::composite::sign_composite;
+#[cfg(not(feature = "insecure"))]
+use crate::cryptography::signing::composite::sign_result_entries;
 use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
@@ -284,13 +287,18 @@ impl_endpoint! {
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
             let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
 
+            let signatures = sign_result_entries(...);
+
             // Every epoch is now gone, so it is safe to remove the context.
             self.context_manager
                 .destroy_mpc_context(Request::new(inner))
                 .await
                 .map_err(Status::from)?;
             Ok(Response::new(DestroyMpcContextResponse {
-                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+                destroyed_context_id: context_id.into(),
+                destroyed_epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+                extra_data: inner.extra_data,
+                signatures,
             }))
         }
 
@@ -318,7 +326,7 @@ impl_endpoint! {
         async fn destroy_mpc_epoch(
             &self,
             request: Request<DestroyMpcEpochRequest>,
-        ) -> Result<Response<Empty>, Status> {
+        ) -> Result<Response<DestroyMpcEpochResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_EPOCH);
             Ok(self.epoch_manager.destroy_mpc_epoch(request).await?)
         }

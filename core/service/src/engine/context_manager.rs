@@ -32,11 +32,11 @@ use crate::{
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
+use kms_grpc::kms::v1::{DestroyMpcContextResponse, Empty};
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -889,7 +889,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<(), MetricedError> {
+    ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -978,7 +978,12 @@ where
             "Destroyed MPC context"
         );
 
-        Ok(())
+        Ok(Response::new(DestroyMpcContextResponse {
+            destroyed_context_id: todo!(),
+            destroyed_epoch_ids: todo!(),
+            extra_data: todo!(),
+            signatures: todo!(),
+        }))
     }
 
     async fn new_custodian_context(

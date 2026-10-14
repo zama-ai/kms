@@ -77,6 +77,8 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 /// Domain separator for public decryption operations
 pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+/// Domain separator for destroying an epoch
+pub const DSEP_DESTROY_EPOCH: DomainSep = *b"DSTY_EPO";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
