@@ -133,7 +133,10 @@ $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> --signing-sch
 Before running the KMS servers it is important to ensure a proper setup of the backup system.
 Currently multiple different modes of backup are available for the KMS. However, only a single mode can be used at any given time.
 Backup modes are set up through the TOML configuration files (or environment variables) which are used by Docker to boot the KMS servers.
-The backups contain _all_ data stored in the private storage and will be automatically updated as new material is constructed. A failed backup does not make the operation that constructed the material fail. The node logs the error and counts it in the `kms_backup_errors_total` metric. The next backup update adds the missing entries. A backup update runs after private material is written and at boot. A node does not boot if it cannot update its backup vault. `new-custodian-context` also fails if the backup cannot be computed and stored.
+The backups contain _all_ data stored in the private storage and will be automatically updated as new material is constructed. A backup update runs after private material is written and at boot. If a backup update fails, the node logs the error and counts it in the `kms_backup_errors_total` metric. The next backup update adds the missing entries. A failed backup does not make key generation, CRS generation, MPC context creation or a reshare fail. Boot, `new-custodian-context` and the PRSS initialization of a new epoch fail if their backup fails.
+
+TODO([kms-internal#3257](https://github.com/zama-ai/kms-internal/issues/3257)): Every operation that triggers a backup will fail if the backup fails. Update this section when the code does so.
+
 Furthermore, the backup system will auto-update at every boot. Thus changing the mode, or the filesystem of the backup, in a configuration file will be reflected at the next reboot. Thus it is easy to update the mode of backup without having to manually move existing backups.
 Backups are only meant to be used in case of an emergency. More specifically when a KMS node loses access to the private storage.
 
