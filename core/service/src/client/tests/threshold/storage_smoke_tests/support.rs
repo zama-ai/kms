@@ -156,6 +156,7 @@ async fn destroy_epoch(
             let result = client
                 .destroy_mpc_epoch(DestroyMpcEpochRequest {
                     epoch_id: Some(epoch_id.into()),
+                    extra_data: Vec::new(),
                 })
                 .await;
             (party_id, result)

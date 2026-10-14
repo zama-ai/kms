@@ -1,14 +1,18 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, crsgen::check_crsgen_signatures,
-    keygen::check_uncompressed_keyset_signatures, s3_operations::fetch_public_elements,
+    dummy_domain, keygen::check_uncompressed_keyset_signatures,
+    s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
-    kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
+    kms::v1::{
+        DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo,
+        SigningSchemeType,
+    },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::PubDataType,
+    rpc_types::{PubDataType, alloy_to_protobuf_domain},
 };
 use kms_lib::client::{
     client_wasm::Client,
@@ -505,6 +509,9 @@ pub(crate) async fn do_destroy_mpc_epoch(
             cur_client
                 .destroy_mpc_epoch(DestroyMpcEpochRequest {
                     epoch_id: Some(epoch_cloned),
+                    domain: todo!(),
+                    extra_data: Vec::new(),
+                    signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()], // todo sghould come from cli arguments
                 })
                 .await
         });
