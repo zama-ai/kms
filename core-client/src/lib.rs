@@ -2993,8 +2993,13 @@ pub async fn execute_cmd(
             )]
         }
         CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id }) => {
-            do_destroy_mpc_epoch(&core_endpoints_req, &cc_conf, &signing_schemes, epoch_id)
-                .await?;
+            do_destroy_mpc_epoch(
+                &internal_client.expect("DestroyMpcEpoch requires a KMS client"),
+                &core_endpoints_req,
+                &cc_conf,
+                epoch_id,
+            )
+            .await?;
             vec![(
                 Some((*epoch_id).into()),
                 "epoch destruction done".to_string(),
