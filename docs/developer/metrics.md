@@ -76,7 +76,6 @@ Standard grpc error types are defined as constants:
 
 ```rust
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
-pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
 pub const ERR_CANCELLED: &str = "cancelled";
 pub const ERR_INVALID_ARGUMENT: &str = "invalid_argument";
 pub const ERR_ABORTED: &str = "aborted";

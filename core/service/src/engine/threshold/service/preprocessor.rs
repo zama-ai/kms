@@ -880,34 +880,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let mut rng = AesRng::seed_from_u64(22);
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::ResourceExhausted
-        );
-    }
-
-    #[tokio::test]
     async fn internal() {
         let mut rng = AesRng::seed_from_u64(22);
         // NOTE we're not using the dummy producer factory here

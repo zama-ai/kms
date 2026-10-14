@@ -76,7 +76,6 @@ pub const CENTRAL_TAG: &str = "central";
 
 // gRPC errors
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
-pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
 pub const ERR_CANCELLED: &str = "cancelled";
 pub const ERR_INVALID_ARGUMENT: &str = "invalid_argument";
 pub const ERR_ABORTED: &str = "aborted";
@@ -98,7 +97,6 @@ pub const OP_TYPE_CT_PROOF: &str = "ct_proof";
 pub fn map_tonic_code_to_metric_err_tag(code: tonic::Code) -> &'static str {
     match code {
         tonic::Code::FailedPrecondition => ERR_FAILED_PRECONDITION,
-        tonic::Code::ResourceExhausted => ERR_RESOURCE_EXHAUSTED,
         tonic::Code::Cancelled => ERR_CANCELLED,
         tonic::Code::InvalidArgument => ERR_INVALID_ARGUMENT,
         tonic::Code::Aborted => ERR_ABORTED,

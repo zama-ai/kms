@@ -2506,10 +2506,6 @@ mod tests {
     fn rpc_diagnostics_track_status_in_flight_and_post_quorum_work() {
         let diagnostics = RpcDiagnostics::default();
         diagnostics.record::<()>(RpcPhase::Submit, &Ok(()));
-        diagnostics.record::<()>(
-            RpcPhase::Submit,
-            &Err(tonic::Status::resource_exhausted("busy")),
-        );
         diagnostics.record::<()>(RpcPhase::Result, &Ok(()));
 
         let first = diagnostics.start(RpcPhase::Result);
@@ -2526,7 +2522,6 @@ mod tests {
 
         let snapshot = diagnostics.snapshot();
         assert_eq!(snapshot.submit_status["ok"], 1);
-        assert_eq!(snapshot.submit_status["resource_exhausted"], 1);
         assert_eq!(snapshot.result_status["ok"], 1);
         assert_eq!(snapshot.outstanding_result_rpcs, 1);
         assert_eq!(snapshot.result_peak_in_flight, 2);

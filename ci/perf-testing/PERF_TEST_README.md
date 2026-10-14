@@ -193,7 +193,6 @@ The statuses normally relevant to these tests are:
 
 - `ok` — the RPC succeeded.
 - `unavailable` — commonly an expected result poll whose result is still pending.
-- `resource_exhausted` — KMS admission capacity or rate limiting was exhausted.
 - `not_found` — the requested result is absent, for example after cache eviction;
   unexpected during a healthy run.
 - Any other status is uncommon and should be investigated with the client and
