@@ -13,6 +13,7 @@ use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
+use crate::engine::validation::VerifiedDestroyMpcContext;
 
 use super::base::KmsFheKeyHandles;
 
@@ -57,9 +58,18 @@ pub trait ContextManager {
         request: Request<NewMpcContextRequest>,
     ) -> Result<Response<Empty>, MetricedError>;
 
+    /// Check a destroy request without changing anything: parse it, resolve the signing schemes and
+    /// domain, check the node can sign them, and check the context exists and is not the last one.
+    async fn validate_destroy_mpc_context(
+        &self,
+        request: &DestroyMpcContextRequest,
+    ) -> Result<VerifiedDestroyMpcContext, MetricedError>;
+
+    /// Destroy an MPC context.
     async fn destroy_mpc_context(
         &self,
-        request: Request<DestroyMpcContextRequest>,
+        verified: VerifiedDestroyMpcContext,
+        destroyed_epochs: Vec<EpochId>,
     ) -> Result<Response<DestroyMpcContextResponse>, MetricedError>;
 
     async fn new_custodian_context(

@@ -19,7 +19,8 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
+    CrsGenRequest, DestroyMpcContextRequest, KeyGenPreprocRequest, KeyGenRequest,
+    NewMpcEpochRequest, PreviousEpochInfo,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{KeyId, RequestId};
@@ -1144,6 +1145,28 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         extra_data: req.extra_data,
         signing_schemes: SigningSchemeType::resolve_requested(&req.signing_schemes)
             .map_err(|e| anyhow::anyhow!("{e}"))?,
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct VerifiedDestroyMpcContext {
+    pub context_id: ContextId,
+    pub domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
+    pub signing_schemes: Vec<SigningSchemeType>,
+}
+
+pub(crate) fn unpack_destroy_mpc_context_req(
+    req: &DestroyMpcContextRequest,
+) -> anyhow::Result<VerifiedDestroyMpcContext> {
+    let context_id = parse_mpc_context_for_destruction(&req.context_id)?;
+    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)?;
+    Ok(VerifiedDestroyMpcContext {
+        context_id,
+        domain,
+        extra_data: req.extra_data,
+        signing_schemes,
     })
 }
 
