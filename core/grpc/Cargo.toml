@@ -43,6 +43,9 @@ tfhe-versionable.workspace = true
 tracing = { workspace = true, features = ["log"] }
 zeroize.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
 [dev-dependencies]
 hex.workspace = true
 

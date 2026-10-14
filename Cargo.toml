@@ -150,6 +150,7 @@ clap = { version = "=4.6.6", features = ["derive"] }  # CLI argument parsing - L
 ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
 config = "=0.15.25"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.36"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
+console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
 dashmap = "=6.2.1"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
