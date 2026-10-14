@@ -7,9 +7,9 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
-    self, CustodianRecoveryRequest, DestroyMpcContextResponse, Empty, HealthStatusResponse,
-    KeyGenPreprocRequest, KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType,
-    OperatorPublicKey,
+    self, CustodianRecoveryRequest, DestroyMpcContextResponse, DestroyMpcEpochResponse, Empty,
+    HealthStatusResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
@@ -453,7 +453,7 @@ impl<
     async fn destroy_mpc_epoch(
         &self,
         _request: Request<v1::DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<DestroyMpcEpochResponse>, Status> {
         unimplemented!("MPC epochs are not supported in centralized KMS");
     }
 

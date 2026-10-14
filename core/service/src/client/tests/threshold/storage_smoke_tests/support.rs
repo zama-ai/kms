@@ -6,6 +6,7 @@ use crate::consts::{
     DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::dummy_domain;
+use crate::testing::helpers::domain_to_msg;
 use crate::vault::storage::{
     StorageType, file::FileStorage, store_versioned_at_request_and_epoch_id,
     store_versioned_at_request_id, test_support::EntryDigest, test_support::digest_entry,
@@ -153,7 +154,7 @@ async fn destroy_epoch(
 ) -> Vec<(u32, Result<Response<DestroyMpcEpochResponse>, Status>)> {
     let request = DestroyMpcEpochRequest {
         epoch_id: Some(epoch_id.into()),
-        domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+        domain: Some(domain_to_msg(&dummy_domain())),
         extra_data: Vec::new(),
         signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()],
     };

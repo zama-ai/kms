@@ -83,7 +83,7 @@ use crate::{
     },
     engine::{
         base::{
-            CrsGenMetadata, DSEP_DESTROY_EPOCH, KeyGenMetadata,
+            CrsGenMetadata, DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload, KeyGenMetadata,
             compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             compute_info_standard_keygen_from_digests, retrieve_parameters,
             stored_scheme_signatures_to_proto,
@@ -149,47 +149,6 @@ pub struct EpochData {
 
 impl tfhe::named::Named for EpochData {
     const NAME: &'static str = "kms::EpochData";
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum DestroyMpcEpochPayloadVersions {
-    V0(DestroyMpcEpochPayload),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(DestroyMpcEpochPayloadVersions)]
-pub struct DestroyMpcEpochPayload {
-    pub destroyed_epoch_id: EpochId,
-    pub extra_data: Vec<u8>,
-}
-
-impl Named for DestroyMpcEpochPayload {
-    const NAME: &'static str = "DestroyMpcEpochPayload";
-}
-
-impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
-    type Error = anyhow::Error;
-
-    fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
-        let destroyed_epoch_id = value
-            .destroyed_epoch_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("missing destroyed_epoch_id"))?
-            .try_into()?;
-        Ok(DestroyMpcEpochPayload {
-            destroyed_epoch_id,
-            extra_data: value.extra_data,
-        })
-    }
-}
-
-impl From<&DestroyMpcEpochPayload> for kms::v1::DestroyMpcEpochPayload {
-    fn from(value: &DestroyMpcEpochPayload) -> Self {
-        kms::v1::DestroyMpcEpochPayload {
-            destroyed_epoch_id: Some(value.destroyed_epoch_id.into()),
-            extra_data: value.extra_data.clone(),
-        }
-    }
 }
 
 #[derive(Debug)]

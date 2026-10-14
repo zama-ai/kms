@@ -19,7 +19,9 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
+use kms_grpc::EpochId;
 use kms_grpc::RequestId;
+use kms_grpc::kms;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
     TypedSignature, UserDecryptionResponsePayload,
@@ -247,6 +249,47 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     digest.truncate(ID_LENGTH);
     let res_hex = hex::encode(digest);
     Ok(RequestId::from_str(&res_hex)?)
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum DestroyMpcEpochPayloadVersions {
+    V0(DestroyMpcEpochPayload),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(DestroyMpcEpochPayloadVersions)]
+pub struct DestroyMpcEpochPayload {
+    pub destroyed_epoch_id: EpochId,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for DestroyMpcEpochPayload {
+    const NAME: &'static str = "DestroyMpcEpochPayload";
+}
+
+impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
+        let destroyed_epoch_id = value
+            .destroyed_epoch_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing destroyed_epoch_id"))?
+            .try_into()?;
+        Ok(DestroyMpcEpochPayload {
+            destroyed_epoch_id,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl From<&DestroyMpcEpochPayload> for kms::v1::DestroyMpcEpochPayload {
+    fn from(value: &DestroyMpcEpochPayload) -> Self {
+        kms::v1::DestroyMpcEpochPayload {
+            destroyed_epoch_id: Some(value.destroyed_epoch_id.into()),
+            extra_data: value.extra_data.clone(),
+        }
+    }
 }
 
 /// The result payload that every non-ECDSA scheme signs for a preprocessing
