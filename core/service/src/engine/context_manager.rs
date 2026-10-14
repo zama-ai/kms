@@ -1358,54 +1358,23 @@ where
                 tonic::Code::InvalidArgument,
             )
         })?;
-        // Validate the context exists
-        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
-        let mut guarded_priv_storage = private_storage.lock().await;
-        let context_exists = guarded_priv_storage
-            .data_exists(
-                &unpacked_req.context_id.into(),
-                &PrivDataType::ContextInfo.to_string(),
-            )
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(unpacked_req.context_id.into()),
-                    anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        if !context_exists {
+        // The session maker holds the contexts sessions are run in, so it decides which contexts exist.
+        let context_id = unpacked_req.context_id;
+        if !self.session_maker.context_exists(&context_id).await {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,
-                Some(unpacked_req.context_id.into()),
-                anyhow::anyhow!(
-                    "Context with id {} does not exist in storage",
-                    unpacked_req.context_id
-                ),
+                Some(context_id.into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
                 tonic::Code::NotFound,
             ));
         }
 
-        // Ensure we are not removing the last context
-        let context_info_ids = guarded_priv_storage
-            .all_data_ids(&PrivDataType::ContextInfo.to_string())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(unpacked_req.context_id.into()),
-                    anyhow::anyhow!("Failed to list contexts from storage: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        if context_info_ids.len() < 2 {
+        if self.session_maker.context_count().await < 2 {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,
-                Some(unpacked_req.context_id.into()),
+                Some(context_id.into()),
                 anyhow::anyhow!(
-                    "Cannot destroy MPC context with id {} since it is the only one left in storage",
-                    unpacked_req.context_id
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left"
                 ),
                 tonic::Code::FailedPrecondition,
             ));
@@ -1463,18 +1432,19 @@ where
             })?;
         drop(guarded_priv_storage);
 
-        // Also remove it from the cache
-        let remaining_contexts = {
-            let mut write_guard = self.cache.write().await;
-            let was_present = (*write_guard).remove(&verified.context_id);
-            if !was_present {
-                tracing::warn!(
-                    "deleted a centralized context with ID {} that was not present",
-                    verified.context_id,
+        // Also remove it from the session maker, so no further sessions can be run in it
+        self.session_maker
+            .remove_context(&verified.context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(verified.context_id.into()),
+                    e,
+                    tonic::Code::Internal,
                 )
-            }
-            write_guard.len()
-        };
+            })?;
+        let remaining_contexts = self.session_maker.context_count().await;
 
         tracing::info!(
             context_id = %verified.context_id,
