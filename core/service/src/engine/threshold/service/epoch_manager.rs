@@ -26,6 +26,7 @@ use algebra::{
     structure_traits::Ring,
 };
 use alloy_dyn_abi::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use futures_util::{
     FutureExt, TryFutureExt,
     future::{BoxFuture, join_all},
@@ -42,6 +43,7 @@ use kms_grpc::{
         },
     },
     rpc_types::{PrivDataType, PubDataType, optional_protobuf_to_alloy_domain},
+    solidity_types::EpochDestructionVerification,
     utils::tonic_result::BoxedStatus,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
@@ -72,7 +74,7 @@ use threshold_types::network::NetworkMode;
 use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
-use tonic::{Request, Response};
+use tonic::{Code, Request, Response};
 use tracing::Instrument;
 
 use crate::{
@@ -169,18 +171,14 @@ impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
+        let destroyed_epoch_id = value
+            .destroyed_epoch_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing destroyed_epoch_id"))?
+            .try_into()?;
         Ok(DestroyMpcEpochPayload {
-            destroyed_epoch_id: value.destroyed_epoch_id.try_into()?,
+            destroyed_epoch_id,
             extra_data: value.extra_data,
-        })
-    }
-}
-
-impl DestroyMpcEpochPayload {
-    pub fn from_inner_request(inner: &kms::v1::DestroyMpcEpochPayload) -> anyhow::Result<Self> {
-        Ok(DestroyMpcEpochPayload {
-            destroyed_epoch_id: inner.destroyed_epoch_id.try_into()?,
-            extra_data: inner.extra_data.clone(),
         })
     }
 }
@@ -2088,51 +2086,45 @@ impl<
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError> {
         let inner = request.into_inner();
-        let parsed_payload = DestroyMpcEpochPayload::from_inner_request(&inner).map_err(|e| {
-            MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument)
-        })?;
-        let some_epoch_id = Some(parsed_payload.destroyed_epoch_id.into());
+        let epoch_id: EpochId =
+            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
+                |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument),
+            )?;
+        let some_epoch_id = Some(epoch_id.into());
         let schemes =
             SigningSchemeType::resolve_requested(&inner.signing_schemes).map_err(|e| {
                 MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
             })?;
         let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
-            MetricedError::new(
-                OP_DESTROY_EPOCH,
-                some_epoch_id,
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-        // Convert here to avoid risking a failure after actually deleting content
-        let response_payload = parsed_payload.try_into().map_err(|e| {
             MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
         })?;
         let identity = self
             .base_kms
             .signing_identity()
             .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
-        let eip712_hash = EpochDestructionVerification::new(
-            &parsed_payload.destroyed_epoch_id,
-            &parsed_payload.extra_data,
-        )
-        .eip712_signing_hash(&domain);
+        let payload = DestroyMpcEpochPayload {
+            destroyed_epoch_id: epoch_id,
+            extra_data: inner.extra_data,
+        };
+        let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())
+            .eip712_signing_hash(&domain);
         // Ensure we can sign the result before actually destroying, since it is a falliable operation
         let signatures = sign_result_entries(
             &identity,
             &schemes,
             &DSEP_DESTROY_EPOCH,
             &eip712_hash,
-            &parsed_payload,
+            &payload,
         )
-        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
-        let response_signatures = signatures.iter().map(|s| s.try_into()?).collect::<Vec<_>>();
-        self.destroy_epoch_with_lease(&parsed_payload.destroyed_epoch_id)
-            .await?;
+        .map_err(|e| {
+            MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, tonic::Code::Internal)
+        })?;
+
+        self.destroy_epoch_with_lease(&epoch_id).await?;
 
         Ok(Response::new(DestroyMpcEpochResponse {
-            payload: Some(response_payload),
-            signatures: response_signatures,
+            payload: Some((&payload).into()),
+            signatures: stored_scheme_signatures_to_proto(&signatures),
         }))
     }
 
