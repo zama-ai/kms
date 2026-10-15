@@ -252,6 +252,7 @@ Dispatch inputs:
 | Input | Meaning |
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
+| `old_image_repository` | Repositories for the old side: `legacy` (default; pre-split repositories, releases up to `v0.14.x`) or `insecure`. The baseline runs insecure key-gen, which production builds lack, so a `v0.15+` old side needs `insecure` |
 | `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
 | `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold`. Set it to test with a custom core-client build, e.g. one with more logs to debug an upgrade problem |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
