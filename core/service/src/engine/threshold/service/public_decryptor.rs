@@ -28,7 +28,7 @@ use observability::{
 use tfhe::FheTypes;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, PreparedSnsKeys,
         SecureOnlineNoiseFloodDecryption, SmallOfflineNoiseFloodSession,
         decrypt_using_noiseflooding, secure_decrypt_using_bitdec,
     },
@@ -82,6 +82,7 @@ pub trait NoiseFloodDecryptor: Send + Sync {
         noiseflood_session: &mut Self::Prep,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+        prepared_sns_keys: Arc<PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(T, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -102,6 +103,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
         noiseflood_session: &mut Self::Prep,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+        prepared_sns_keys: Arc<PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(T, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -113,7 +115,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
             Self::Prep,
             SecureOnlineNoiseFloodDecryption,
             T,
-        >(noiseflood_session, ct, secret_key_share)
+        >(noiseflood_session, ct, secret_key_share, prepared_sns_keys)
         .await
     }
 }
@@ -198,7 +200,13 @@ impl<
                     Ok((server_key, ck))
                 })?;
 
-                Dec::decrypt(&mut noiseflood_session, ct, keys.private_keys.clone()).await
+                Dec::decrypt(
+                    &mut noiseflood_session,
+                    ct,
+                    keys.private_keys.clone(),
+                    keys.prepared_sns_keys(),
+                )
+                .await
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = session_maker
@@ -772,6 +780,7 @@ mod tests {
             _noiseflood_session: &mut Self::Prep,
             _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+            _prepared_sns_keys: Arc<PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
         ) -> anyhow::Result<(T, Duration)>
         where
             T: tfhe::integer::block_decomposition::Recomposable

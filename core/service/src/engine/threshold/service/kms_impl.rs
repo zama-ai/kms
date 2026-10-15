@@ -34,6 +34,7 @@ use tfhe::{
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
+    endpoints::decryption::PreparedSnsKeys,
     endpoints::keygen::SecureOnlineDistributedKeyGen128,
     online::preprocessing::{
         DKGPreprocessing, create_memory_factory,
@@ -234,6 +235,12 @@ pub struct ThresholdFheKeys {
     #[versionize(skip)]
     #[serde(skip)]
     key_cache: OnceLock<UncompressedKeys>,
+    /// The SnS key shares prepared for the partial decryption inner product (see [`PreparedSnsKeys`]), built on
+    /// first use from `private_keys` and shared with every decryption of this key set. A derived cache: not
+    /// stored.
+    #[versionize(skip)]
+    #[serde(skip)]
+    prepared_sns_keys: OnceLock<Arc<PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
 }
 
 /// V2: Unified key storage supporting both compressed and uncompressed keys.
@@ -315,6 +322,7 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV2 {
             public_material: self.public_material,
             meta_data: self.meta_data,
             key_cache: OnceLock::new(),
+            prepared_sns_keys: OnceLock::new(),
         })
     }
 }
@@ -330,7 +338,18 @@ impl ThresholdFheKeys {
             public_material,
             meta_data,
             key_cache: OnceLock::new(),
+            prepared_sns_keys: OnceLock::new(),
         }
+    }
+
+    /// The SnS key shares of `private_keys` prepared for partial decryption, built on first use.
+    pub fn prepared_sns_keys(
+        &self,
+    ) -> Arc<PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>> {
+        Arc::clone(
+            self.prepared_sns_keys
+                .get_or_init(|| Arc::new(PreparedSnsKeys::prepare(&self.private_keys))),
+        )
     }
 
     fn expand_keys(&self) -> &UncompressedKeys {
@@ -1207,6 +1226,7 @@ mod tests {
                     vec![],
                 ),
                 key_cache: OnceLock::new(),
+                prepared_sns_keys: OnceLock::new(),
             };
 
             (priv_key_set, pub_key_set)

@@ -35,11 +35,10 @@ use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertextAndKeys, partial_decrypt_using_noiseflooding,
-        secure_partial_decrypt_using_bitdec,
+        DecryptionMode, LowLevelCiphertextAndKeys, PreparedSnsKeys,
+        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
     },
     small_execution::prss::SecurePRSSState,
-    tfhe_internals::private_keysets::PrivateKeySet,
 };
 use threshold_types::role::Role;
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -101,7 +100,7 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
         prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
         my_role: Role,
         ct: LowLevelCiphertextAndKeys,
-        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        prepared_sns_keys: &PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
@@ -118,7 +117,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
         prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
         my_role: Role,
         ct: LowLevelCiphertextAndKeys,
-        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        prepared_sns_keys: &PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
@@ -126,7 +125,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
     where
         ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
-        partial_decrypt_using_noiseflooding(prss_state, my_role, ct, secret_key_share).await
+        partial_decrypt_using_noiseflooding(prss_state, my_role, ct, prepared_sns_keys).await
     }
 }
 
@@ -260,8 +259,9 @@ impl<
                     let partial_decrypt_started_at = std::time::Instant::now();
                     let partial_decrypt_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
+                    let prepared_sns_keys = keys.prepared_sns_keys();
                     let pdec =
-                        Dec::partial_decrypt(&mut prss_state, my_role, ct, &keys.private_keys)
+                        Dec::partial_decrypt(&mut prss_state, my_role, ct, &prepared_sns_keys)
                             .await;
                     let partial_decrypt_duration = partial_decrypt_started_at.elapsed();
                     drop(partial_decrypt_timer);
@@ -719,7 +719,7 @@ mod tests {
             _prss_state: &mut SecurePRSSState<ResiduePolyF4Z128>,
             _my_role: Role,
             _ct: LowLevelCiphertextAndKeys,
-            _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+            _prepared_sns_keys: &PreparedSnsKeys<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
             Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
             u32,

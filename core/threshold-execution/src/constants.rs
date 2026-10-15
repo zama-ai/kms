@@ -69,6 +69,23 @@ cfg_if::cfg_if! {
         // still parallelize some tasks.
         // NOTE: These are starting points and should be benchmarked and adjusted as needed.
 
+        /// Local partial decryption of noise-flooding decryption: requests of at most this many packed blocks
+        /// run inline on the calling thread (a block is ~6 µs of IFMA work; waking the pool and warming
+        /// the key table in another core's cache costs more than that — on a 16+-core EC2 instance eight
+        /// blocks took 69 µs over four tasks against 44 µs inline, sixteen blocks were even).
+        /// Env: `MPC_PDEC_INLINE_MAX_BLOCKS` (default 8).
+        pub(crate) static PDEC_INLINE_MAX_BLOCKS: std::sync::LazyLock<usize> =
+            std::sync::LazyLock::new(|| env_usize("MPC_PDEC_INLINE_MAX_BLOCKS", 8));
+        /// Blocks per Rayon task of the local partial decryption above that size: small tasks keep the
+        /// critical path short once the pool is awake (64 blocks: 82 µs in pairs on the same instance).
+        /// Env: `MPC_PDEC_PAR_MIN_BLOCKS` (default 2).
+        /// Panics on initialization if the configured size is zero.
+        pub(crate) static PDEC_PAR_MIN_BLOCKS: std::sync::LazyLock<usize> =
+            std::sync::LazyLock::new(|| {
+                let blocks = env_usize("MPC_PDEC_PAR_MIN_BLOCKS", 2);
+                assert!(blocks > 0, "MPC_PDEC_PAR_MIN_BLOCKS must be at least 1");
+                blocks
+            });
         /// TUniform noise assembly: very cheap per item (~`bound + 2` ring ops).
         /// Env: `MPC_DKG_TUNIFORM_PAR_MIN_CHUNK` (default 4096).
         pub(crate) static TUNIFORM_GEN_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =

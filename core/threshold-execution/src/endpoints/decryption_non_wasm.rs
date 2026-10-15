@@ -2,6 +2,7 @@ use crate::config::BatchParams;
 use crate::constants::B_SWITCH_SQUASH;
 use crate::constants::LOG_B_SWITCH_SQUASH;
 use crate::constants::STATSEC;
+use crate::constants::{PDEC_INLINE_MAX_BLOCKS, PDEC_PAR_MIN_BLOCKS};
 use crate::endpoints::decryption::RadixOrBoolCiphertext;
 use crate::endpoints::decryption::SnsDecryptionKeyType;
 use crate::endpoints::decryption::SnsRadixOrBoolCiphertext;
@@ -23,6 +24,7 @@ use crate::runtime::sessions::small_session::SmallSessionHandles;
 use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::small_execution::prss::PRSSPrimitives;
+use crate::tfhe_internals::lwe_key::LweSecretKeyShare;
 use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum;
 #[cfg(any(test, feature = "testing"))]
@@ -30,6 +32,7 @@ use crate::{runtime::test_runtime::DistributedTestRuntime, small_execution::prf:
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
+    lincomb::LinearCombinator,
     sharing::share::Share,
     structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Zero},
 };
@@ -39,6 +42,7 @@ use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::cell::RefCell;
 #[cfg(any(test, feature = "testing"))]
 use std::collections::HashMap;
@@ -252,6 +256,7 @@ pub trait OnlineNoiseFloodDecryption<const EXTENSION_DEGREE: usize> {
         session: &mut S,
         preprocessing: Arc<Mutex<P>>,
         keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+        prepared_sns_keys: Arc<PreparedSnsKeys<EXTENSION_DEGREE>>,
         ciphertext: Arc<SnsRadixOrBoolCiphertext>,
         ddec_key_type: SnsDecryptionKeyType,
     ) -> anyhow::Result<T>
@@ -269,7 +274,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 {
     #[instrument(
         name = "TFHE.Threshold-Dec-1",
-        skip(session, preprocessing, keyshares, ciphertext)
+        skip(session, preprocessing, keyshares, prepared_sns_keys, ciphertext)
         fields(sid=?session.session_id(),batch_size=?ciphertext.len())
     )]
     async fn decrypt<
@@ -280,6 +285,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
         session: &mut S,
         preprocessing: Arc<Mutex<P>>,
         keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+        prepared_sns_keys: Arc<PreparedSnsKeys<EXTENSION_DEGREE>>,
         ciphertext: Arc<SnsRadixOrBoolCiphertext>,
         ddec_key_type: SnsDecryptionKeyType,
     ) -> anyhow::Result<T>
@@ -288,11 +294,21 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
         ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
     {
-        let shared_masked_ptxts = {
+        // Take the masks under the lock, then run the local decryption on the compute pool: it holds no lock
+        // and borrows nothing from this task.
+        let masks = {
             let mut preparation = preprocessing
                 .lock()
                 .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
-            masked_partial_decrypt(&keyshares, &ciphertext, ddec_key_type, &mut *preparation)?
+            preparation.next_mask_vec(ciphertext.len())?
+        };
+        let prepared_key = prepared_sns_keys.key(ddec_key_type)?;
+        let shared_masked_ptxts = {
+            let ciphertext = Arc::clone(&ciphertext);
+            spawn_compute_bound(move || {
+                masked_partial_decrypt_with(&prepared_key, &ciphertext, masks)
+            })
+            .await??
         };
 
         let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, &keyshares).await?;
@@ -334,6 +350,7 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>
     noiseflood_session: &mut P,
     ct: LowLevelCiphertextAndKeys,
     secret_key_share: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    prepared_sns_keys: Arc<PreparedSnsKeys<EXTENSION_DEGREE>>,
 ) -> anyhow::Result<(T, Duration)>
 where
     P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
@@ -357,6 +374,7 @@ where
         session,
         Arc::new(Mutex::new(preprocessing)),
         secret_key_share,
+        prepared_sns_keys,
         Arc::new(ct_large),
         ddec_key_type,
     )
@@ -383,8 +401,9 @@ where
 /// * `my_role` - This party's role, which selects its PRSS masks.
 /// * `ct` - The ciphertext to decrypt. Its `Small` variant carries the switch-and-squash keys;
 ///   the `Big*` variants are already noise-squashed and carry no keys.
-/// * `secret_key_share` - This party's secret key share. `BigCompressed` uses its SnS compression
-///   key share; the other variants use its SnS key share.
+/// * `prepared_sns_keys` - This party's SnS key shares prepared for the inner product (see
+///   [`PreparedSnsKeys`]). `BigCompressed` uses the SnS compression key share; the other variants the SnS
+///   key share.
 ///
 /// # Returns
 /// * A tuple with one masked partial decryption per packed block and the packing factor.
@@ -404,7 +423,7 @@ pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, 
     prss: &mut P,
     my_role: Role,
     ct: LowLevelCiphertextAndKeys,
-    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    prepared_sns_keys: &PreparedSnsKeys<EXTENSION_DEGREE>,
 ) -> anyhow::Result<(Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>, u32)>
 where
     P: PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -412,14 +431,128 @@ where
 {
     let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
     let packing_factor = ct_large.packing_factor();
-    let mut preparation = InMemoryNoiseFloodPreprocessing::default();
-    preparation.append_masks(
-        prss.mask_next_vec(my_role, B_SWITCH_SQUASH, ct_large.len())
-            .await?,
-    );
+    let masks = prss
+        .mask_next_vec(my_role, B_SWITCH_SQUASH, ct_large.len())
+        .await?;
+    let prepared_key = prepared_sns_keys.key(ddec_key_type)?;
+    // The local decryption runs on the compute pool, like the mask derivation above.
     let shared_masked_ptxts =
-        masked_partial_decrypt(secret_key_share, &ct_large, ddec_key_type, &mut preparation)?;
+        spawn_compute_bound(move || masked_partial_decrypt_with(&prepared_key, &ct_large, masks))
+            .await??;
     Ok((shared_masked_ptxts, packing_factor as u32))
+}
+
+/// The SnS key shares of a [`PrivateKeySet`] prepared for the partial decryption inner product `<a, s>` (see
+/// [`LinearCombinator`]: the share's coefficients as 52-bit limbs, read by the AVX-512 IFMA kernel without any
+/// per-request work). Built once per key set by its owner, next to the key set, and passed to the decryption
+/// entry points; `prepare` takes about 50 µs and 100 KB per thousand key coefficients. Both shares live behind
+/// an `Arc`, so cloning is cheap and the compute pool can hold them.
+#[derive(Clone, Debug)]
+pub struct PreparedSnsKeys<const EXTENSION_DEGREE: usize> {
+    sns: Option<Arc<LinearCombinator<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
+    sns_compression: Option<Arc<LinearCombinator<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
+}
+
+impl<const EXTENSION_DEGREE: usize> PreparedSnsKeys<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    /// Prepares whichever SnS key shares `key_set` holds.
+    pub fn prepare(key_set: &PrivateKeySet<EXTENSION_DEGREE>) -> Self {
+        let prepare = |key: &LweSecretKeyShare<Z128, EXTENSION_DEGREE>| {
+            Arc::new(LinearCombinator::for_scalars(key.data_iter()))
+        };
+        Self {
+            sns: key_set
+                .glwe_secret_key_share_sns_as_lwe
+                .as_ref()
+                .map(prepare),
+            sns_compression: key_set
+                .glwe_sns_compression_key_as_lwe
+                .as_ref()
+                .map(prepare),
+        }
+    }
+
+    /// The prepared share selected by `ddec_key_type`.
+    pub fn key(
+        &self,
+        ddec_key_type: SnsDecryptionKeyType,
+    ) -> anyhow::Result<Arc<LinearCombinator<ResiduePoly<Z128, EXTENSION_DEGREE>>>> {
+        let key = match ddec_key_type {
+            SnsDecryptionKeyType::SnsKey => self.sns.as_ref().ok_or_else(|| {
+                anyhow_error_and_log("Missing the switch and squash secret key".to_string())
+            })?,
+            SnsDecryptionKeyType::SnsCompressionKey => {
+                self.sns_compression.as_ref().ok_or_else(|| {
+                    anyhow_error_and_log(
+                        "Missing the switch and squash compression secret key".to_string(),
+                    )
+                })?
+            }
+        };
+        Ok(Arc::clone(key))
+    }
+}
+
+/// `b - <a, s>` for every block of `ct_large` with the prepared key share `s`, plus one mask per block, in block
+/// order. Each block is one [`LinearCombinator::dot`] (eight key coefficients per lane, accumulators in
+/// registers for the whole inner product); blocks are independent and, above
+/// [`PDEC_INLINE_MAX_BLOCKS`] of them, run in parallel on the Rayon pool in tasks of
+/// [`PDEC_PAR_MIN_BLOCKS`].
+pub fn masked_partial_decrypt_with<const EXTENSION_DEGREE: usize>(
+    prepared_key: &LinearCombinator<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    ct_large: &SnsRadixOrBoolCiphertext,
+    masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+) -> anyhow::Result<Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    let blocks: Vec<&SquashedNoiseCiphertext> = ct_large.packed_blocks().collect();
+    if masks.len() != blocks.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Expected {} masks for {} ciphertext blocks, got {}",
+            blocks.len(),
+            blocks.len(),
+            masks.len()
+        )));
+    }
+    for block in &blocks {
+        let (mask, _) = block.lwe_ciphertext().get_mask_and_body();
+        if mask.as_ref().len() != prepared_key.len() {
+            return Err(anyhow_error_and_log(format!(
+                "Ciphertext mask has {} coefficients but the key share has {}",
+                mask.as_ref().len(),
+                prepared_key.len()
+            )));
+        }
+    }
+    // The capacity is exact, so the vector never reallocates and leaves no unwiped copy.
+    let mut shared_masked_ptxts = Zeroizing::new(Vec::with_capacity(blocks.len()));
+    let partial_decrypt = |block: &&SquashedNoiseCiphertext| {
+        let (mask, body) = block.lwe_ciphertext().get_mask_and_body();
+        ResiduePoly::from_scalar(Wrapping(*body.data)) - prepared_key.dot(mask.as_ref())
+    };
+    let partial_decryptions: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>> =
+        if blocks.len() <= *PDEC_INLINE_MAX_BLOCKS {
+            blocks.iter().map(partial_decrypt).collect()
+        } else {
+            blocks
+                .par_iter()
+                .with_min_len(*PDEC_PAR_MIN_BLOCKS)
+                .map(partial_decrypt)
+                .collect()
+        };
+    for (partial_decrypt, mask) in partial_decryptions.into_iter().zip(masks) {
+        // TODO(https://github.com/zama-ai/kms-internal/issues/3159)
+        // The unmasked `partial_decrypt` is not wiped. `ResiduePoly` is `Copy`,
+        // so the compiler can leave copies of it on the stack. Also zeroize
+        // conflicts with versioning. We need to resolve
+        // github.com/zama-ai/kms-internal/issues/3176 (removing Copy) and
+        // github.com/zama-ai/tfhe-rs-internal/issues/1535 (versioning conflict with zeroize).
+        shared_masked_ptxts.push(partial_decrypt + mask);
+    }
+    Ok(shared_masked_ptxts)
 }
 
 /// Brings a ciphertext to the large (noise-squashed) form that partial decryption works on.
@@ -449,9 +582,10 @@ async fn switch_and_squash_for_partial_decrypt(
 }
 
 /// Locally partially decrypts every packed block of `ct_large` and masks it with the next
-/// noise-flooding mask from `preparation`.
-fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
-    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+/// noise-flooding masks from `preparation`, synchronously on the calling thread. The request entry points
+/// take the masks first and run [`masked_partial_decrypt_with`] on the compute pool instead.
+pub fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
+    prepared_sns_keys: &PreparedSnsKeys<EXTENSION_DEGREE>,
     ct_large: &SnsRadixOrBoolCiphertext,
     ddec_key_type: SnsDecryptionKeyType,
     preparation: &mut impl NoiseFloodPreprocessing<EXTENSION_DEGREE>,
@@ -459,38 +593,9 @@ fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
-    #[cfg(test)]
-    {
-        match ct_large {
-            SnsRadixOrBoolCiphertext::Radix(_) => {
-                let msg_bits = secret_key_share.parameters.message_modulus_log();
-                let carry_bits = secret_key_share.parameters.carry_modulus_log();
-                assert_eq!(
-                    ct_large.packing_factor() as u32,
-                    (msg_bits + carry_bits) / msg_bits
-                );
-            }
-            SnsRadixOrBoolCiphertext::Bool(_) => {}
-        }
-    }
-
-    let len = ct_large.len();
-    // The capacity is exact, so the vector never reallocates and leaves no unwiped copy.
-    let mut shared_masked_ptxts = Zeroizing::new(Vec::with_capacity(len));
-    for current_ct_block in ct_large.packed_blocks() {
-        // TODO(https://github.com/zama-ai/kms-internal/issues/3159)
-        // The unmasked `partial_decrypt` is not wiped. `ResiduePoly` is `Copy`,
-        // so the compiler can leave copies of it on the stack. Also zeroize
-        // conflicts with versioning. We need to resolve
-        // github.com/zama-ai/kms-internal/issues/3176 (removing Copy) and
-        // github.com/zama-ai/tfhe-rs-internal/issues/1535 (versioning conflict with zeroize).
-        let partial_decrypt =
-            partial_decrypt128(secret_key_share, current_ct_block, ddec_key_type)?;
-        let res = partial_decrypt + preparation.next_mask()?;
-
-        shared_masked_ptxts.push(res);
-    }
-    Ok(shared_masked_ptxts)
+    let masks = preparation.next_mask_vec(ct_large.len())?;
+    let prepared_key = prepared_sns_keys.key(ddec_key_type)?;
+    masked_partial_decrypt_with(&prepared_key, ct_large, masks)
 }
 
 /// Decrypts a ciphertext using bit decomposition.
@@ -1055,8 +1160,17 @@ pub async fn run_decryption_noiseflood_64<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
 {
-    let res = O::decrypt::<_, _, u64>(session, preprocessing, keyshares, ciphertext, ddec_key_type)
-        .await?;
+    // Test and experiment helper: the key share is prepared per call rather than kept with the key set.
+    let prepared_sns_keys = Arc::new(PreparedSnsKeys::prepare(&keyshares));
+    let res = O::decrypt::<_, _, u64>(
+        session,
+        preprocessing,
+        keyshares,
+        prepared_sns_keys,
+        ciphertext,
+        ddec_key_type,
+    )
+    .await?;
     Ok(Wrapping(res))
 }
 
@@ -1223,44 +1337,23 @@ where
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption
 pub fn partial_decrypt128<const EXTENSION_DEGREE: usize>(
-    sk_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    prepared_sns_keys: &PreparedSnsKeys<EXTENSION_DEGREE>,
     ct: &SquashedNoiseCiphertext,
     ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let sns_secret_key = match ddec_key_type {
-        SnsDecryptionKeyType::SnsKey => match &sk_share.glwe_secret_key_share_sns_as_lwe {
-            Some(key) => key.data_iter(),
-            None => {
-                return Err(anyhow_error_and_log(
-                    "Missing the switch and squash secret key".to_string(),
-                ));
-            }
-        },
-        SnsDecryptionKeyType::SnsCompressionKey => {
-            match &sk_share.glwe_sns_compression_key_as_lwe {
-                Some(key) => key.data_iter(),
-                None => {
-                    return Err(anyhow_error_and_log(
-                        "Missing the switch and squash compression secret key".to_string(),
-                    ));
-                }
-            }
-        }
-    };
-    let ct = ct.lwe_ciphertext();
-    let (mask, body) = ct.get_mask_and_body();
-
-    let a_time_s = (sns_secret_key.zip_eq(mask.as_ref())).fold(
-        ResiduePoly::<Z128, EXTENSION_DEGREE>::ZERO,
-        |acc, (sk, m)| {
-            let tmp =
-                <ResiduePoly<Z128, EXTENSION_DEGREE> as Mul<Z128>>::mul(sk, Wrapping::<u128>(*m));
-            acc + tmp
-        },
-    );
+    let prepared_key = prepared_sns_keys.key(ddec_key_type)?;
+    let (mask, body) = ct.lwe_ciphertext().get_mask_and_body();
+    if mask.as_ref().len() != prepared_key.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Ciphertext mask has {} coefficients but the key share has {}",
+            mask.as_ref().len(),
+            prepared_key.len()
+        )));
+    }
+    let a_time_s = prepared_key.dot(mask.as_ref());
     // b-<a, s>
     let res = ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
@@ -1327,11 +1420,117 @@ where
     Ok(res)
 }
 
+/// Synthetic material for tests and benchmarks of the local partial decryption: random key shares and
+/// squashed-noise ciphertexts of a chosen dimension, without any key generation.
+#[cfg(any(test, feature = "testing"))]
+pub mod synthetic {
+    use super::*;
+    use crate::tfhe_internals::lwe_key::LweSecretKeyShare;
+    use crate::tfhe_internals::parameters::DKGParams;
+    use rand::Rng;
+    use tfhe::core_crypto::prelude::{CiphertextModulus, LweCiphertextOwned};
+    use tfhe::integer::ciphertext::SquashedNoiseRadixCiphertext;
+
+    /// A dummy key set whose SnS key shares (both kinds) are `lwe_dimension` random ring elements.
+    pub fn private_key_set<const EXTENSION_DEGREE: usize>(
+        rng: &mut impl Rng,
+        params: DKGParams,
+        lwe_dimension: usize,
+    ) -> PrivateKeySet<EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        let mut key_set = PrivateKeySet::<EXTENSION_DEGREE>::init_dummy(params);
+        let random_share = |rng: &mut dyn rand::RngCore| {
+            let data = (0..lwe_dimension)
+                .map(|_| {
+                    Share::new(
+                        Role::indexed_from_one(1),
+                        ResiduePoly::<Z128, EXTENSION_DEGREE>::from_u128_iter(
+                            (0..EXTENSION_DEGREE).map(|_| rng.r#gen::<u128>()),
+                        ),
+                    )
+                })
+                .collect();
+            LweSecretKeyShare { data }
+        };
+        key_set.glwe_secret_key_share_sns_as_lwe = Some(random_share(rng));
+        key_set.glwe_sns_compression_key_as_lwe = Some(random_share(rng));
+        key_set
+    }
+
+    /// A radix ciphertext of `blocks` random packed blocks over an LWE dimension of `lwe_dimension`.
+    pub fn squashed_radix_ciphertext(
+        rng: &mut impl Rng,
+        blocks: usize,
+        lwe_dimension: usize,
+    ) -> SnsRadixOrBoolCiphertext {
+        // The constructors of tfhe-rs's squashed-noise ciphertexts are crate-private, so the blocks are built
+        // through their (plain, positional) serde encoding from a struct with the same fields.
+        #[derive(serde::Serialize)]
+        struct Block {
+            ct: LweCiphertextOwned<u128>,
+            degree: u64,
+            message_modulus: u64,
+            carry_modulus: u64,
+        }
+        #[derive(serde::Serialize)]
+        struct Radix {
+            packed_blocks: Vec<Block>,
+            original_block_count: usize,
+        }
+        let packed_blocks = (0..blocks)
+            .map(|_| Block {
+                ct: LweCiphertextOwned::from_container(
+                    (0..lwe_dimension + 1)
+                        .map(|_| rng.r#gen::<u128>())
+                        .collect(),
+                    CiphertextModulus::new_native(),
+                ),
+                degree: 3,
+                message_modulus: 4,
+                carry_modulus: 4,
+            })
+            .collect();
+        let bytes = bc2wrap::serialize(&Radix {
+            packed_blocks,
+            original_block_count: 2 * blocks,
+        })
+        .expect("serializing a synthetic ciphertext");
+        SnsRadixOrBoolCiphertext::Radix(
+            bc2wrap::deserialize_slice::<SquashedNoiseRadixCiphertext>(&bytes)
+                .expect("deserializing a synthetic ciphertext"),
+        )
+    }
+
+    /// The reference `b - <a, s>` of one block: the plain fold with the ring's scalar multiplication.
+    pub fn partial_decrypt128_fold<const EXTENSION_DEGREE: usize>(
+        key_share: &LweSecretKeyShare<Z128, EXTENSION_DEGREE>,
+        block: &SquashedNoiseCiphertext,
+    ) -> ResiduePoly<Z128, EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        let (mask, body) = block.lwe_ciphertext().get_mask_and_body();
+        let a_time_s = key_share.data_iter().zip_eq(mask.as_ref()).fold(
+            ResiduePoly::<Z128, EXTENSION_DEGREE>::ZERO,
+            |acc, (sk, m)| {
+                acc + <ResiduePoly<Z128, EXTENSION_DEGREE> as Mul<Z128>>::mul(
+                    sk,
+                    Wrapping::<u128>(*m),
+                )
+            },
+        );
+        ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(*body.data)) - a_time_s
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
-        masked_partial_decrypt, partial_decrypt_using_noiseflooding,
+        LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, PreparedSnsKeys,
+        SmallOfflineNoiseFloodSession, masked_partial_decrypt, masked_partial_decrypt_with,
+        partial_decrypt_using_noiseflooding, partial_decrypt128, synthetic,
         threshold_decrypt64_maybe_malicious,
     };
     use crate::endpoints::decryption::{
@@ -1353,6 +1552,7 @@ mod tests {
         runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         tests::ensure_test_data_setup,
     };
+    use algebra::PRSSConversions;
     use algebra::{
         base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
@@ -1362,7 +1562,7 @@ mod tests {
         },
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
     use std::{collections::HashSet, sync::Arc};
     use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
@@ -1560,6 +1760,7 @@ mod tests {
         )
         .unwrap();
         let key_share = &key_shares[role.one_based() - 1];
+        let prepared_sns_keys = PreparedSnsKeys::prepare(key_share);
 
         let ct = FheUint8::encrypt(3_u8, &keyset.client_key);
         let server_key = &keyset.public_keys.server_key;
@@ -1608,7 +1809,7 @@ mod tests {
                 .await
                 .unwrap();
             let via_session =
-                masked_partial_decrypt(key_share, &large_ct, key_type, &mut prep).unwrap();
+                masked_partial_decrypt(&prepared_sns_keys, &large_ct, key_type, &mut prep).unwrap();
             let packing_via_session = large_ct.packing_factor() as u32;
 
             let mut prss_state = prss_setup
@@ -1621,7 +1822,7 @@ mod tests {
                 }
             };
             let (via_prss, packing_via_prss) =
-                partial_decrypt_using_noiseflooding(&mut prss_state, role, ct, key_share)
+                partial_decrypt_using_noiseflooding(&mut prss_state, role, ct, &prepared_sns_keys)
                     .await
                     .unwrap();
 
@@ -1652,6 +1853,74 @@ mod tests {
             partial_decrypt_both_ways(threshold_types::session_id::SessionId::from(2), key_type);
         assert_eq!(via_session.1, via_prss.1);
         assert_ne!(via_session.0, via_prss.0);
+    }
+
+    /// The batched partial decryption (one `dot` per block with eight key coefficients per lane, blocks on
+    /// Rayon) equals the plain fold per block, for both backends, both key types, and key dimensions that are
+    /// not multiples of the lane count.
+    #[test]
+    fn batched_partial_decrypt_matches_fold() {
+        use crate::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+        use algebra::lincomb::{Backend, LinearCombinator, Operand};
+        let mut rng = AesRng::seed_from_u64(7);
+        for lwe_dimension in [4096, 1000, 7] {
+            let key_set =
+                synthetic::private_key_set::<4>(&mut rng, PARAMS_TEST_BK_SNS, lwe_dimension);
+            for key_type in [
+                SnsDecryptionKeyType::SnsKey,
+                SnsDecryptionKeyType::SnsCompressionKey,
+            ] {
+                let key_share = match key_type {
+                    SnsDecryptionKeyType::SnsKey => &key_set.glwe_secret_key_share_sns_as_lwe,
+                    SnsDecryptionKeyType::SnsCompressionKey => {
+                        &key_set.glwe_sns_compression_key_as_lwe
+                    }
+                }
+                .as_ref()
+                .unwrap();
+                let prepared = PreparedSnsKeys::prepare(&key_set);
+                let cached = prepared.key(key_type).unwrap();
+                assert!(Arc::ptr_eq(&cached, &prepared.key(key_type).unwrap()));
+                let forced_scalar = LinearCombinator::with_backend(
+                    key_share.data_iter(),
+                    Operand::Scalar,
+                    Backend::Scalar,
+                );
+                for blocks in [1, 2, 7, 8, 9, 15, 16, 17, 24, 33] {
+                    let ct = synthetic::squashed_radix_ciphertext(&mut rng, blocks, lwe_dimension);
+                    let masks: Vec<ResiduePoly<Z128, 4>> = (0..blocks)
+                        .map(|_| ResiduePoly::from_u128_iter((0..4).map(|_| rng.r#gen::<u128>())))
+                        .collect();
+                    let expected: Vec<ResiduePoly<Z128, 4>> = ct
+                        .packed_blocks()
+                        .zip(&masks)
+                        .map(|(block, mask)| {
+                            synthetic::partial_decrypt128_fold(key_share, block) + *mask
+                        })
+                        .collect();
+                    for prepared in [&*cached, &forced_scalar] {
+                        let got =
+                            masked_partial_decrypt_with(prepared, &ct, masks.clone()).unwrap();
+                        assert_eq!(
+                            *got,
+                            expected,
+                            "{blocks} blocks, dimension {lwe_dimension}, {:?}",
+                            prepared.backend()
+                        );
+                    }
+                    for block in ct.packed_blocks() {
+                        assert_eq!(
+                            partial_decrypt128(&prepared, block, key_type).unwrap(),
+                            synthetic::partial_decrypt128_fold(key_share, block)
+                        );
+                    }
+                    assert!(
+                        masked_partial_decrypt_with(&cached, &ct, masks[..blocks - 1].to_vec())
+                            .is_err()
+                    );
+                }
+            }
+        }
     }
 
     async fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>(

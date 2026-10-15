@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     endpoints::decryption::{
-        OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
+        OnlineNoiseFloodDecryption, PreparedSnsKeys, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
     },
     online::preprocessing::NoiseFloodPreprocessing,
     runtime::sessions::base_session::BaseSessionHandles,
@@ -28,6 +28,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
         _session: &mut S,
         _preprocessing: Arc<Mutex<P>>,
         _keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+        _prepared_sns_keys: Arc<PreparedSnsKeys<EXTENSION_DEGREE>>,
         _ciphertext: Arc<SnsRadixOrBoolCiphertext>,
         _ddec_key_type: SnsDecryptionKeyType,
     ) -> anyhow::Result<T>

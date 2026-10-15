@@ -82,3 +82,8 @@ malicious_strategies = ["testing"]
 name = "prss_lincomb"
 harness = false
 required-features = ["testing"]
+
+[[bench]]
+name = "ddec_lincomb"
+harness = false
+required-features = ["testing"]
