@@ -13,12 +13,12 @@ use crate::{
     runtime::sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
     small_execution::prf::{
         CHI_COUNTER_BITS, PHI_COUNTER_BITS, PHI_MAX_BOUND, PSI_COUNTER_BITS, PhiAes,
-        accumulate_chi_counters, accumulate_psi_counters, check_counter_range, chi, phi_range, psi,
-        psi_group_blocks,
+        accumulate_chi_counters, accumulate_psi_counters, check_counter_range, chi,
+        chi_group_blocks, phi_group_residues, phi_range, psi, psi_group_blocks,
     },
 };
 use algebra::{
-    lincomb::{Lanes, LinearCombinator},
+    lincomb::{Backend, Lanes, LinearCombinator},
     matrix::{VdmMatrix, compute_powers_list},
     poly::Poly,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
@@ -380,9 +380,20 @@ pub(crate) struct SessionPrfs<Z> {
     /// (strength-reduced multiplication matrices, lane-batched evaluation), in subset order.
     psi_lincomb: LinearCombinator<Z>,
     phi: Box<[PhiAes]>,
+    /// `f_A(alpha_i)` prepared for the PRSS-Mask combination `sum_A f_A(alpha_i) * phi_A`, whose operands are
+    /// scalars, in subset order.
+    mask_lincomb: LinearCombinator<Z>,
+    /// `sum_A f_A(alpha_i)`: the mask kernel combines the unsigned residues `phi + bd` and subtracts
+    /// `2 * bd * sum_A f_A(alpha_i)` once per value.
+    f_a_sum: Z,
     chi: Box<[ChiAes]>,
     /// This party's powers of alpha, starting with alpha^0.
     alpha_powers: Box<[Z]>,
+    /// `f_A(alpha_i) * alpha_i^j` for `j = 1..=przs_threshold`, in `(subset, j)` order, prepared for the PRZS
+    /// combination `sum_A sum_j f_A(alpha_i) * alpha_i^j * chi_A_j`.
+    przs_lincomb: LinearCombinator<Z>,
+    /// The threshold `przs_lincomb` was prepared for: the epoch's, which is the one every request uses.
+    przs_threshold: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -716,6 +727,29 @@ fn compute_prss_group<Z: Ring + PRSSConversions, const DEGREE: usize>(
     outputs.copy_from_slice(&acc.finish());
 }
 
+/// One full group of `PRF_COUNTER_GROUP` counters of PRZS at the prepared threshold: per subset key and
+/// threshold index `j`, one AES call fills the block buffer and the prepared [`LinearCombinator`] adds
+/// `f_A(alpha_i) * alpha_i^j` times the 16 PRF outputs to its running sums. `DEGREE` is
+/// `Z::EXTENSION_DEGREE`; the caller checked that every counter is below `2^CHI_COUNTER_BITS`.
+fn compute_przs_group<Z: Ring + PRSSConversions, const DEGREE: usize>(
+    prfs: &SessionPrfs<Z>,
+    ctr: u128,
+    outputs: &mut [Z],
+) {
+    let mut acc = prfs.przs_lincomb.accumulator::<PRF_COUNTER_GROUP>();
+    let mut blocks = [[[0u8; 16]; PRF_COUNTER_GROUP]; DEGREE];
+    for chi_key in prfs.chi.iter() {
+        for j in 1..=prfs.przs_threshold {
+            chi_group_blocks::<Z, PRF_COUNTER_GROUP, DEGREE>(chi_key, ctr, j as u8, &mut blocks);
+            acc.push(&Lanes::from_le_blocks(
+                blocks.as_flattened().as_flattened(),
+                DEGREE,
+            ));
+        }
+    }
+    outputs.copy_from_slice(&acc.finish());
+}
+
 /// Computes PRZS values without submitting a task or advancing session counters, like [`compute_prss`].
 /// The caller checks that all `amount` counters are below `2^CHI_COUNTER_BITS` when `threshold` is nonzero.
 fn compute_przs<Z: Ring + PRSSConversions>(
@@ -729,15 +763,16 @@ fn compute_przs<Z: Ring + PRSSConversions>(
     if threshold == 0 {
         return vec![Z::ZERO; amount];
     }
-    // Per-set invariants, computed once instead of per element: the products
-    // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
-    // Store one row per subset in a single allocation, in the same order as chi.
-    let mut fa_alpha = Vec::with_capacity(prfs.f_a_at_role.len() * threshold);
-    for f_a_at_role in &prfs.f_a_at_role {
-        for alpha_j in &prfs.alpha_powers[1..threshold + 1] {
-            fa_alpha.push(*f_a_at_role * *alpha_j);
-        }
-    }
+    // The epoch's threshold has its constants prepared in the session; any other threshold (tests) computes
+    // them here, in the same `(subset, j)` order as the chi keys.
+    let prepared = threshold == prfs.przs_threshold;
+    let computed;
+    let fa_alpha: &[Z] = if prepared {
+        prfs.przs_lincomb.constants()
+    } else {
+        computed = przs_coefficients(&prfs.f_a_at_role, &prfs.alpha_powers, threshold);
+        &computed
+    };
 
     let mut shares = vec![Z::ZERO; amount];
     let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(PRF_COUNTER_GROUP);
@@ -747,8 +782,17 @@ fn compute_przs<Z: Ring + PRSSConversions>(
         .enumerate()
         .for_each(|(group, outputs)| {
             let ctr = przs_ctr + (group * PRF_COUNTER_GROUP) as u128;
+            if prepared && outputs.len() == PRF_COUNTER_GROUP {
+                // Hot path: a full group at the prepared threshold goes through the prepared linear
+                // combination, as in compute_prss.
+                match (Z::EXTENSION_DEGREE, Z::NUM_BITS_STAT_SEC_BASE_RING) {
+                    (4, 64 | 128) => return compute_przs_group::<Z, 4>(prfs, ctr, outputs),
+                    (8, 64 | 128) => return compute_przs_group::<Z, 8>(prfs, ctr, outputs),
+                    _ => {}
+                }
+            }
             let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
-            // Hot loop: one AES call per (subset key, threshold index) covers the whole group.
+            // One AES call per (subset key, threshold index) covers the whole group.
             for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold)) {
                 for (j_idx, &fa_alpha_j) in coefficients.iter().enumerate() {
                     let j = (j_idx + 1) as u8;
@@ -791,17 +835,34 @@ fn compute_mask<Z: Ring + PRSSConversions>(
         .enumerate()
         .for_each(|(chunk_idx, out)| {
             let lo = chunk_idx * chunk;
-            // Hot loop: one AES call per subset key covers the chunk's counter range.
+            let (in_full_groups, tail) = if prfs.mask_lincomb.backend() == Backend::Avx512Ifma {
+                // Hot path: full groups of MASK_GROUP values through the prepared linear combination; the
+                // IFMA backend only exists for rings modulo 2^128, where the unsigned formulation below is exact.
+                let full = out.len() / MASK_GROUP * MASK_GROUP;
+                let (groups, tail) = out.split_at_mut(full);
+                for (group, outputs) in groups.chunks_exact_mut(MASK_GROUP).enumerate() {
+                    let start = mask_ctr + 2 * (lo + group * MASK_GROUP) as u128;
+                    compute_mask_group(prfs, start, sampling_bound, outputs);
+                }
+                (full, tail)
+            } else {
+                (0, out)
+            };
+            if tail.is_empty() {
+                return;
+            }
+            let lo = lo + in_full_groups;
+            // One AES call per subset key covers the tail's counter range.
             for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
                 // Element `idx` consumes two distinct phi counters, matching one scalar mask_next().
                 let phi_vals = phi_range(
                     phi_aes,
                     mask_ctr + 2 * lo as u128,
-                    2 * out.len(),
+                    2 * tail.len(),
                     sampling_bound,
                 );
 
-                for (j, out_elem) in out.iter_mut().enumerate() {
+                for (j, out_elem) in tail.iter_mut().enumerate() {
                     let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
                     // mul_by_i128 scales by the signed scalar via from_i128, so it is a
                     // cheap coefficient scale for ResiduePoly yet still correct for base
@@ -814,6 +875,39 @@ fn compute_mask<Z: Ring + PRSSConversions>(
             }
         });
     res
+}
+
+/// Values per group of the PRSS-Mask kernel: two phi counters per value, so 64 AES blocks per subset key (one
+/// x86 VAES-512 batch) and 32 lanes for the linear combination.
+const MASK_GROUP: usize = 32;
+
+/// One full group of `MASK_GROUP` mask values starting at phi counter `start`. The residues
+/// `u = phi + bd` are unsigned, so per value the kernel combines `u_0 + u_1` (below `2^128` since `bd <= 2^126`)
+/// and subtracts the constant `2 * bd * sum_A f_A(alpha_i)` at the end:
+/// `sum_A f_A * (phi_0 + phi_1) = sum_A f_A * (u_0 + u_1) - 2 * bd * sum_A f_A`, exactly, modulo `2^128`.
+/// The caller checked that every counter is below `2^PHI_COUNTER_BITS` and that `bd <= 2^126`.
+fn compute_mask_group<Z: Ring + PRSSConversions>(
+    prfs: &SessionPrfs<Z>,
+    start: u128,
+    sampling_bound: u128,
+    outputs: &mut [Z],
+) {
+    let mut acc = prfs.mask_lincomb.accumulator::<MASK_GROUP>();
+    let mut residues = [0u128; 2 * MASK_GROUP];
+    let mut sums = [0u128; MASK_GROUP];
+    for phi_key in prfs.phi.iter() {
+        phi_group_residues(phi_key, start, sampling_bound, &mut residues);
+        for (sum, pair) in sums.iter_mut().zip(residues.chunks_exact(2)) {
+            *sum = pair[0] + pair[1];
+        }
+        acc.push(&Lanes::from_scalars(&sums));
+    }
+    let offset = prfs
+        .f_a_sum
+        .mul_by_u128(0u128.wrapping_sub(2 * sampling_bound));
+    for (output, sum) in outputs.iter_mut().zip(acc.finish()) {
+        *output = sum + offset;
+    }
 }
 
 #[async_trait]
@@ -1312,6 +1406,10 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
             chi.push(ChiAes::new(&set.set_key, sid));
         }
 
+        // PRZS constants for the epoch's threshold, `(subset, j)` order as the chi keys are traversed.
+        let przs_threshold = alpha_powers.len() - 1;
+        let fa_alpha = przs_coefficients(&f_a_at_role, &alpha_powers, przs_threshold);
+
         Ok(PRSSState {
             counters: PRSSCounters::default(),
             prss_setup: self.clone(),
@@ -1319,14 +1417,30 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
                 role,
                 psi: psi.into_boxed_slice(),
                 psi_lincomb: LinearCombinator::new(f_a_at_role.iter().copied()),
-                f_a_at_role: f_a_at_role.into_boxed_slice(),
                 phi: phi.into_boxed_slice(),
+                mask_lincomb: LinearCombinator::for_scalars(f_a_at_role.iter().copied()),
+                f_a_sum: f_a_at_role.iter().fold(Z::ZERO, |acc, f_a| acc + *f_a),
+                f_a_at_role: f_a_at_role.into_boxed_slice(),
                 chi: chi.into_boxed_slice(),
                 alpha_powers,
+                przs_lincomb: LinearCombinator::new(fa_alpha),
+                przs_threshold,
             }),
             broadcast: SyncReliableBroadcast::default(),
         })
     }
+}
+
+/// The PRZS constants `f_A(alpha_i) * alpha_i^j` for `j = 1..=threshold`, one row per subset in subset order:
+/// the products do not depend on the counter, so they are computed once.
+fn przs_coefficients<Z: Ring>(f_a_at_role: &[Z], alpha_powers: &[Z], threshold: usize) -> Vec<Z> {
+    let mut fa_alpha = Vec::with_capacity(f_a_at_role.len() * threshold);
+    for f_a_at_role in f_a_at_role {
+        for alpha_j in &alpha_powers[1..threshold + 1] {
+            fa_alpha.push(*f_a_at_role * *alpha_j);
+        }
+    }
+    fa_alpha
 }
 
 pub(crate) fn create_sets(all_roles: &[Role], t: usize) -> Vec<Vec<Role>> {
@@ -1725,6 +1839,73 @@ mod tests {
         check::<ResiduePolyF4Z64>().await;
         check::<ResiduePolyF4Z128>().await;
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    /// Scalar reference of the mask: the signed formula `sum_A f_A * (phi_0 + phi_1)` per value, as the kernel
+    /// computed it before the lane-batched group path.
+    fn compute_mask_scalar<Z: Ring + PRSSConversions>(
+        prfs: &SessionPrfs<Z>,
+        mask_ctr: u128,
+        amount: usize,
+        sampling_bound: u128,
+    ) -> Vec<Z> {
+        (0..amount)
+            .map(|idx| {
+                let ctr = mask_ctr + 2 * idx as u128;
+                let mut res = Z::ZERO;
+                for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
+                    let phi = phi_range(phi_aes, ctr, 2, sampling_bound);
+                    res += f_a_at_role.mul_by_i128(phi[0] + phi[1]);
+                }
+                res
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_mask_batched_matches_scalar() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let initial = setup
+                    .new_prss_session_state(SessionId::from(42), role)
+                    .unwrap();
+                // A power-of-two bound (the production one) and one that needs the generic remainder.
+                for base_bound in [B_SWITCH_SQUASH, (3 << 20) + 7] {
+                    let sampling_bound = base_bound << STATSEC;
+                    // Around the group size (32 values, 64 counters) and the Rayon chunk.
+                    for (start, amount) in [
+                        (0, 0),
+                        (255, 1),
+                        (255, 31),
+                        (255, 32),
+                        (255, 33),
+                        (255, 63),
+                        (255, 64),
+                        (255, 65),
+                        (255, 1024),
+                        (255, 1057),
+                        ((1 << 120) - 66, 33),
+                    ] {
+                        let mut batched = initial.clone();
+                        batched.counters.mask_ctr = start;
+                        let expected =
+                            compute_mask_scalar(&batched.prfs, start, amount, sampling_bound);
+                        let actual = batched
+                            .mask_next_vec(role, base_bound, amount)
+                            .await
+                            .unwrap();
+                        assert_eq!(actual, expected, "start={start}, amount={amount}");
+                        assert_eq!(batched.counters.mask_ctr, start + 2 * amount as u128);
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z128>().await;
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
     }
 

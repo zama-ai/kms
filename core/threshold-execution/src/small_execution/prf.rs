@@ -1,8 +1,9 @@
 //! AES-based PRFs: psi for PRSS, chi for PRZS and phi for PRSS-Mask.
 //!
-//! Hot paths: `accumulate_psi_counters` and `accumulate_chi_counters`, called from the inner loops of the PRSS and
-//! PRZS kernels in `prss.rs`, and `phi_range` for masks. `psi` and `chi` evaluate one counter. They serve the
-//! checks, rings with several AES blocks per coefficient, and tests.
+//! Hot paths: `psi_group_blocks`, `chi_group_blocks` and `phi_group_residues` encrypt a group of counters for the
+//! lane-batched PRSS, PRZS and PRSS-Mask kernels in `prss.rs`; `accumulate_psi_counters`,
+//! `accumulate_chi_counters` and `phi_range` serve their tails and the rings without a batched kernel. `psi` and
+//! `chi` evaluate one counter. They serve the checks, rings with several AES blocks per coefficient, and tests.
 //!
 //! Counter and bound checks:
 //! - The request entry points in `prss.rs` (`prss_next_vec`, `przs_next_vec`, `mask_next_vec`, `prss_check` and
@@ -179,12 +180,52 @@ pub(crate) fn phi_range(pa: &PhiAes, start: u128, count: usize, bd1: u128) -> Ve
     // single pipelined AES call over the whole range
     pa.aes.encrypt_blocks(&mut blocks);
 
-    let modulus = 2 * bd1;
+    let reduce = residue_reducer(bd1);
     let neg_bd1 = -(bd1 as i128);
     blocks
         .into_iter()
-        .map(|block| neg_bd1 + (u128::from_le_bytes(block.into()) % modulus) as i128)
+        .map(|block| neg_bd1 + reduce(u128::from_le_bytes(block.into())) as i128)
         .collect()
+}
+
+/// The reduction modulo `2 * bd1` of [`phi_range`]: a mask when the modulus is a power of two (every
+/// production bound is), the generic remainder otherwise, which compiles to a 128-bit division call per block.
+#[inline(always)]
+fn residue_reducer(bd1: u128) -> impl Fn(u128) -> u128 {
+    let modulus = 2 * bd1;
+    let power_of_two = modulus.is_power_of_two();
+    move |x| {
+        if power_of_two {
+            x & (modulus - 1)
+        } else {
+            x % modulus
+        }
+    }
+}
+
+/// Evaluates phi on `COUNTERS` consecutive counters with one AES call and returns the residues
+/// `AES(ctr) mod 2 * bd1`, i.e. `phi(ctr) + bd1`, in `[0, 2 * bd1)`: the unsigned form the PRSS-Mask kernel
+/// combines before subtracting the offset. Panics as [`phi_range`] does; the caller checks the range.
+pub(crate) fn phi_group_residues<const COUNTERS: usize>(
+    pa: &PhiAes,
+    start: u128,
+    bd1: u128,
+    out: &mut [u128; COUNTERS],
+) {
+    assert!(bd1 <= PHI_MAX_BOUND, "phi bound {bd1} exceeds 2^126");
+    assert_counter_range("phi", start, COUNTERS as u128, PHI_COUNTER_BITS);
+    let mut blocks = [[0u8; 16]; COUNTERS];
+    for (offset, block) in blocks.iter_mut().enumerate() {
+        // The counter bound keeps byte 15, the block index v, zero.
+        *block = (start + offset as u128).to_le_bytes();
+    }
+    let (chunks, rest) = AesBlock::slice_as_chunks_mut(blocks.as_flattened_mut());
+    debug_assert!(rest.is_empty());
+    pa.aes.encrypt_blocks(chunks);
+    let reduce = residue_reducer(bd1);
+    for (value, block) in out.iter_mut().zip(&blocks) {
+        *value = reduce(u128::from_le_bytes(*block));
+    }
 }
 
 /// Number of AES blocks per `encrypt_blocks` call in scalar psi/chi. One buffer covers a degree-eight ring.
@@ -390,6 +431,33 @@ pub(crate) fn psi_group_blocks<
     prf_group_blocks(&pa.aes, ctr, 0, out);
 }
 
+/// Encrypts the [`chi`] blocks of counters `ctr..ctr + COUNTERS` at threshold index `j` for one subset key into
+/// `out`, coefficient-major (see [`prf_group_blocks`]). `DEGREE` must be `Z::EXTENSION_DEGREE` and each
+/// coefficient must fit one block. Panics if `COUNTERS` is zero or a counter reaches `2^CHI_COUNTER_BITS`; the
+/// caller checks the range.
+pub(crate) fn chi_group_blocks<
+    Z: Ring + PRSSConversions,
+    const COUNTERS: usize,
+    const DEGREE: usize,
+>(
+    pa: &ChiAes,
+    ctr: u128,
+    j: u8,
+    out: &mut [[[u8; 16]; COUNTERS]; DEGREE],
+) {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    assert_eq!(DEGREE, Z::EXTENSION_DEGREE);
+    assert!(
+        Z::NUM_BITS_STAT_SEC_BASE_RING <= 128,
+        "chi_group_blocks needs one AES block per coefficient"
+    );
+    assert_counter_range("chi", ctr, COUNTERS as u128, CHI_COUNTER_BITS);
+    prf_group_blocks(&pa.aes, ctr, (j as u128) << 104, out);
+}
+
 /// Adds `coefficient * chi(pa, ctr + offset, j)` to `sums[offset]` for each offset, with the encoding of [`chi`].
 /// Panics if `COUNTERS` is zero or a counter reaches `2^CHI_COUNTER_BITS`; the caller checks the range.
 pub(crate) fn accumulate_chi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
@@ -548,6 +616,81 @@ mod tests {
         check::<ResiduePolyF4Z128, 4>();
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64, 8>();
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128, 8>();
+    }
+
+    // The coefficient-major chi group buffer decodes, lane by lane, to the scalar chi of each counter and index.
+    #[test]
+    fn chi_group_blocks_match_scalar_chi() {
+        fn check<Z: Ring + PRSSConversions, const DEGREE: usize>() {
+            use algebra::lincomb::Lanes;
+            for sid in [0, 42] {
+                let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                for start in [0, 255, (1_u128 << 64) - 3, (1_u128 << 104) - 16] {
+                    for j in [0, 1, 4, 255] {
+                        let mut blocks = [[[0u8; 16]; 16]; DEGREE];
+                        chi_group_blocks::<Z, 16, DEGREE>(&key, start, j, &mut blocks);
+                        let lanes = Lanes::<16>::from_le_blocks(
+                            blocks.as_flattened().as_flattened(),
+                            DEGREE,
+                        );
+                        for lane in 0..16 {
+                            let expected =
+                                original_encoding::<Z>(&key.aes, start + lane as u128, Some(j));
+                            assert_eq!(lanes.element::<Z>(lane), expected);
+                            assert_eq!(chi::<Z>(&key, start + lane as u128, j), expected);
+                        }
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64, 4>();
+        check::<ResiduePolyF4Z128, 4>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64, 8>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128, 8>();
+    }
+
+    #[test]
+    #[should_panic(expected = "chi counters from")]
+    fn chi_group_blocks_panics_if_its_last_counter_reaches_the_limit() {
+        let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        let mut blocks = [[[0u8; 16]; 16]; 4];
+        chi_group_blocks::<ResiduePolyF4Z128, 16, 4>(
+            &key,
+            (1 << CHI_COUNTER_BITS) - 15,
+            1,
+            &mut blocks,
+        );
+    }
+
+    // The group residues are `phi + bd1`, for power-of-two and other bounds, up to phi's last valid counter.
+    #[test]
+    fn phi_group_residues_match_phi_range() {
+        let key = PhiAes::new(&PrfKey([23; 16]), SessionId::from(42));
+        for bd1 in [
+            B_SWITCH_SQUASH << STATSEC,
+            1 << LOG_B_SWITCH_SQUASH,
+            PHI_MAX_BOUND,
+            3,
+            (1 << 93) + 12345,
+        ] {
+            for start in [0, 255, (1_u128 << 64) - 3, (1_u128 << 120) - 64] {
+                let mut residues = [0u128; 64];
+                phi_group_residues::<64>(&key, start, bd1, &mut residues);
+                let expected = phi_range(&key, start, 64, bd1);
+                for (residue, phi) in residues.iter().zip(&expected) {
+                    assert!(*residue < 2 * bd1);
+                    assert_eq!(*residue as i128 - bd1 as i128, *phi);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "phi counters from")]
+    fn phi_group_residues_panic_if_the_last_counter_reaches_the_limit() {
+        let key = PhiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        let mut residues = [0u128; 64];
+        phi_group_residues::<64>(&key, (1 << PHI_COUNTER_BITS) - 63, 1 << 70, &mut residues);
     }
 
     #[test]
