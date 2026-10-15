@@ -2,6 +2,7 @@ pub use crate::identifiers::{ID_LENGTH, KeyId, RequestId};
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
+use crate::solidity_types::{SolanaUserDecryptionLinker, UserDecryptionLinker};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use serde::{Deserialize, Serialize};
@@ -262,8 +263,6 @@ impl ClientAddress {
         handles: impl IntoIterator<Item = &'a [u8]>,
         domain: &Eip712Domain,
     ) -> anyhow::Result<Vec<u8>> {
-        use crate::solidity_types::{SolanaUserDecryptionLinker, UserDecryptionLinker};
-
         let handles = left_padded_handles(handles)?;
 
         let signing_hash = match self {
