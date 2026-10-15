@@ -1,16 +1,12 @@
-use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
-    kms::v1::{DestroyMpcContextResponse, NewMpcContextRequest},
+    identifiers::ContextId, kms::v1::NewMpcContextRequest,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    solidity_types::ContextDestructionVerification,
 };
 #[cfg(feature = "testing")]
 use kms_lib::{
     conf::{CoreConfig, init_conf},
     engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
 };
-use kms_lib::engine::base::{DSEP_DESTROY_CONTEXT, DestroyMpcContextPayload};
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
 use std::collections::{HashMap, HashSet};
 use tfhe::safe_serialization::safe_deserialize;
@@ -277,13 +273,13 @@ pub(crate) async fn do_destroy_mpc_context(
     let mut signers = HashSet::new();
     while let Some(inner) = req_tasks.join_next().await {
         let response = inner??.into_inner();
-        let (party_id, _destroyed_epochs) = check_destroy_context_response(
-            internal_client,
-            &response,
-            context_id,
-            &request.extra_data,
-            &domain,
-        )?;
+        let (party_id, _destroyed_epochs) = internal_client
+            .process_destroy_mpc_context_response(
+                &response,
+                context_id,
+                &request.extra_data,
+                &domain,
+            )?;
         anyhow::ensure!(
             signers.insert(party_id),
             "party {party_id} confirmed the destruction of context {context_id} more than once"
@@ -291,159 +287,4 @@ pub(crate) async fn do_destroy_mpc_context(
     }
 
     Ok(())
-}
-
-/// Check that `response` confirms the destruction of `context_id` with `extra_data`, signed under
-/// every scheme `internal_client` requests.
-///
-/// Returns the party that produced the response, and the epochs it reports as destroyed.
-pub(crate) fn check_destroy_context_response(
-    internal_client: &Client,
-    response: &DestroyMpcContextResponse,
-    context_id: &ContextId,
-    extra_data: &[u8],
-    domain: &Eip712Domain,
-) -> anyhow::Result<(u32, Vec<EpochId>)> {
-    let received: DestroyMpcContextPayload = response
-        .payload
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("the context destruction response carries no payload"))?
-        .try_into()?;
-    anyhow::ensure!(
-        received.destroyed_context_id == *context_id,
-        "the context destruction response confirms context {}, but {context_id} was requested",
-        received.destroyed_context_id
-    );
-    anyhow::ensure!(
-        received.extra_data == extra_data,
-        "the context destruction response carries other extra data than was requested"
-    );
-    let (party_id, _address) = internal_client.verify_result_signatures(
-        &response.signatures,
-        // A context destruction response has no deprecated `external_signature`.
-        &[],
-        &ContextDestructionVerification::new(
-            context_id,
-            &received.destroyed_epoch_ids,
-            extra_data.to_vec(),
-        ),
-        domain,
-        &DSEP_DESTROY_CONTEXT,
-        &received,
-    )?;
-    tracing::info!(
-        "Destruction of context {context_id} verified as done by party {party_id}, together with \
-         epochs {:?}",
-        received.destroyed_epoch_ids
-    );
-    Ok((party_id, received.destroyed_epoch_ids))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dummy_domain;
-    use kms_grpc::rpc_types::ecdsa_signatures;
-    use kms_lib::consts::TEST_PARAM;
-    use kms_lib::cryptography::signatures::{
-        PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
-    };
-    use rand::SeedableRng;
-    use threshold_types::rng::AesRng;
-
-    /// A client that knows `pk` as party 1 and requests ECDSA only.
-    fn client_knowing(pk: PublicSigKey) -> Client {
-        let address = pk.address();
-        Client::new(
-            HashMap::from([(1, pk)]),
-            HashMap::new(),
-            address,
-            None,
-            TEST_PARAM,
-            None,
-        )
-    }
-
-    /// A response confirming `confirmed` with `confirmed_epochs`, ECDSA-signed by `sk` over
-    /// `signed` with `signed_epochs`.
-    fn response(
-        sk: &PrivateSigKey,
-        (confirmed, confirmed_epochs): (&ContextId, &[EpochId]),
-        (signed, signed_epochs): (&ContextId, &[EpochId]),
-        extra_data: &[u8],
-    ) -> DestroyMpcContextResponse {
-        let signature = compute_eip712_signature(
-            sk,
-            &ContextDestructionVerification::new(signed, signed_epochs, extra_data.to_vec()),
-            &dummy_domain(),
-        )
-        .unwrap();
-        let payload = DestroyMpcContextPayload {
-            destroyed_context_id: *confirmed,
-            destroyed_epoch_ids: confirmed_epochs.to_vec(),
-            extra_data: extra_data.to_vec(),
-        };
-        DestroyMpcContextResponse {
-            payload: Some((&payload).into()),
-            signatures: ecdsa_signatures(signature),
-        }
-    }
-
-    #[test]
-    fn destroy_context_response_signatures() {
-        let mut rng = AesRng::seed_from_u64(0xC0DE);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let client = client_knowing(pk);
-        let context_id = ContextId::from_bytes([1u8; 32]);
-        let other_context_id = ContextId::from_bytes([2u8; 32]);
-        let epochs = [EpochId::from_bytes([3u8; 32]), EpochId::from_bytes([4u8; 32])];
-        let extra_data = vec![7u8; 3];
-        let domain = dummy_domain();
-        let check = |client: &Client, response: &DestroyMpcContextResponse, extra_data: &[u8]| {
-            check_destroy_context_response(client, response, &context_id, extra_data, &domain)
-        };
-
-        let valid = response(
-            &sk,
-            (&context_id, &epochs),
-            (&context_id, &epochs),
-            &extra_data,
-        );
-        assert_eq!(
-            check(&client, &valid, &extra_data).unwrap(),
-            (1, epochs.to_vec())
-        );
-
-        // A context without epochs, or whose epochs an earlier attempt removed, lists none.
-        let no_epochs = response(&sk, (&context_id, &[]), (&context_id, &[]), &extra_data);
-        assert_eq!(
-            check(&client, &no_epochs, &extra_data).unwrap(),
-            (1, Vec::new())
-        );
-
-        // A correctly signed confirmation of another context is not a confirmation of ours.
-        let other = response(
-            &sk,
-            (&other_context_id, &epochs),
-            (&other_context_id, &epochs),
-            &extra_data,
-        );
-        assert!(check(&client, &other, &extra_data).is_err());
-
-        // The epoch list in the payload must be the one the signature covers.
-        let altered_epochs = response(
-            &sk,
-            (&context_id, &epochs[..1]),
-            (&context_id, &epochs),
-            &extra_data,
-        );
-        assert!(check(&client, &altered_epochs, &extra_data).is_err());
-
-        // The extra data is bound into the signature too.
-        assert!(check(&client, &valid, &[]).is_err());
-
-        // A client that does not know the signer rejects the response.
-        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
-        assert!(check(&stranger, &valid, &extra_data).is_err());
-    }
 }
