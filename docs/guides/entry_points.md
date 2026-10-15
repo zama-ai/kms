@@ -155,3 +155,8 @@ However if the parties at this point complete a resharing, and delete their old 
 Besides handling localized compromises, the resharing can also be used for failure recovery. Say at most $$t$$ of the MPC servers have lost their secret key shares, then they could participate with the rest of the MPC servers in the key refreshing protocol in order for them to get new private key shares.
 
 This features is coming soon....
+
+## Context and epoch destruction
+
+An MPC epoch, or an MPC context together with all of its epochs, can be destroyed, which erases the corresponding secret key shares and PRSS data from the KMS Cores.
+Each KMS Core returns a confirmation, signed under the requested signature schemes, that the epoch or context no longer exists. An ID that is already gone is confirmed as well, so a destruction can safely be repeated.

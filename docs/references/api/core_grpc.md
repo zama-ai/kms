@@ -1100,3 +1100,75 @@ The request is still recorded internally, so the result also remains retrievable
 Unlike `UserDecrypt`, this method never rejects a `request_id` that is already known with `ALREADY_EXISTS`. If a decryption for that `request_id` is still running or has already succeeded, no new decryption is started: the call attaches to that attempt and returns its result, ignoring the rest of the request. If the previous attempt failed, a new decryption is started from the content of the new request (the same redo-on-failure rule as `UserDecrypt`), and the call returns the outcome of that new attempt.
 
 </details>
+
+## MPC Context and Epoch Destruction
+
+<details>
+    <summary> DestroyMpcEpoch </summary>
+
+### Input
+
+```proto
+message DestroyMpcEpochRequest {
+  RequestId epoch_id = 1;
+  Eip712DomainMsg domain = 2;
+  bytes extra_data = 3;
+  repeated SigningSchemeType signing_schemes = 4;
+}
+```
+
+### Output
+
+```proto
+message DestroyMpcEpochResponse {
+  DestroyMpcEpochPayload payload = 1;
+  repeated TypedSignature signatures = 2;
+}
+
+message DestroyMpcEpochPayload {
+  RequestId epoch_id = 1;
+  bytes extra_data = 2;
+}
+```
+
+### Description
+
+Erases the epoch's PRSS data and secret key shares from memory and storage, and returns a confirmation, signed under every scheme in `signing_schemes`, that the epoch no longer exists on this party.
+An epoch that is already absent, or never existed, is confirmed the same way, so the call can be repeated; the confirmation therefore does not prove that the epoch ever existed.
+The request is validated before anything is erased.
+</details>
+
+<details>
+    <summary> DestroyMpcContext </summary>
+
+### Input
+
+```proto
+message DestroyMpcContextRequest {
+  RequestId context_id = 1;
+  Eip712DomainMsg domain = 2;
+  bytes extra_data = 3;
+  repeated SigningSchemeType signing_schemes = 4;
+}
+```
+
+### Output
+
+```proto
+message DestroyMpcContextResponse {
+  DestroyMpcContextPayload payload = 1;
+  repeated TypedSignature signatures = 2;
+}
+
+message DestroyMpcContextPayload {
+  RequestId context_id = 1;
+  bytes extra_data = 2;
+}
+```
+
+### Description
+
+Erases every epoch of the context, then the context itself, and returns a confirmation, signed under every scheme in `signing_schemes`, that the context no longer exists on this party.
+A context that is already absent, or never existed, is confirmed the same way, so the call can be repeated; the confirmation therefore does not prove that the context ever existed.
+The request is validated before anything is erased. If an epoch fails to be erased, an error is returned and the call should be retried.
+</details>

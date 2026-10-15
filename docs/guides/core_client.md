@@ -746,6 +746,8 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
 
 #### Destroying an MPC Epoch
 
+Every core confirms, with a signature the client verifies, that the epoch no longer exists. An epoch that is already gone is confirmed too, so the command can be repeated.
+
 ```{bash}
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
 ```
@@ -764,6 +766,8 @@ $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-conte
 ```
 
 #### Destroying an MPC Context
+
+The cores destroy the context's epochs first, then the context. Every core confirms, with a signature the client verifies, that the context no longer exists. A context that is already gone is confirmed too, so the command can be repeated.
 
 ```{bash}
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
