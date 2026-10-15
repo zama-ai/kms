@@ -87,3 +87,8 @@ required-features = ["testing"]
 name = "ddec_lincomb"
 harness = false
 required-features = ["testing"]
+
+[[bench]]
+name = "open_lincomb"
+harness = false
+required-features = ["testing"]

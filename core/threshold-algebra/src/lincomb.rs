@@ -122,7 +122,7 @@ impl<Z> std::fmt::Debug for LinearCombinator<Z> {
     }
 }
 
-impl<Z: Ring + PRSSConversions> LinearCombinator<Z> {
+impl<Z: Ring> LinearCombinator<Z> {
     /// Prepares the constants for ring-element operands with the backend detected for `Z` on this machine.
     pub fn new(constants: impl IntoIterator<Item = Z>) -> Self {
         Self::with_backend(constants, Operand::Element, Self::detected_backend())
@@ -244,7 +244,9 @@ impl<Z: Ring + PRSSConversions> LinearCombinator<Z> {
             Backend::Avx512Ifma => {
                 #[cfg(target_arch = "x86_64")]
                 {
-                    Z::from_u128_iter(dot_f4z128_ifma(&self.table, x).into_iter())
+                    from_f4z128(ResiduePolyF4Z128 {
+                        coefs: dot_f4z128_ifma(&self.table, x).map(std::num::Wrapping),
+                    })
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 {
@@ -314,6 +316,13 @@ fn ifma_available() -> bool {
 #[cfg(not(target_arch = "x86_64"))]
 fn ifma_available() -> bool {
     false
+}
+
+/// Returns a `ResiduePolyF4Z128` as the generic `Z` known (by `TypeId`) to be that type.
+fn from_f4z128<Z: 'static>(value: ResiduePolyF4Z128) -> Z {
+    assert_eq!(TypeId::of::<Z>(), TypeId::of::<ResiduePolyF4Z128>());
+    // SAFETY: `Z` is `ResiduePolyF4Z128` (checked above), so the copy reads a valid `Z` of the same size.
+    unsafe { std::mem::transmute_copy::<ResiduePolyF4Z128, Z>(&value) }
 }
 
 /// Views a `ResiduePolyF4Z128` slice behind a generic `Z` known (by `TypeId`) to be that type.
@@ -620,6 +629,70 @@ impl<Z: Ring + PRSSConversions, const L: usize> Accumulator<'_, Z, L> {
             }
         }
     }
+}
+
+impl<Z: Ring, const L: usize> Accumulator<'_, Z, L> {
+    /// Adds `c_k · operands[lane]` for the next constant `k`, for ring-element operands given as ring elements
+    /// (one per lane, `operands.len() == L`). The combinator must have been prepared for
+    /// [`Operand::Element`]. Panics when pushed more often than there are constants.
+    #[inline]
+    pub fn push_elements(&mut self, operands: &[Z]) {
+        let k = self.next;
+        assert!(
+            k < self.lc.constants.len(),
+            "Accumulator: pushed more operands ({}) than constants ({})",
+            k + 1,
+            self.lc.constants.len()
+        );
+        assert_eq!(
+            self.lc.operand,
+            Operand::Element,
+            "Accumulator: ring elements pushed into a combinator prepared for scalar operands"
+        );
+        assert_eq!(operands.len(), L, "Accumulator: expected {L} operands");
+        self.next += 1;
+        match &mut self.state {
+            State::Scalar(sums) => {
+                let c = self.lc.constants[k];
+                for (sum, x) in sums.iter_mut().zip(operands) {
+                    *sum += c * *x;
+                }
+            }
+            State::Ifma(state) => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    // The backend implies `Z == ResiduePolyF4Z128`: four little-endian 128-bit coefficients
+                    // per element, 64 bytes apart.
+                    let elements = as_f4z128(operands);
+                    let block = &self.lc.table[(k / 8) * F4_ELEMENT_BLOCK..][..F4_ELEMENT_BLOCK];
+                    for half in 0..L / 8 {
+                        // SAFETY: the backend is only selected when `avx512f` and `avx512ifma` were detected.
+                        // `acc` holds `4 * 4 * L` lanes, `elements` holds `L` 64-byte elements and `block` a
+                        // full table block, so every access below is in bounds.
+                        unsafe {
+                            avx512::mac8_f4_elements(
+                                state.acc.as_mut_ptr() as *mut u64,
+                                L,
+                                half * 8,
+                                elements.as_ptr() as *const u8,
+                                block.as_ptr(),
+                                k % 8,
+                            );
+                        }
+                    }
+                    state.since_normalize += 1;
+                    if state.since_normalize == NORMALIZE_EVERY {
+                        state.normalize();
+                    }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    let _ = (state, operands);
+                    unreachable!("the IFMA backend is only ever selected on x86-64");
+                }
+            }
+        }
+    }
 
     /// Number of constants consumed so far.
     pub fn pushed(&self) -> usize {
@@ -640,13 +713,15 @@ impl<Z: Ring + PRSSConversions, const L: usize> Accumulator<'_, Z, L> {
             State::Ifma(mut state) => {
                 state.normalize();
                 std::array::from_fn(|lane| {
-                    Z::from_u128_iter((0..4).map(|j| {
-                        join([
-                            state.acc[j][0][lane],
-                            state.acc[j][1][lane],
-                            state.acc[j][2][lane],
-                        ])
-                    }))
+                    from_f4z128(ResiduePolyF4Z128 {
+                        coefs: std::array::from_fn(|j| {
+                            std::num::Wrapping(join([
+                                state.acc[j][0][lane],
+                                state.acc[j][1][lane],
+                                state.acc[j][2][lane],
+                            ]))
+                        }),
+                    })
                 })
             }
         }
@@ -662,22 +737,29 @@ mod avx512 {
     #[target_feature(enable = "avx512f,avx512ifma")]
     unsafe fn load_limbs(p: *const u8) -> [__m512i; 3] {
         unsafe {
-            let m52 = _mm512_set1_epi64(super::M52 as i64);
             let idx_lo = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
             let idx_hi = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
             let z0 = _mm512_loadu_si512(p as *const _);
             let z1 = _mm512_loadu_si512(p.add(64) as *const _);
             let lo = _mm512_permutex2var_epi64(z0, idx_lo, z1);
             let hi = _mm512_permutex2var_epi64(z0, idx_hi, z1);
-            [
-                _mm512_and_si512(lo, m52),
-                _mm512_and_si512(
-                    _mm512_or_si512(_mm512_srli_epi64::<52>(lo), _mm512_slli_epi64::<12>(hi)),
-                    m52,
-                ),
-                _mm512_srli_epi64::<40>(hi),
-            ]
+            split_limbs(lo, hi)
         }
+    }
+
+    /// Splits eight 128-bit values given as their low and high 64-bit words into three 52-bit limbs per lane.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    fn split_limbs(lo: __m512i, hi: __m512i) -> [__m512i; 3] {
+        let m52 = _mm512_set1_epi64(super::M52 as i64);
+        [
+            _mm512_and_si512(lo, m52),
+            _mm512_and_si512(
+                _mm512_or_si512(_mm512_srli_epi64::<52>(lo), _mm512_slli_epi64::<12>(hi)),
+                m52,
+            ),
+            _mm512_srli_epi64::<40>(hi),
+        ]
     }
 
     /// Adds the nine partial products of `x · b` that land below `2^128` to the four accumulator slots:
@@ -726,6 +808,95 @@ mod avx512 {
             for (i, xi) in x.iter_mut().enumerate() {
                 *xi = load_limbs(blocks.add(i * coef_stride + lane0 * 16));
             }
+            mac8_f4_limbs(acc, lane_stride, lane0, &x, consts, lane_k);
+        }
+    }
+
+    /// [`mac8_f4`] for element-major operands: lane `l` is a whole `ResiduePolyF4Z128` (four 16-byte
+    /// little-endian coefficients, 64 bytes) at `elements + l * 64`; lanes `lane0..lane0 + 8` are read.
+    /// The eight elements are loaded as eight rows of eight 64-bit words and transposed, which yields the
+    /// lo and hi words of every coefficient across the lanes: 24 shuffles for the four coefficients.
+    ///
+    /// # Safety
+    /// As for [`mac8_f4`].
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(super) unsafe fn mac8_f4_elements(
+        acc: *mut u64,
+        lane_stride: usize,
+        lane0: usize,
+        elements: *const u8,
+        consts: *const u64,
+        lane_k: usize,
+    ) {
+        unsafe {
+            let p = elements.add(lane0 * 64);
+            let mut r = [_mm512_setzero_si512(); 8];
+            for (l, row) in r.iter_mut().enumerate() {
+                *row = _mm512_loadu_si512(p.add(l * 64) as *const _);
+            }
+            // Row l holds [c0.lo, c0.hi, c1.lo, c1.hi, c2.lo, c2.hi, c3.lo, c3.hi] of element l.
+            // Stage 1: pair rows, interleaving their 64-bit words within each 128-bit chunk.
+            let a = [
+                _mm512_unpacklo_epi64(r[0], r[1]),
+                _mm512_unpackhi_epi64(r[0], r[1]),
+                _mm512_unpacklo_epi64(r[2], r[3]),
+                _mm512_unpackhi_epi64(r[2], r[3]),
+                _mm512_unpacklo_epi64(r[4], r[5]),
+                _mm512_unpackhi_epi64(r[4], r[5]),
+                _mm512_unpacklo_epi64(r[6], r[7]),
+                _mm512_unpackhi_epi64(r[6], r[7]),
+            ];
+            // Stage 2: merge the pairs (0,1) with (2,3) and (4,5) with (6,7), chunk by chunk.
+            let even = _mm512_setr_epi64(0, 1, 8, 9, 4, 5, 12, 13);
+            let odd = _mm512_setr_epi64(2, 3, 10, 11, 6, 7, 14, 15);
+            let b = [
+                _mm512_permutex2var_epi64(a[0], even, a[2]), // words 0 and 4 of elements 0..4
+                _mm512_permutex2var_epi64(a[0], odd, a[2]),  // words 2 and 6
+                _mm512_permutex2var_epi64(a[1], even, a[3]), // words 1 and 5
+                _mm512_permutex2var_epi64(a[1], odd, a[3]),  // words 3 and 7
+                _mm512_permutex2var_epi64(a[4], even, a[6]), // the same for elements 4..8
+                _mm512_permutex2var_epi64(a[4], odd, a[6]),
+                _mm512_permutex2var_epi64(a[5], even, a[7]),
+                _mm512_permutex2var_epi64(a[5], odd, a[7]),
+            ];
+            // Stage 3: the low halves hold one word of elements 0..8, the high halves another.
+            let low = _mm512_setr_epi64(0, 1, 2, 3, 8, 9, 10, 11);
+            let high = _mm512_setr_epi64(4, 5, 6, 7, 12, 13, 14, 15);
+            // t[q] = word q of the eight elements: q = 2i is coefficient i's lo word, 2i + 1 its hi word.
+            let t = [
+                _mm512_permutex2var_epi64(b[0], low, b[4]),
+                _mm512_permutex2var_epi64(b[2], low, b[6]),
+                _mm512_permutex2var_epi64(b[1], low, b[5]),
+                _mm512_permutex2var_epi64(b[3], low, b[7]),
+                _mm512_permutex2var_epi64(b[0], high, b[4]),
+                _mm512_permutex2var_epi64(b[2], high, b[6]),
+                _mm512_permutex2var_epi64(b[1], high, b[5]),
+                _mm512_permutex2var_epi64(b[3], high, b[7]),
+            ];
+            let mut x = [[_mm512_setzero_si512(); 3]; 4];
+            for (i, xi) in x.iter_mut().enumerate() {
+                *xi = split_limbs(t[2 * i], t[2 * i + 1]);
+            }
+            mac8_f4_limbs(acc, lane_stride, lane0, &x, consts, lane_k);
+        }
+    }
+
+    /// The multiply-accumulate of [`mac8_f4`] on operands already split into limbs, `x[i]` being coefficient
+    /// `i` of the eight lanes.
+    ///
+    /// # Safety
+    /// As for [`mac8_f4`].
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    unsafe fn mac8_f4_limbs(
+        acc: *mut u64,
+        lane_stride: usize,
+        lane0: usize,
+        x: &[[__m512i; 3]; 4],
+        consts: *const u64,
+        lane_k: usize,
+    ) {
+        unsafe {
             for j in 0..4 {
                 let slot = |s: usize| acc.add((j * 4 + s) * lane_stride + lane0);
                 let mut a = [
@@ -946,6 +1117,37 @@ mod tests {
         lc.backend()
     }
 
+    /// Ring-element operands given as elements (`push_elements`, element-major layout).
+    fn check_element_operands_against_naive<Z: Ring + PRSSConversions, const L: usize>(
+        rng: &mut StdRng,
+        backend: Backend,
+        num_constants: usize,
+    ) -> Backend {
+        let degree = Z::EXTENSION_DEGREE;
+        let constants: Vec<Z> = (0..num_constants)
+            .map(|_| random_element(rng, degree))
+            .collect();
+        let lc =
+            LinearCombinator::with_backend(constants.iter().copied(), Operand::Element, backend);
+        let pushes: Vec<Vec<Z>> = (0..num_constants)
+            .map(|_| (0..L).map(|_| random_element(rng, degree)).collect())
+            .collect();
+        let mut acc = lc.accumulator::<L>();
+        for operands in &pushes {
+            acc.push_elements(operands);
+        }
+        let got = acc.finish();
+        for (lane, got) in got.iter().enumerate() {
+            let operands: Vec<Z> = pushes.iter().map(|x| x[lane]).collect();
+            let expected = LinearCombinator::naive(&constants, &operands);
+            assert_eq!(
+                *got, expected,
+                "elements: lane {lane}, {num_constants} constants, {backend:?}"
+            );
+        }
+        lc.backend()
+    }
+
     /// Scalar operands through the accumulator (lanes = instances) and through `dot` (lanes = constants).
     fn check_scalar_operands_against_naive<Z: Ring + PRSSConversions, const L: usize>(
         rng: &mut StdRng,
@@ -1084,7 +1286,63 @@ mod tests {
                 Backend::Scalar,
                 n,
             );
+            check_element_operands_against_naive::<ResiduePolyF4Z128, 16>(
+                &mut rng,
+                Backend::Scalar,
+                n,
+            );
+            check_element_operands_against_naive::<ResiduePolyF8Z128, 5>(
+                &mut rng,
+                Backend::Scalar,
+                n,
+            );
         }
+    }
+
+    #[test]
+    fn ifma_backend_matches_naive_for_element_operands() {
+        let mut rng = StdRng::seed_from_u64(8);
+        if !ifma_is_available() {
+            return;
+        }
+        for n in [1, 2, 5, 8, 9, 13, 127, 128, 129, 495] {
+            assert_eq!(
+                check_element_operands_against_naive::<ResiduePolyF4Z128, 8>(
+                    &mut rng,
+                    Backend::Avx512Ifma,
+                    n
+                ),
+                Backend::Avx512Ifma
+            );
+            check_element_operands_against_naive::<ResiduePolyF4Z128, 16>(
+                &mut rng,
+                Backend::Avx512Ifma,
+                n,
+            );
+            check_element_operands_against_naive::<ResiduePolyF4Z128, 32>(
+                &mut rng,
+                Backend::Avx512Ifma,
+                n,
+            );
+        }
+        let backend = check_element_operands_against_naive::<ResiduePolyF4Z128, 12>(
+            &mut rng,
+            Backend::Avx512Ifma,
+            20,
+        );
+        assert_eq!(backend, Backend::Avx512Ifma);
+    }
+
+    #[test]
+    #[should_panic(expected = "prepared for scalar operands")]
+    fn push_elements_rejects_scalar_constants() {
+        let lc = LinearCombinator::<ResiduePolyF4Z128>::with_backend(
+            [ResiduePolyF4Z128::ZERO],
+            Operand::Scalar,
+            Backend::Scalar,
+        );
+        lc.accumulator::<8>()
+            .push_elements(&[ResiduePolyF4Z128::ZERO; 8]);
     }
 
     #[test]

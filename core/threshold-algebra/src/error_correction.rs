@@ -5,9 +5,10 @@ use super::{
         lagrange_polynomials, vanishing_poly,
     },
     structure_traits::{
-        BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
+        BaseRing, ErrorCorrect, Field, Invert, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
 };
+use crate::sharing::optimistic::OptimisticHints;
 use error_utils::anyhow_error_and_log;
 
 use super::sharing::shamir::ShamirFieldPoly;
@@ -16,7 +17,7 @@ use super::sharing::share::Share;
 use crate::matrix::compute_powers_list;
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use threshold_types::role::Role;
 
 /// Trait used to speed up error correction computation.
@@ -110,6 +111,9 @@ pub struct ReconstructionHints<Z: ErrorCorrect> {
     pub exceptional_powers: Vec<Vec<Z>>,
     /// Field-level hints for Lagrange interpolation / Gao decoding.
     pub field_hints: FieldHints<Z::ReconstructionField>,
+    /// Ring-level Lagrange constants of the first `degree + 1` parties for the optimistic reconstruction
+    /// ([`crate::sharing::optimistic`]), prepared on first use through [`Self::optimistic`].
+    optimistic: OnceLock<Option<OptimisticHints<Z>>>,
 }
 
 impl<Z: ErrorCorrect> ReconstructionHints<Z> {
@@ -151,7 +155,17 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
             embedded_points,
             exceptional_powers,
             field_hints,
+            optimistic: OnceLock::new(),
         })
+    }
+
+    /// The prepared constants of the optimistic reconstruction, built on the first call (so that a caller that
+    /// goes straight to the decoder never pays for them); `None` when the ring does not expose unit inversion
+    /// or fewer than `degree + 1` parties contributed.
+    pub fn optimistic(&self) -> Option<&OptimisticHints<Z>> {
+        self.optimistic
+            .get_or_init(|| OptimisticHints::new(&self.embedded_points, self.degree))
+            .as_ref()
     }
 }
 
@@ -492,6 +506,10 @@ where
         hints: &ReconstructionHints<Self>,
     ) -> anyhow::Result<Poly<Self>> {
         shamir_error_correct_with_hints(sharing, degree, max_errorsors, hints)
+    }
+
+    fn invert_unit(value: Self) -> Option<Self> {
+        <Self as Invert>::invert(value).ok()
     }
 }
 
