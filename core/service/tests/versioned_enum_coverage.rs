@@ -67,6 +67,9 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // The versioned mirror of VerfKeySet, reached through VerfKeySet's `try_convert`.
     // Covered via VerfKeySetTest.
     "VerfKeySetRepr",
+    // The versioned mirror of SchemeDigests, reached through SchemeDigests' `try_convert`.
+    // Covered via SchemeDigestsTest.
+    "SchemeDigestsRepr",
     // Field of RecoveryValidationMaterial.payload.
     // Covered via RecoveryValidationMaterialTest.
     "RecoveryValidationMaterialPayload",
