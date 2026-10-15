@@ -38,8 +38,8 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
-    CustodianContext, DestroyCustodianContextRequest,
-    DestroyMpcContextRequest, NewCustodianContextRequest, NewMpcContextRequest,
+    CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
+    NewCustodianContextRequest, NewMpcContextRequest,
 };
 use kms_grpc::kms::v1::{DestroyMpcContextResponse, Empty};
 use kms_grpc::rpc_types::PrivDataType;
@@ -1137,6 +1137,25 @@ where
                 Some((*context_id).into()),
                 anyhow::anyhow!(
                     "Cannot destroy MPC context with id {context_id} since it is the only one left"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+
+        // Ensure that we do not delete the last epoch in connection with the context construction
+        // While this should not be able to happen in theory the check is here as a safeguard
+        if self.session_maker.epoch_count().await
+            == self
+                .session_maker
+                .epochs_for_context(context_id)
+                .await
+                .len()
+        {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some((*context_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it would destroy the last epoch"
                 ),
                 tonic::Code::FailedPrecondition,
             ));
