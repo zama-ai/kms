@@ -2060,9 +2060,8 @@ impl<
             destroyed_epoch_id: epoch_id.clone(),
             extra_data: inner.extra_data.clone(),
         };
-        let eip712_hash =
-            EpochDestructionVerification::new(epoch_id.clone(), inner.extra_data.clone())
-                .eip712_signing_hash(&domain);
+        let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())
+            .eip712_signing_hash(&domain);
         // Ensure we can sign the result before actually destroying, since it is a fallible operation
         let signatures = sign_result_entries(
             &identity,

@@ -59,13 +59,15 @@ impl TestContextManager {
         &self,
         context_id: ContextId,
     ) -> Result<(), MetricedError> {
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_id.into()),
-        });
-        match self {
-            Self::Centralized(manager) => manager.destroy_mpc_context(request).await,
-            Self::Threshold(manager) => manager.destroy_mpc_context(request).await,
-        }
+        let response = match self {
+            Self::Centralized(manager) => {
+                destroy_mpc_context_without_epochs(manager, context_id).await
+            }
+            Self::Threshold(manager) => {
+                destroy_mpc_context_without_epochs(manager, context_id).await
+            }
+        };
+        response.map(|_| ())
     }
 
     /// Holds the manager's lifecycle lock so tests can verify that an update waits for it.

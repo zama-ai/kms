@@ -13,7 +13,7 @@ use crate::engine::base::{DSEP_DESTROY_CONTEXT, stored_scheme_signatures_to_prot
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, VerifiedDestroyMpcContext, parse_optional_grpc_request_id,
     unpack_destroy_mpc_context_req,
@@ -41,6 +41,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms::v1::{DestroyMpcContextResponse, Empty};
 use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::solidity_types::ContextDestructionVerification;
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -936,58 +937,15 @@ where
                 tonic::Code::InvalidArgument,
             )
         })?;
-        // Validate the context exists
-        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
-        let mut guarded_priv_storage = private_storage.lock().await;
-        let context_exists = guarded_priv_storage
-            .data_exists(
-                &unpacked_req.context_id.into(),
-                &PrivDataType::ContextInfo.to_string(),
-            )
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(unpacked_req.context_id.into()),
-                    anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        if !context_exists {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some(unpacked_req.context_id.into()),
-                anyhow::anyhow!(
-                    "Context with id {} does not exist in storage",
-                    unpacked_req.context_id
-                ),
-                tonic::Code::NotFound,
-            ));
-        }
-
-        // Ensure we are not removing the last context
-        let context_info_ids = guarded_priv_storage
-            .all_data_ids(&PrivDataType::ContextInfo.to_string())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(unpacked_req.context_id.into()),
-                    anyhow::anyhow!("Failed to list contexts from storage: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        if context_info_ids.len() < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some(unpacked_req.context_id.into()),
-                anyhow::anyhow!(
-                    "Cannot destroy MPC context with id {} since it is the only one left in storage",
-                    unpacked_req.context_id
-                ),
-                tonic::Code::FailedPrecondition,
-            ));
-        }
+        // Refuse a scheme this node cannot sign now, before the caller deletes anything.
+        signing_identity_for(
+            &self.inner.base_kms,
+            &unpacked_req.signing_schemes,
+            OP_DESTROY_MPC_CONTEXT,
+            Some(unpacked_req.context_id.into()),
+        )?;
+        self.ensure_context_destroyable(&unpacked_req.context_id)
+            .await?;
 
         Ok(unpacked_req)
     }
@@ -1000,6 +958,9 @@ where
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
         let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
+        // Validation ran without the lock, so another call may have changed the contexts since.
+        self.ensure_context_destroyable(&verified.context_id)
+            .await?;
 
         // Ensure we can sign the result before stating to modify the local storage
         let response = self
@@ -1079,6 +1040,66 @@ where
     }
 }
 
+impl<PubS, PrivS> CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+{
+    async fn ensure_context_destroyable(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<(), MetricedError> {
+        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
+        let guarded_priv_storage = private_storage.lock().await;
+        let context_exists = guarded_priv_storage
+            .data_exists(
+                &(*context_id).into(),
+                &PrivDataType::ContextInfo.to_string(),
+            )
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some((*context_id).into()),
+                    anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if !context_exists {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some((*context_id).into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in storage"),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        // Ensure we are not removing the last context
+        let context_info_ids = guarded_priv_storage
+            .all_data_ids(&PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some((*context_id).into()),
+                    anyhow::anyhow!("Failed to list contexts from storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if context_info_ids.len() < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some((*context_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left in storage"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub struct ThresholdContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -1093,6 +1114,34 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Check that `context_id` is loaded in the session maker and is not the last context
+    /// there, so it may be destroyed.
+    async fn ensure_context_destroyable(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<(), MetricedError> {
+        if !self.session_maker.context_exists(context_id).await {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some((*context_id).into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        if self.session_maker.context_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some((*context_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn new(
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
@@ -1369,27 +1418,15 @@ where
                 tonic::Code::InvalidArgument,
             )
         })?;
-        // The session maker holds the contexts sessions are run in, so it decides which contexts exist.
-        let context_id = unpacked_req.context_id;
-        if !self.session_maker.context_exists(&context_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some(context_id.into()),
-                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
-                tonic::Code::NotFound,
-            ));
-        }
-
-        if self.session_maker.context_count().await < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some(context_id.into()),
-                anyhow::anyhow!(
-                    "Cannot destroy MPC context with id {context_id} since it is the only one left"
-                ),
-                tonic::Code::FailedPrecondition,
-            ));
-        }
+        // Refuse a scheme this node cannot sign now, before the caller deletes anything.
+        signing_identity_for(
+            &self.inner.base_kms,
+            &unpacked_req.signing_schemes,
+            OP_DESTROY_MPC_CONTEXT,
+            Some(unpacked_req.context_id.into()),
+        )?;
+        self.ensure_context_destroyable(&unpacked_req.context_id)
+            .await?;
 
         Ok(unpacked_req)
     }
@@ -1402,6 +1439,9 @@ where
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
         let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
+        // Validation ran without the lock, so another call may have changed the contexts since.
+        self.ensure_context_destroyable(&verified.context_id)
+            .await?;
 
         // Sign before deleting the context, so that a signing failure leaves the context in place.
         let response = self
@@ -1821,12 +1861,9 @@ mod tests {
 
         // now we try to delete the stored context; the epoch data seeded above is unrelated and
         // must survive, since the context manager never touches epoch-keyed data.
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_id.into()),
-        });
-
-        let response = context_manager.destroy_mpc_context(request).await;
-        response.unwrap();
+        destroy_mpc_context_without_epochs(&context_manager, context_id)
+            .await
+            .unwrap();
 
         // The keeper context is untouched.
         assert_eq!(1, context_manager.session_maker.context_count().await);
@@ -3437,11 +3474,9 @@ mod tests {
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_id.into()),
-        });
-        let response = context_manager.destroy_mpc_context(request).await;
-        response.unwrap();
+        destroy_mpc_context_without_epochs(&context_manager, context_id)
+            .await
+            .unwrap();
 
         // The keeper context is untouched.
         assert!(
@@ -3551,10 +3586,9 @@ mod tests {
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_id.into()),
-        });
-        context_manager.destroy_mpc_context(request).await.unwrap();
+        destroy_mpc_context_without_epochs(&context_manager, context_id)
+            .await
+            .unwrap();
 
         // The keeper context remains consistent after the target is destroyed.
         assert!(
@@ -3634,10 +3668,9 @@ mod tests {
         }
 
         // Destroy the middle context
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_ids[1].into()),
-        });
-        context_manager.destroy_mpc_context(request).await.unwrap();
+        destroy_mpc_context_without_epochs(&context_manager, context_ids[1])
+            .await
+            .unwrap();
 
         // First and third should still exist, second should not
         assert!(
@@ -3655,5 +3688,24 @@ mod tests {
                 .mpc_context_exists_in_cache(&context_ids[2])
                 .await
         );
+    }
+
+    /// Destroy `context_id` the way an endpoint does once the context has no epochs left.
+    async fn destroy_mpc_context_without_epochs(
+        context_manager: &(impl ContextManager + Sync),
+        context_id: ContextId,
+    ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
+        let req = DestroyMpcContextRequest {
+            context_id: Some(context_id.into()),
+            domain: Some(crate::testing::helpers::domain_to_msg(
+                &crate::dummy_domain(),
+            )),
+            extra_data: Vec::new(),
+            signing_schemes: Vec::new(),
+        };
+        let verified = context_manager.validate_destroy_mpc_context(&req).await?;
+        context_manager
+            .destroy_mpc_context(verified, Vec::new())
+            .await
     }
 }
