@@ -184,6 +184,34 @@ const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 /// left out because the EIP-712 domain of the link already binds it.
 const SOLANA_CLIENT_ADDRESS_PREFIX: &str = "solana:";
 
+/// Why a string is not a client address. The messages name the input, except an input with neither
+/// prefix, which can be arbitrarily long.
+#[derive(Debug, thiserror::Error)]
+pub enum ClientAddressParseError {
+    #[error(
+        "a client address is `0x` and EIP-55 hex for an EVM user, or `{}` and base58 of a 32-byte key for a Solana user",
+        SOLANA_CLIENT_ADDRESS_PREFIX
+    )]
+    UnknownFormat,
+    #[error("{}: {address} - {reason}", ERR_PARSE_CHECKSUMMED)]
+    Evm {
+        address: String,
+        reason: alloy_primitives::AddressError,
+    },
+    #[error(
+        "a base58 Solana address has at most {} characters, got {len}",
+        MAX_BASE58_PUBLIC_KEY_LEN
+    )]
+    SolanaTooLong { len: usize },
+    #[error("error parsing base58 Solana address: {key} - {reason}")]
+    SolanaBase58 {
+        key: String,
+        reason: bs58::decode::Error,
+    },
+    #[error("a Solana address is 32 bytes, got {len} for {key}")]
+    SolanaKeyLength { key: String, len: usize },
+}
+
 /// The user a user-decryption result is signcrypted to. The `FromStr` impl states which string
 /// format gives which kind of user.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,7 +232,7 @@ pub enum ClientAddress {
 /// Any other string is refused. The prefix is only the string form: [`ClientAddress::as_bytes`]
 /// and the link structs carry the address or the key alone.
 impl std::str::FromStr for ClientAddress {
-    type Err = anyhow::Error;
+    type Err = ClientAddressParseError;
 
     fn from_str(client_address: &str) -> Result<Self, Self::Err> {
         if client_address.starts_with("0x") {
@@ -214,37 +242,39 @@ impl std::str::FromStr for ClientAddress {
         {
             Self::parse_solana(public_verf_key)
         } else {
-            // The input is not echoed: it can be arbitrarily long.
-            anyhow::bail!(
-                "a client address is `0x` and EIP-55 hex for an EVM user, or `{SOLANA_CLIENT_ADDRESS_PREFIX}` and base58 of a 32-byte key for a Solana user"
-            )
+            Err(ClientAddressParseError::UnknownFormat)
         }
     }
 }
 
 impl ClientAddress {
-    fn parse_evm(client_address: &str) -> anyhow::Result<Self> {
+    fn parse_evm(client_address: &str) -> Result<Self, ClientAddressParseError> {
         Address::parse_checksummed(client_address, None)
             .map(Self::Evm)
-            .map_err(|e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {client_address} - {e}"))
+            .map_err(|reason| ClientAddressParseError::Evm {
+                address: client_address.to_string(),
+                reason,
+            })
     }
 
-    fn parse_solana(base58_key: &str) -> anyhow::Result<Self> {
+    fn parse_solana(base58_key: &str) -> Result<Self, ClientAddressParseError> {
         // Checked before decoding: base58 decoding is quadratic in the input length.
         if base58_key.len() > MAX_BASE58_PUBLIC_KEY_LEN {
-            anyhow::bail!(
-                "a base58 Solana address has at most {MAX_BASE58_PUBLIC_KEY_LEN} characters, got {}",
-                base58_key.len()
-            );
+            return Err(ClientAddressParseError::SolanaTooLong {
+                len: base58_key.len(),
+            });
         }
-        let bytes = bs58::decode(base58_key).into_vec().map_err(|e| {
-            anyhow::anyhow!("error parsing base58 Solana address: {base58_key} - {e}")
+        let bytes = bs58::decode(base58_key).into_vec().map_err(|reason| {
+            ClientAddressParseError::SolanaBase58 {
+                key: base58_key.to_string(),
+                reason,
+            }
         })?;
         let public_verf_key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
-            anyhow::anyhow!(
-                "a Solana address is 32 bytes, got {} for {base58_key}",
-                bytes.len()
-            )
+            ClientAddressParseError::SolanaKeyLength {
+                key: base58_key.to_string(),
+                len: bytes.len(),
+            }
         })?;
         Ok(Self::Solana(public_verf_key))
     }
@@ -1888,6 +1918,28 @@ mod tests {
             error(&format!("solana:{}", "2".repeat(1_000_000)))
                 .contains("at most 44 characters, got 1000000")
         );
+        // Each failure is its own variant, so a caller can tell them apart without reading text.
+        let kind = |address: &str| address.parse::<ClientAddress>().unwrap_err();
+        assert!(matches!(kind(""), ClientAddressParseError::UnknownFormat));
+        assert!(matches!(
+            kind(bad_checksum),
+            ClientAddressParseError::Evm { .. }
+        ));
+        assert!(matches!(
+            kind(&format!("solana:{}", "2".repeat(45))),
+            ClientAddressParseError::SolanaTooLong { len: 45 }
+        ));
+        assert!(matches!(
+            kind("solana:0OIl"),
+            ClientAddressParseError::SolanaBase58 { .. }
+        ));
+        assert!(matches!(
+            kind(&format!(
+                "solana:{}",
+                bs58::encode([0x11u8; 31]).into_string()
+            )),
+            ClientAddressParseError::SolanaKeyLength { len: 31, .. }
+        ));
     }
 
     #[test]
