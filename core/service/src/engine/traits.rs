@@ -64,7 +64,10 @@ pub trait ContextManager {
         request: &DestroyMpcContextRequest,
     ) -> Result<VerifiedDestroyMpcContext, MetricedError>;
 
-    /// Destroy an MPC context.
+    /// Delete an MPC context and return a signed confirmation listing
+    /// `destroyed_epochs` as destroyed with it.
+    ///
+    /// Before any destruction happens the request is validated using [`Self::validate_destroy_mpc_context`].
     async fn destroy_mpc_context(
         &self,
         verified: VerifiedDestroyMpcContext,
@@ -101,19 +104,22 @@ pub trait EpochManager {
         request: Request<RequestId>,
     ) -> Result<Response<EpochResultResponse>, MetricedError>;
 
-    /// Destroy every epoch in `epoch_ids` as part of a context destruction.
+    /// Destroy the epoch named in `request` and return the signed confirmation.
     ///
-    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
-    /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
-    /// fails; the first deletion error is returned only after all attempts, so a failed run can be
-    /// retried until no shares remain.
+    /// The request is validated before anything is erased, so an
+    /// invalid request leaves the epoch untouched.
     async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError>;
 
-    /// Destroy every epoch associated with `context_id`.
-    /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
+    /// Destroy every epoch associated with `context_id`  and
+    /// return the list of epochs succesfully destroyed.
+    ///
+    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
+    /// created on this party) is skipped; every epoch is attempted even if an earlier one fails;
+    /// the first deletion error is returned only after all attempts, so a failed run can be
+    /// retried until no shares remain.
     async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
