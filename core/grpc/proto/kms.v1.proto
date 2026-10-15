@@ -721,7 +721,7 @@ message DestroyMpcContextPayload {
     // The ID of the context that was destroyed
   RequestId destroyed_context_id = 1;
 
-  // The ID of the epochs destroyed as part of the context.
+  // The ID of the epochs destroyed as part of the context, in ascending order.
   repeated RequestId destroyed_epoch_ids = 2;
   
   // Extra meta data used in the signature

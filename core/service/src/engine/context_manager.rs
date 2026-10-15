@@ -146,17 +146,21 @@ where
                 tonic::Code::Internal,
             )
         })?;
-        let payload = DestroyMpcContextPayload {
-            destroyed_context_id: context_id,
-            destroyed_epoch_ids: destroyed_epoch_ids.to_vec(),
-            extra_data: verified.extra_data.clone(),
-        };
+        // The epochs are signed in ascending order, so every party signs the same message for the
+        // same set of epochs, whatever order its epoch map yields them in.
+        let mut destroyed_epoch_ids = destroyed_epoch_ids.to_vec();
+        destroyed_epoch_ids.sort();
         let eip712_hash = ContextDestructionVerification::new(
             &context_id,
-            destroyed_epoch_ids,
+            &destroyed_epoch_ids,
             verified.extra_data.clone(),
         )
         .eip712_signing_hash(&verified.domain);
+        let payload = DestroyMpcContextPayload {
+            destroyed_context_id: context_id,
+            destroyed_epoch_ids,
+            extra_data: verified.extra_data.clone(),
+        };
         let signatures = sign_result_entries(
             &identity,
             &verified.signing_schemes,
@@ -3709,6 +3713,41 @@ mod tests {
                 .mpc_context_exists_in_cache(&context_ids[2])
                 .await
         );
+    }
+
+    /// The signed list of destroyed epochs is canonical, i.e. ascending order.
+    #[tokio::test]
+    async fn destroyed_epochs_are_signed_in_ascending_order() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key, test_rng_source());
+        let context_manager = CentralizedContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
+        );
+        let verified = VerifiedDestroyMpcContext {
+            context_id: ContextId::from_bytes([6u8; 32]),
+            domain: crate::dummy_domain(),
+            extra_data: Vec::new(),
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
+        };
+        let low = EpochId::from_bytes([1u8; 32]);
+        let high = EpochId::from_bytes([2u8; 32]);
+        let sign = |epoch_ids: &[EpochId]| {
+            context_manager
+                .inner
+                .sign_destroy_mpc_context(&verified, epoch_ids)
+                .unwrap()
+        };
+
+        let from_unsorted = sign(&[high, low]);
+        assert_eq!(
+            from_unsorted.payload.as_ref().unwrap().destroyed_epoch_ids,
+            vec![low.into(), high.into()]
+        );
+        // ECDSA signing is deterministic, so the same set in any order gives identical bytes.
+        assert_eq!(from_unsorted, sign(&[low, high]));
     }
 
     /// Destroy `context_id` the way an endpoint does once the context has no epochs left.

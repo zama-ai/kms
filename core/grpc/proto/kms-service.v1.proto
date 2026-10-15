@@ -410,8 +410,8 @@ service CoreServiceEndpoint {
   // # Returns
   // * `payload` - The signed result of the destruction:
   //   * `destroyed_context_id` - The ID of the destroyed context.
-  //   * `destroyed_epoch_ids` - The epochs of the context destroyed by this call. May be empty for a context that has no
-  //     epochs, or whose epochs were all removed by an earlier, failed attempt.
+  //   * `destroyed_epoch_ids` - The epochs of the context destroyed by this call, in ascending order. May be empty for a
+  //     context that has no epochs, or whose epochs were all removed by an earlier, failed attempt.
   //   * `extra_data` - The `extra_data` of the request.
   // * `signatures` - One signature per scheme in `signing_schemes`, each covering the fields of `payload`.
   //
