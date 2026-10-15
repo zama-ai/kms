@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)]
 //! Benchmarks for the syndrome-based error correction that resharing runs (`SyndromeContext` in
 //! `galois_rings/common.rs`).
 //!
