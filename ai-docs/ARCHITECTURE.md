@@ -350,8 +350,9 @@ public-decryption verifier also uses. The threshold path takes its link check fr
 module too; the centralized path checks the link in
 `client/user_decryption_wasm.rs`.
 
-The `client_address` of a user-decryption request is an EVM address or a
-Solana public key. `ClientAddress` in `kms-grpc` parses it and picks the
+The `client_address` of a user-decryption request is an EVM address (`0x` and
+EIP-55 hex) or a Solana public key (`solana:` and base58). `ClientAddress` in
+`kms-grpc` parses it and picks the
 EIP-712 link struct and the bytes that signcryption binds the result to. The
 rest of the user-decryption path is the same for both kinds of user. The
 caller, not the KMS, checks that the handles come from the user's kind of

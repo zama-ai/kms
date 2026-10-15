@@ -30,17 +30,17 @@ const EVM_HANDLES: [&str; 2] = [
 const SOLANA_LINK_GOLDEN: &str = "a12c4152651c477aa4c0a27c670250ae9d80ad51a1b0de0361c0606dbe792331";
 const SOLANA_LINKER_TYPE: &str =
     "SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userAddress)";
-/// The base58 form of the 32-byte key `[0x11; 32]`.
-const SOLANA_USER_ADDRESS: &str = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
+/// The client address of the 32-byte key `[0x11; 32]`: `solana:` and its base58 form.
+const SOLANA_USER_ADDRESS: &str = "solana:29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 /// The handles of [`solana_request`]. The KMS treats a handle as opaque bytes.
 const SOLANA_HANDLES: [&str; 2] = [
     "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10100000000003039a1a1",
     "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a20100000000003039a2a2",
 ];
 
-/// The base58 form of the Solana key that is 12 zero bytes followed by the 20 bytes of
+/// The client address of the Solana key that is 12 zero bytes followed by the 20 bytes of
 /// [`EVM_USER_ADDRESS`].
-const PADDED_EVM_SOLANA_USER_ADDRESS: &str = "11111111111143qvqLoRCyWvikzEuL8UBgqubLPS";
+const PADDED_EVM_SOLANA_USER_ADDRESS: &str = "solana:11111111111143qvqLoRCyWvikzEuL8UBgqubLPS";
 /// EIP-712 link digest for [`evm_request`] with [`PADDED_EVM_SOLANA_USER_ADDRESS`] as the user.
 const PADDED_EVM_SOLANA_LINK_GOLDEN: &str =
     "0ff75eb646d980563d4d0dba823c23848ec78ff549d005d4c59977b6d46994bc";

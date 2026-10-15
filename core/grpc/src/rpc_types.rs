@@ -180,39 +180,44 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
 /// The longest base58 encoding of 32 bytes.
 const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 
+/// The prefix of a Solana client address: `solana` is Solana's CAIP-2 namespace. The cluster is
+/// left out because the EIP-712 domain of the link already binds it.
+const SOLANA_CLIENT_ADDRESS_PREFIX: &str = "solana:";
+
 /// The user a user-decryption result is signcrypted to. The `FromStr` impl states which string
 /// format gives which kind of user.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientAddress {
     /// An EVM address, written EIP-55.
     Evm(Address),
-    /// A Solana public key, written base58.
+    /// A Solana public key, written `solana:` and base58.
     Solana([u8; 32]),
 }
 
-/// Reads a client address. Its format picks the kind of user, and so the EIP-712 link struct:
+/// Reads a client address. Its prefix picks the kind of user, and so the EIP-712 link struct:
 ///
 /// - `0x` and EIP-55 hex is an EVM address, linked with
 ///   [`UserDecryptionLinker`](crate::solidity_types::UserDecryptionLinker).
-/// - Any other string must be the base58 encoding of a 32-byte Solana public key, linked with
+/// - `solana:` and the base58 encoding of a 32-byte public key is a Solana address, linked with
 ///   [`SolanaUserDecryptionLinker`](crate::solidity_types::SolanaUserDecryptionLinker).
 ///
-/// The `0x` prefix decides, because no base58 string starts with `0`. A hex string without the
-/// prefix is read as base58, so one that decodes to 32 bytes is a Solana key.
+/// Any other string is refused. The prefix is only the string form: [`ClientAddress::as_bytes`]
+/// and the link structs carry the address or the key alone.
 impl std::str::FromStr for ClientAddress {
     type Err = anyhow::Error;
 
     fn from_str(client_address: &str) -> Result<Self, Self::Err> {
-        // `0` is not in the base58 alphabet, so no Solana address starts with `0x`: the prefix
-        // alone tells the two formats apart.
         if client_address.starts_with("0x") {
             Self::parse_evm(client_address)
+        } else if let Some(public_verf_key) =
+            client_address.strip_prefix(SOLANA_CLIENT_ADDRESS_PREFIX)
+        {
+            Self::parse_solana(public_verf_key)
         } else {
-            Self::parse_solana(client_address).map_err(|e| {
-                anyhow::anyhow!(
-                    "a client address is `0x` and EIP-55 hex for an EVM user, or base58 of a 32-byte key for a Solana user: {e}"
-                )
-            })
+            // The input is not echoed: it can be arbitrarily long.
+            anyhow::bail!(
+                "a client address is `0x` and EIP-55 hex for an EVM user, or `{SOLANA_CLIENT_ADDRESS_PREFIX}` and base58 of a 32-byte key for a Solana user"
+            )
         }
     }
 }
@@ -224,20 +229,20 @@ impl ClientAddress {
             .map_err(|e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {client_address} - {e}"))
     }
 
-    fn parse_solana(client_address: &str) -> anyhow::Result<Self> {
+    fn parse_solana(base58_key: &str) -> anyhow::Result<Self> {
         // Checked before decoding: base58 decoding is quadratic in the input length.
-        if client_address.len() > MAX_BASE58_PUBLIC_KEY_LEN {
+        if base58_key.len() > MAX_BASE58_PUBLIC_KEY_LEN {
             anyhow::bail!(
                 "a base58 Solana address has at most {MAX_BASE58_PUBLIC_KEY_LEN} characters, got {}",
-                client_address.len()
+                base58_key.len()
             );
         }
-        let bytes = bs58::decode(client_address).into_vec().map_err(|e| {
-            anyhow::anyhow!("error parsing base58 Solana address: {client_address} - {e}")
+        let bytes = bs58::decode(base58_key).into_vec().map_err(|e| {
+            anyhow::anyhow!("error parsing base58 Solana address: {base58_key} - {e}")
         })?;
         let public_verf_key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
             anyhow::anyhow!(
-                "a Solana address is 32 bytes, got {} for {client_address}",
+                "a Solana address is 32 bytes, got {} for {base58_key}",
                 bytes.len()
             )
         })?;
@@ -294,7 +299,11 @@ impl fmt::Display for ClientAddress {
         match self {
             Self::Evm(address) => write!(f, "{}", address.to_checksum(None)),
             Self::Solana(public_verf_key) => {
-                write!(f, "{}", bs58::encode(public_verf_key).into_string())
+                write!(
+                    f,
+                    "{SOLANA_CLIENT_ADDRESS_PREFIX}{}",
+                    bs58::encode(public_verf_key).into_string()
+                )
             }
         }
     }
@@ -1813,7 +1822,8 @@ mod tests {
     fn the_client_address_format_picks_the_kind_of_user() {
         let evm_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
         let solana_key = [0x11u8; 32];
-        let solana_address = bs58::encode(solana_key).into_string();
+        let solana_base58 = bs58::encode(solana_key).into_string();
+        let solana_address = format!("solana:{solana_base58}");
 
         let evm = evm_address.parse::<ClientAddress>().unwrap();
         assert_eq!(
@@ -1822,6 +1832,7 @@ mod tests {
         );
         let solana = solana_address.parse::<ClientAddress>().unwrap();
         assert_eq!(solana, ClientAddress::Solana(solana_key));
+        assert_eq!(solana.to_string(), solana_address);
         for client_address in [evm, solana] {
             assert_eq!(
                 client_address.to_string().parse::<ClientAddress>().unwrap(),
@@ -1832,7 +1843,9 @@ mod tests {
         assert_eq!(solana.as_bytes(), solana_key.as_slice());
         // Each leading zero byte of a key is a leading `1` in base58.
         assert_eq!(
-            "1".repeat(32).parse::<ClientAddress>().unwrap(),
+            format!("solana:{}", "1".repeat(32))
+                .parse::<ClientAddress>()
+                .unwrap(),
             ClientAddress::Solana([0; 32])
         );
         let mut leading_zero_key = [0xffu8; 32];
@@ -1851,39 +1864,34 @@ mod tests {
         assert!(error(bad_checksum).contains("Bad address checksum"));
         // An `0x` address that is not 20 bytes is refused on its length before its checksum.
         assert!(error(&evm_address[..40]).contains("invalid string length"));
-        // Without the `0x` prefix an address is read as base58, which has no `0`, and the error
+        // An address with neither prefix is refused, a bare base58 key included, and the error
         // names both formats.
-        for address in [&evm_address[2..], ""] {
-            let error = error(address);
-            assert!(error.starts_with("a client address is `0x` and EIP-55 hex for an EVM user"));
-            assert!(error.contains("base58"));
+        for address in [&evm_address[2..], &solana_base58, "Solana:", ""] {
+            assert_eq!(
+                error(address),
+                "a client address is `0x` and EIP-55 hex for an EVM user, or `solana:` and base58 of a 32-byte key for a Solana user"
+            );
         }
-        // A Solana address is exactly 32 bytes; 33 bytes already exceed the base58 length cap.
+        // A Solana key is exactly 32 bytes; 33 bytes already exceed the base58 length cap.
         for (wrong_length, expected) in [
             (31, "a Solana address is 32 bytes, got 31"),
             (33, "at most 44 characters, got 45"),
         ] {
-            let address = bs58::encode(vec![0x11u8; wrong_length]).into_string();
+            let address = format!(
+                "solana:{}",
+                bs58::encode(vec![0x11u8; wrong_length]).into_string()
+            );
             assert!(error(&address).contains(expected));
         }
-        // An over-long address is refused before it is decoded.
-        assert!(error(&"2".repeat(1_000_000)).contains("at most 44 characters, got 1000000"));
+        // An over-long key is refused before it is decoded.
+        assert!(
+            error(&format!("solana:{}", "2".repeat(1_000_000)))
+                .contains("at most 44 characters, got 1000000")
+        );
     }
 
     #[test]
-    fn only_the_0x_prefix_picks_an_evm_address() {
-        // Unprefixed hex that decodes as base58 to 32 bytes is a Solana key. These 40 hex digits
-        // are not the EIP-55 spelling: they are cased to decode to 32 bytes. The EIP-55 spelling
-        // of the same digits decodes to 31 bytes and is refused.
-        let key = alloy_primitives::hex!(
-            "000000000000000176b15ce4528b47dd92bce9b26b6aa48510db94dd8a323416"
-        );
-        assert_eq!(
-            "1111111bACC8fFCBB1b5ACD9EbdaB555b1ebaA7F"
-                .parse::<ClientAddress>()
-                .unwrap(),
-            ClientAddress::Solana(key)
-        );
+    fn a_0x_address_is_always_read_as_evm() {
         // `0x` and the hex of 32 bytes is a malformed EVM address, not a Solana key.
         let error = format!("0x{}", "11".repeat(32))
             .parse::<ClientAddress>()

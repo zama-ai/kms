@@ -150,7 +150,7 @@ test('threshold user decryption response', (_t) => {
 test('solana threshold user decryption response', (_t) => {
     // TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH
     const { data, client, enc_pk, enc_sk } = loadVector('test-solana-threshold-wasm-transcript.8.json');
-    const otherKey = '3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3';
+    const otherKey = 'solana:3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3';
 
     const pt = process_user_decryption_resp_from_js(
         client, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true);

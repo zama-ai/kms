@@ -1001,7 +1001,7 @@ It expects:
 - `request_id`: A unique uint256 RequestId for the decryption request.
 - `typed_ciphertexts`: The ciphertexts to decrypt and their meta information.
 - `key_id`: The `RequestId` of the TFHE key the ciphertext is encrypted under.
-- `client_address`: The address of the end-user who is supposed to learn the user decryption response: EIP-55 with the `0x` prefix for an EVM user, or base58 of the 32-byte public key for a Solana user. Its format picks the EIP-712 link struct; the `client_address` comment in `kms.v1.proto` gives the rule.
+- `client_address`: The address of the end-user who is supposed to learn the user decryption response: EIP-55 with the `0x` prefix for an EVM user, or `solana:` and base58 of the 32-byte public key for a Solana user. Its prefix picks the EIP-712 link struct; the `client_address` comment in `kms.v1.proto` gives the rule.
 - `enc_key`: The `bincode::serialize` of `PublicEncKey`, which is a wrapper around a `crypto_box::PublicKey` to be used for encrypting the result.
 - `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
 - `extra_data`: Extra data used in the EIP712 signature - `external_signature`.
