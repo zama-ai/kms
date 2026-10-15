@@ -13,7 +13,7 @@ treatment.
 
 At the top level, an FHEVM deployment is composed of three subsystems:
 
-1. A **host chain** (EVM L1) that stores ciphertexts on-chain.
+1. A **host chain** (an EVM chain or Solana) that stores ciphertexts on-chain.
 2. An **FHEVM Gateway** that coordinates user requests.
 3. The **KMS** (this repository) that holds FHE key material and performs
    key generation, public/user decryption, CRS generation, and reshare
@@ -45,7 +45,7 @@ The **core-to-core interface** is guarded by mutual TLS. A node only accepts con
 
 The **service interface** has no TLS, no authentication and no authorization in the code, and it does not verify the intent of a request. It trusts and accepts every message it receives. The deployment guarantees, at the infrastructure level, that exactly one KMS connector can reach this interface. That connector is operated by the same party that runs the KMS core, so the two trust each other by definition. The interface is never publicly reachable.
 
-Validation of a request is split across the stack. The [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector) performs the ACL checks on ciphertext handles and only forwards events emitted by the gateway contracts. Input proofs, verified on smart contract level and by the coprocessor, ensure that a ciphertext is well formed before it reaches the chain. The KMS core verifies EIP-712 signatures on user decryption requests, authenticates peers, and validates protocol messages.
+Validation of a request is split across the stack. The [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector) performs the ACL checks on ciphertext handles and only forwards events emitted by the gateway contracts. Input proofs, verified on smart contract level and by the coprocessor, ensure that a ciphertext is well formed before it reaches the chain. A user decryption request carries no user signature: the gateway contracts or the connector check the user's signature before the request reaches the KMS, and for a Solana user the connector checks it from the permit. The KMS core binds each user decryption response to its request through the EIP-712 link and signs it, authenticates peers, and validates protocol messages.
 
 Request IDs work as follows. The gateway contracts assign each ID and bind it to its ciphertexts, and the connector resends the same payload on a retry, so the core assumes that a known ID carries the same ciphertexts as before. A meta store per operation type in the core tracks every accepted ID; MPC session IDs derive from the request ID, so this also stops a second MPC session under a used session ID. Key generation, preprocessing, CRS generation and context or epoch management reject a known ID with `AlreadyExists`. `PublicDecrypt` and `UserDecrypt` do the same unless the earlier attempt failed, in which case they reset the entry and decrypt again (`add_or_redo_failed_in_meta_store`). `PublicDecryptSync` and `UserDecryptSync` attach to the existing entry and return its result. A repeated decryption of the same ciphertexts is not a finding.
 
