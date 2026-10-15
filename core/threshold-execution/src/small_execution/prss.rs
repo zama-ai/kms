@@ -14,9 +14,11 @@ use crate::{
     small_execution::prf::{
         CHI_COUNTER_BITS, PHI_COUNTER_BITS, PHI_MAX_BOUND, PSI_COUNTER_BITS, PhiAes,
         accumulate_chi_counters, accumulate_psi_counters, check_counter_range, chi, phi_range, psi,
+        psi_group_blocks,
     },
 };
 use algebra::{
+    lincomb::{Lanes, LinearCombinator},
     matrix::{VdmMatrix, compute_powers_list},
     poly::Poly,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
@@ -374,6 +376,9 @@ pub(crate) struct SessionPrfs<Z> {
     psi: Box<[PsiAes]>,
     /// Each subset's polynomial f_A evaluated at this party's point alpha_i.
     f_a_at_role: Box<[Z]>,
+    /// The same coefficients prepared for the PRSS linear combination `sum_A f_A(alpha_i) * psi_A`
+    /// (strength-reduced multiplication matrices, lane-batched evaluation), in subset order.
+    psi_lincomb: LinearCombinator<Z>,
     phi: Box<[PhiAes]>,
     chi: Box<[ChiAes]>,
     /// This party's powers of alpha, starting with alpha^0.
@@ -656,13 +661,24 @@ fn compute_prss<Z: Ring + PRSSConversions>(
         .enumerate()
         .for_each(|(group, outputs)| {
             let ctr = prss_ctr + (group * PRF_COUNTER_GROUP) as u128;
-            let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
-            // Hot loop: one AES call per subset key covers the whole group.
-            for (psi_key, &f_a_at_role) in prfs.psi.iter().zip(&prfs.f_a_at_role) {
-                if outputs.len() == PRF_COUNTER_GROUP {
-                    accumulate_psi_counters(psi_key, ctr, f_a_at_role, &mut sums);
-                } else {
-                    // Cold: the short final group. Evaluate only requested counters; padding could pass the limit.
+            if outputs.len() == PRF_COUNTER_GROUP {
+                // Hot path: a full group. Rings with one AES block per coefficient go through the prepared
+                // linear combination; the AES output buffer is its input without copying.
+                match (Z::EXTENSION_DEGREE, Z::NUM_BITS_STAT_SEC_BASE_RING) {
+                    (4, 64 | 128) => compute_prss_group::<Z, 4>(prfs, ctr, outputs),
+                    (8, 64 | 128) => compute_prss_group::<Z, 8>(prfs, ctr, outputs),
+                    _ => {
+                        let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+                        for (psi_key, &f_a_at_role) in prfs.psi.iter().zip(&prfs.f_a_at_role) {
+                            accumulate_psi_counters(psi_key, ctr, f_a_at_role, &mut sums);
+                        }
+                        outputs.copy_from_slice(&sums);
+                    }
+                }
+            } else {
+                // Cold: the short final group. Evaluate only requested counters; padding could pass the limit.
+                let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+                for (psi_key, &f_a_at_role) in prfs.psi.iter().zip(&prfs.f_a_at_role) {
                     for (offset, sum) in sums[..outputs.len()].iter_mut().enumerate() {
                         let ctr = ctr + offset as u128;
                         accumulate_psi_counters(
@@ -673,10 +689,31 @@ fn compute_prss<Z: Ring + PRSSConversions>(
                         );
                     }
                 }
+                outputs.copy_from_slice(&sums[..outputs.len()]);
             }
-            outputs.copy_from_slice(&sums[..outputs.len()]);
         });
     shares
+}
+
+/// One full group of `PRF_COUNTER_GROUP` counters: per subset key, one AES call fills the coefficient-major block
+/// buffer and the prepared [`LinearCombinator`] adds `f_A(alpha_i)` times the 16 PRF outputs to its running sums.
+/// `DEGREE` is `Z::EXTENSION_DEGREE`; the caller checked that every counter is below `2^PSI_COUNTER_BITS`.
+fn compute_prss_group<Z: Ring + PRSSConversions, const DEGREE: usize>(
+    prfs: &SessionPrfs<Z>,
+    ctr: u128,
+    outputs: &mut [Z],
+) {
+    let mut acc = prfs.psi_lincomb.accumulator::<PRF_COUNTER_GROUP>();
+    // Every block is written by `psi_group_blocks`, so the compiler drops the zero initialization.
+    let mut blocks = [[[0u8; 16]; PRF_COUNTER_GROUP]; DEGREE];
+    for psi_key in prfs.psi.iter() {
+        psi_group_blocks::<Z, PRF_COUNTER_GROUP, DEGREE>(psi_key, ctr, &mut blocks);
+        acc.push(&Lanes::from_le_blocks(
+            blocks.as_flattened().as_flattened(),
+            DEGREE,
+        ));
+    }
+    outputs.copy_from_slice(&acc.finish());
 }
 
 /// Computes PRZS values without submitting a task or advancing session counters, like [`compute_prss`].
@@ -1281,6 +1318,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
             prfs: Arc::new(SessionPrfs {
                 role,
                 psi: psi.into_boxed_slice(),
+                psi_lincomb: LinearCombinator::new(f_a_at_role.iter().copied()),
                 f_a_at_role: f_a_at_role.into_boxed_slice(),
                 phi: phi.into_boxed_slice(),
                 chi: chi.into_boxed_slice(),

@@ -7881,6 +7881,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "const_format",
+ "criterion",
  "error-utils",
  "futures",
  "futures-util",

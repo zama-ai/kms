@@ -337,6 +337,59 @@ pub(crate) fn accumulate_psi_counters<Z: Ring + PRSSConversions, const COUNTERS:
     accumulate_counters(&pa.aes, ctr, 0, coefficient, sums, |ctr| psi(pa, ctr));
 }
 
+/// Encrypts the PRF blocks of `COUNTERS` consecutive counters with one AES call into a coefficient-major buffer:
+/// `out[i][offset]` is the AES output for coefficient `i` of counter `ctr + offset`, as the little-endian bytes that
+/// [`psi`] and [`chi`] interpret as the coefficient. This is the layout of [`algebra::lincomb::Lanes`], so a
+/// [`algebra::lincomb::LinearCombinator`] consumes the buffer without copying. One block per coefficient, so only for
+/// rings whose coefficients fit one block; the caller selects `DEGREE` and checks the counter range.
+#[inline(always)]
+fn prf_group_blocks<const COUNTERS: usize, const DEGREE: usize>(
+    aes: &Aes128Enc,
+    ctr: u128,
+    indices: u128,
+    out: &mut [[[u8; 16]; COUNTERS]; DEGREE],
+) {
+    for (coefficient_index, coefficient_blocks) in out.iter_mut().enumerate() {
+        for (offset, block) in coefficient_blocks.iter_mut().enumerate() {
+            // Write each block once, as a complete value (see `accumulate_counter_blocks`).
+            let word =
+                (ctr + offset as u128) | indices | ((coefficient_index as u8) as u128) << 112;
+            *block = word.to_le_bytes();
+        }
+    }
+    let flat: &mut [u8] = out.as_flattened_mut().as_flattened_mut();
+    let (blocks, rest) = AesBlock::slice_as_chunks_mut(flat);
+    debug_assert!(rest.is_empty());
+    // Give the backend the complete group so it can interleave independent AES round chains.
+    aes.encrypt_blocks(blocks);
+}
+
+/// Encrypts the [`psi`] blocks of counters `ctr..ctr + COUNTERS` for one subset key into `out`, coefficient-major
+/// (see [`prf_group_blocks`]). `DEGREE` must be `Z::EXTENSION_DEGREE` and each coefficient must fit one block.
+/// Panics if `COUNTERS` is zero or a counter reaches `2^PSI_COUNTER_BITS`; the caller checks the range.
+pub(crate) fn psi_group_blocks<
+    Z: Ring + PRSSConversions,
+    const COUNTERS: usize,
+    const DEGREE: usize,
+>(
+    pa: &PsiAes,
+    ctr: u128,
+    out: &mut [[[u8; 16]; COUNTERS]; DEGREE],
+) {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    // The caller selects DEGREE from Z, so these fold away.
+    assert_eq!(DEGREE, Z::EXTENSION_DEGREE);
+    assert!(
+        Z::NUM_BITS_STAT_SEC_BASE_RING <= 128,
+        "psi_group_blocks needs one AES block per coefficient"
+    );
+    assert_counter_range("psi", ctr, COUNTERS as u128, PSI_COUNTER_BITS);
+    prf_group_blocks(&pa.aes, ctr, 0, out);
+}
+
 /// Adds `coefficient * chi(pa, ctr + offset, j)` to `sums[offset]` for each offset, with the encoding of [`chi`].
 /// Panics if `COUNTERS` is zero or a counter reaches `2^CHI_COUNTER_BITS`; the caller checks the range.
 pub(crate) fn accumulate_chi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
@@ -469,6 +522,44 @@ mod tests {
         check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>();
         check::<algebra::galois_rings::degree_3::ResiduePolyF3Z64>();
         check::<algebra::galois_rings::degree_3::ResiduePolyF3Z128>();
+    }
+
+    // The coefficient-major group buffer decodes, lane by lane, to the scalar psi of each counter.
+    #[test]
+    fn psi_group_blocks_match_scalar_psi() {
+        fn check<Z: Ring + PRSSConversions, const DEGREE: usize>() {
+            use algebra::lincomb::Lanes;
+            for sid in [0, 42] {
+                let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(sid));
+                for start in [0, 255, (1_u128 << 64) - 3, (1_u128 << 112) - 16] {
+                    let mut blocks = [[[0u8; 16]; 16]; DEGREE];
+                    psi_group_blocks::<Z, 16, DEGREE>(&key, start, &mut blocks);
+                    let lanes =
+                        Lanes::<16>::from_le_blocks(blocks.as_flattened().as_flattened(), DEGREE);
+                    for lane in 0..16 {
+                        let expected = original_encoding::<Z>(&key.aes, start + lane as u128, None);
+                        assert_eq!(lanes.element::<Z>(lane), expected);
+                        assert_eq!(psi::<Z>(&key, start + lane as u128), expected);
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64, 4>();
+        check::<ResiduePolyF4Z128, 4>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64, 8>();
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128, 8>();
+    }
+
+    #[test]
+    #[should_panic(expected = "psi counters from")]
+    fn psi_group_blocks_panics_if_its_last_counter_reaches_the_limit() {
+        let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(0));
+        let mut blocks = [[[0u8; 16]; 16]; 4];
+        psi_group_blocks::<ResiduePolyF4Z128, 16, 4>(
+            &key,
+            (1 << PSI_COUNTER_BITS) - 15,
+            &mut blocks,
+        );
     }
 
     // The grouped PRFs add coefficient times each output to existing sums, in counter order.
