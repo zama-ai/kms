@@ -36,6 +36,7 @@ use crate::{
 };
 use alloy_sol_types::SolStruct;
 use itertools::Itertools;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
@@ -44,7 +45,6 @@ use kms_grpc::kms::v1::{
 use kms_grpc::kms::v1::{DestroyMpcContextResponse, Empty};
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::solidity_types::ContextDestructionVerification;
-use kms_grpc::{EpochId, RequestId};
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
@@ -130,12 +130,10 @@ where
         Ok(false)
     }
 
-    /// The signed confirmation that `verified.context_id` was destroyed together with
-    /// `destroyed_epoch_ids`.
+    /// The signed confirmation that `verified.context_id` no longer exists on this party.
     fn sign_destroy_mpc_context(
         &self,
         verified: &VerifiedDestroyMpcContext,
-        destroyed_epoch_ids: &[EpochId],
     ) -> Result<DestroyMpcContextResponse, MetricedError> {
         let context_id = verified.context_id;
         let identity = self.base_kms.signing_identity().map_err(|e| {
@@ -146,19 +144,11 @@ where
                 tonic::Code::Internal,
             )
         })?;
-        // The epochs are signed in ascending order, so every party signs the same message for the
-        // same set of epochs, whatever order its epoch map yields them in.
-        let mut destroyed_epoch_ids = destroyed_epoch_ids.to_vec();
-        destroyed_epoch_ids.sort();
-        let eip712_hash = ContextDestructionVerification::new(
-            &context_id,
-            &destroyed_epoch_ids,
-            verified.extra_data.clone(),
-        )
-        .eip712_signing_hash(&verified.domain);
+        let eip712_hash =
+            ContextDestructionVerification::new(&context_id, verified.extra_data.clone())
+                .eip712_signing_hash(&verified.domain);
         let payload = DestroyMpcContextPayload {
             destroyed_context_id: context_id,
-            destroyed_epoch_ids,
             extra_data: verified.extra_data.clone(),
         };
         let signatures = sign_result_entries(
@@ -959,21 +949,28 @@ where
     async fn destroy_mpc_context(
         &self,
         verified: VerifiedDestroyMpcContext,
-        destroyed_epoch_ids: Vec<EpochId>,
     ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
-        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
-        let mut guarded_priv_storage = private_storage.lock().await;
         // Validation ran without the lock, so another call may have changed the contexts since.
-        self.ensure_context_destroyable(&verified.context_id)
+        // This runs before the storage lock is taken, since the check takes that lock itself.
+        let context_exists = self
+            .ensure_context_destroyable(&verified.context_id)
             .await?;
 
         // Ensure we can sign the result before stating to modify the local storage
-        let response = self
-            .inner
-            .sign_destroy_mpc_context(&verified, &destroyed_epoch_ids)?;
+        let response = self.inner.sign_destroy_mpc_context(&verified)?;
+        // Observe that the response only confirms that the context no longer exists to keep repeated calls idempotent
+        if !context_exists {
+            tracing::info!(
+                context_id = %verified.context_id,
+                "MPC context does not exist; confirming its destruction"
+            );
+            return Ok(Response::new(response));
+        }
 
         // Now actually destroy the context
+        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
+        let mut guarded_priv_storage = private_storage.lock().await;
         delete_context_from_storage(&mut *guarded_priv_storage, &verified.context_id)
             .await
             .map_err(|e| {
@@ -1051,10 +1048,14 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Check that `context_id` may be destroyed.
+    ///
+    /// Returns `true` if the context is stored and is to be deleted, and `false` if it does not
+    /// exist, in which case only its absence is confirmed.
     async fn ensure_context_destroyable(
         &self,
         context_id: &ContextId,
-    ) -> Result<(), MetricedError> {
+    ) -> Result<bool, MetricedError> {
         let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let guarded_priv_storage = private_storage.lock().await;
         let context_exists = guarded_priv_storage
@@ -1072,12 +1073,8 @@ where
                 )
             })?;
         if !context_exists {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some((*context_id).into()),
-                anyhow::anyhow!("Context with id {context_id} does not exist in storage"),
-                tonic::Code::NotFound,
-            ));
+            // Already destroyed, or never created: there is nothing to delete, only to confirm.
+            return Ok(false);
         }
 
         // Ensure we are not removing the last context
@@ -1102,7 +1099,7 @@ where
                 tonic::Code::FailedPrecondition,
             ));
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -1120,19 +1117,18 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    /// Check that `context_id` is loaded in the session maker and is not the last context
-    /// there, so it may be destroyed.
+    /// Check that `context_id` may be destroyed: it must not be the last context in the session
+    /// maker, nor hold the last epoch.
+    ///
+    /// Returns `true` if the context is loaded and is to be deleted, and `false` if it does not
+    /// exist, in which case only its absence is confirmed.
     async fn ensure_context_destroyable(
         &self,
         context_id: &ContextId,
-    ) -> Result<(), MetricedError> {
+    ) -> Result<bool, MetricedError> {
         if !self.session_maker.context_exists(context_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                Some((*context_id).into()),
-                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
-                tonic::Code::NotFound,
-            ));
+            // Already destroyed, or never created: there is nothing to delete, only to confirm.
+            return Ok(false);
         }
 
         if self.session_maker.context_count().await < 2 {
@@ -1164,7 +1160,7 @@ where
                 tonic::Code::FailedPrecondition,
             ));
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn new(
@@ -1459,21 +1455,26 @@ where
     async fn destroy_mpc_context(
         &self,
         verified: VerifiedDestroyMpcContext,
-        destroyed_epoch_ids: Vec<EpochId>,
     ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
-        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
-        let mut guarded_priv_storage = private_storage.lock().await;
         // Validation ran without the lock, so another call may have changed the contexts since.
-        self.ensure_context_destroyable(&verified.context_id)
+        let context_exists = self
+            .ensure_context_destroyable(&verified.context_id)
             .await?;
 
         // Sign before deleting the context, so that a signing failure leaves the context in place.
-        let response = self
-            .inner
-            .sign_destroy_mpc_context(&verified, &destroyed_epoch_ids)?;
+        let response = self.inner.sign_destroy_mpc_context(&verified)?;
+        if !context_exists {
+            tracing::info!(
+                context_id = %verified.context_id,
+                "MPC context does not exist; confirming its destruction"
+            );
+            return Ok(Response::new(response));
+        }
 
         // Now actually destroy the context
+        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
+        let mut guarded_priv_storage = private_storage.lock().await;
         delete_context_from_storage(&mut *guarded_priv_storage, &verified.context_id)
             .await
             .map_err(|e| {
@@ -3715,41 +3716,6 @@ mod tests {
         );
     }
 
-    /// The signed list of destroyed epochs is canonical, i.e. ascending order.
-    #[tokio::test]
-    async fn destroyed_epochs_are_signed_in_ascending_order() {
-        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key, test_rng_source());
-        let context_manager = CentralizedContextManager::new(
-            base_kms,
-            crypto_storage,
-            MetaStore::new(100, 10),
-            Arc::new(TaskTracker::new()),
-        );
-        let verified = VerifiedDestroyMpcContext {
-            context_id: ContextId::from_bytes([6u8; 32]),
-            domain: crate::dummy_domain(),
-            extra_data: Vec::new(),
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
-        };
-        let low = EpochId::from_bytes([1u8; 32]);
-        let high = EpochId::from_bytes([2u8; 32]);
-        let sign = |epoch_ids: &[EpochId]| {
-            context_manager
-                .inner
-                .sign_destroy_mpc_context(&verified, epoch_ids)
-                .unwrap()
-        };
-
-        let from_unsorted = sign(&[high, low]);
-        assert_eq!(
-            from_unsorted.payload.as_ref().unwrap().destroyed_epoch_ids,
-            vec![low.into(), high.into()]
-        );
-        // ECDSA signing is deterministic, so the same set in any order gives identical bytes.
-        assert_eq!(from_unsorted, sign(&[low, high]));
-    }
-
     /// Destroy `context_id` the way an endpoint does once the context has no epochs left.
     async fn destroy_mpc_context_without_epochs(
         context_manager: &(impl ContextManager + Sync),
@@ -3764,8 +3730,6 @@ mod tests {
             signing_schemes: Vec::new(),
         };
         let verified = context_manager.validate_destroy_mpc_context(&req).await?;
-        context_manager
-            .destroy_mpc_context(verified, Vec::new())
-            .await
+        context_manager.destroy_mpc_context(verified).await
     }
 }

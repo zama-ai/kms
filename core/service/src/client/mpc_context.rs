@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
+    identifiers::ContextId,
     kms::v1::{
         DestroyMpcContextRequest, DestroyMpcContextResponse, MpcContext, NewMpcContextRequest,
     },
@@ -43,14 +43,14 @@ impl Client {
     /// Check that `response` confirms the destruction of `context_id` with `extra_data`, signed
     /// under every scheme this client requests.
     ///
-    /// Returns the party that produced the response, and the epochs it reports as destroyed.
+    /// Returns the party that produced the response.
     pub fn process_destroy_mpc_context_response(
         &self,
         response: &DestroyMpcContextResponse,
         context_id: &ContextId,
         extra_data: &[u8],
         domain: &Eip712Domain,
-    ) -> anyhow::Result<(u32, Vec<EpochId>)> {
+    ) -> anyhow::Result<u32> {
         let received: DestroyMpcContextPayload = response
             .payload
             .clone()
@@ -69,21 +69,13 @@ impl Client {
             &response.signatures,
             // A context destruction response has no deprecated `external_signature`.
             &[],
-            &ContextDestructionVerification::new(
-                context_id,
-                &received.destroyed_epoch_ids,
-                extra_data.to_vec(),
-            ),
+            &ContextDestructionVerification::new(context_id, extra_data.to_vec()),
             domain,
             &DSEP_DESTROY_CONTEXT,
             &received,
         )?;
-        tracing::info!(
-            "Destruction of context {context_id} verified as done by party {party_id}, \
-             together with epochs {:?}",
-            received.destroyed_epoch_ids
-        );
-        Ok((party_id, received.destroyed_epoch_ids))
+        tracing::info!("Destruction of context {context_id} verified as done by party {party_id}");
+        Ok(party_id)
     }
 }
 
@@ -123,21 +115,19 @@ mod tests {
         client
     }
 
-    /// A response confirming `confirmed` with `confirmed_epochs`, signed by `identity` under
-    /// `schemes` over `signed` with `signed_epochs`, with the same signing function a node uses.
+    /// A response confirming `confirmed`, signed by `identity` under `schemes` over `signed`, with
+    /// the same signing function a node uses.
     fn response(
         identity: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
-        (confirmed, confirmed_epochs): (&ContextId, &[EpochId]),
-        (signed, signed_epochs): (&ContextId, &[EpochId]),
+        confirmed: &ContextId,
+        signed: &ContextId,
         extra_data: &[u8],
     ) -> DestroyMpcContextResponse {
-        let eip712_hash =
-            ContextDestructionVerification::new(signed, signed_epochs, extra_data.to_vec())
-                .eip712_signing_hash(&dummy_domain());
+        let eip712_hash = ContextDestructionVerification::new(signed, extra_data.to_vec())
+            .eip712_signing_hash(&dummy_domain());
         let signed_payload = DestroyMpcContextPayload {
             destroyed_context_id: *signed,
-            destroyed_epoch_ids: signed_epochs.to_vec(),
             extra_data: extra_data.to_vec(),
         };
         let signatures = sign_result_entries(
@@ -150,7 +140,6 @@ mod tests {
         .unwrap();
         let payload = DestroyMpcContextPayload {
             destroyed_context_id: *confirmed,
-            destroyed_epoch_ids: confirmed_epochs.to_vec(),
             extra_data: extra_data.to_vec(),
         };
         DestroyMpcContextResponse {
@@ -167,40 +156,34 @@ mod tests {
         let client = client_knowing(&identity);
         let context_id = ContextId::from_bytes([1u8; 32]);
         let other_context_id = ContextId::from_bytes([2u8; 32]);
-        let epochs = [
-            EpochId::from_bytes([3u8; 32]),
-            EpochId::from_bytes([4u8; 32]),
-        ];
         let extra_data = vec![7u8; 3];
         let domain = dummy_domain();
         let check = |client: &Client, response: &DestroyMpcContextResponse, extra_data: &[u8]| {
             client.process_destroy_mpc_context_response(response, &context_id, extra_data, &domain)
         };
-        let ours = (&context_id, &epochs[..]);
 
-        let valid = response(&identity, &SCHEMES, ours, ours, &extra_data);
-        assert_eq!(
-            check(&client, &valid, &extra_data).unwrap(),
-            (1, epochs.to_vec())
-        );
-
-        // A context without epochs, or whose epochs an earlier attempt removed, lists none.
-        let none = (&context_id, &[][..]);
-        let no_epochs = response(&identity, &SCHEMES, none, none, &extra_data);
-        assert_eq!(
-            check(&client, &no_epochs, &extra_data).unwrap(),
-            (1, Vec::new())
-        );
+        let valid = response(&identity, &SCHEMES, &context_id, &context_id, &extra_data);
+        assert_eq!(check(&client, &valid, &extra_data).unwrap(), 1);
 
         // A correctly signed confirmation of another context is not a confirmation of ours.
-        let theirs = (&other_context_id, &epochs[..]);
-        let other = response(&identity, &SCHEMES, theirs, theirs, &extra_data);
+        let other = response(
+            &identity,
+            &SCHEMES,
+            &other_context_id,
+            &other_context_id,
+            &extra_data,
+        );
         assert!(check(&client, &other, &extra_data).is_err());
 
-        // The epoch list in the payload must be the one the signatures cover.
-        let fewer = (&context_id, &epochs[..1]);
-        let altered_epochs = response(&identity, &SCHEMES, fewer, ours, &extra_data);
-        assert!(check(&client, &altered_epochs, &extra_data).is_err());
+        // A payload naming our context does not help if the signatures cover another one.
+        let mismatched = response(
+            &identity,
+            &SCHEMES,
+            &context_id,
+            &other_context_id,
+            &extra_data,
+        );
+        assert!(check(&client, &mismatched, &extra_data).is_err());
 
         // The extra data is bound into the signatures too.
         assert!(check(&client, &valid, &[]).is_err());
@@ -209,8 +192,8 @@ mod tests {
         let ecdsa_only = response(
             &identity,
             &[SigningSchemeType::Ecdsa256k1],
-            ours,
-            ours,
+            &context_id,
+            &context_id,
             &extra_data,
         );
         assert!(check(&client, &ecdsa_only, &extra_data).is_err());

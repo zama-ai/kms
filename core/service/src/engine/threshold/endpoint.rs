@@ -268,8 +268,9 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&verified.context_id).await.map_err(Status::from)?;
-            self.context_manager.destroy_mpc_context(verified, epochs_destroyed).await.map_err(|e| e.into())
+            self.epoch_manager.destroy_epochs_for_context(&verified.context_id).await.map_err(Status::from)?;
+            // Only now, with every epoch of the context gone, is the context's destruction confirmed.
+            self.context_manager.destroy_mpc_context(verified).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip_all)]

@@ -6,10 +6,7 @@ use crate::{
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
-    kms::v1::{
-        DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo,
-        PreviousEpochInfo,
-    },
+    kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{PubDataType, alloy_to_protobuf_domain},
 };

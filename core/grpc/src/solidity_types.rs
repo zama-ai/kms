@@ -114,21 +114,15 @@ alloy_sol_types::sol! {
     struct ContextDestructionVerification {
         /// @notice The ID of the destroyed context.
         uint256 contextId;
-        /// @notice The IDs of the epochs destroyed with the context.
-        uint256[] epochIds;
         /// @notice Extra data for client-specific context.
         bytes extraData;
     }
 }
 
 impl ContextDestructionVerification {
-    pub fn new(context_id: &ContextId, epoch_ids: &[EpochId], extra_data: Vec<u8>) -> Self {
+    pub fn new(context_id: &ContextId, extra_data: Vec<u8>) -> Self {
         Self {
             contextId: U256::from_be_slice(context_id.as_bytes()),
-            epochIds: epoch_ids
-                .iter()
-                .map(|epoch_id| U256::from_be_slice(epoch_id.as_bytes()))
-                .collect(),
             extraData: extra_data.into(),
         }
     }

@@ -216,7 +216,7 @@ async fn do_context_switch(
         // Every party confirms the destruction, and each confirmation verifies.
         let mut confirming_parties = HashSet::new();
         for response in &req_response_vec {
-            let (party_id, destroyed_epochs) = internal_client
+            let party_id = internal_client
                 .process_destroy_mpc_context_response(
                     response,
                     &new_context_id,
@@ -224,7 +224,6 @@ async fn do_context_switch(
                     &domain,
                 )
                 .unwrap();
-            assert!(destroyed_epochs.is_empty(), "the context owns no epoch");
             assert!(confirming_parties.insert(party_id));
         }
         assert_eq!(confirming_parties.len(), kms_clients.len());

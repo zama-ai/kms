@@ -305,7 +305,6 @@ pub enum DestroyMpcContextPayloadVersions {
 #[versionize(DestroyMpcContextPayloadVersions)]
 pub struct DestroyMpcContextPayload {
     pub destroyed_context_id: ContextId,
-    pub destroyed_epoch_ids: Vec<EpochId>,
     pub extra_data: Vec<u8>,
 }
 
@@ -322,14 +321,8 @@ impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextPayload {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing destroyed_context_id"))?
             .try_into()?;
-        let destroyed_epoch_ids = value
-            .destroyed_epoch_ids
-            .iter()
-            .map(|e| e.try_into())
-            .collect::<Result<Vec<EpochId>, _>>()?;
         Ok(DestroyMpcContextPayload {
             destroyed_context_id,
-            destroyed_epoch_ids,
             extra_data: value.extra_data,
         })
     }
@@ -339,11 +332,6 @@ impl From<&DestroyMpcContextPayload> for kms::v1::DestroyMpcContextPayload {
     fn from(value: &DestroyMpcContextPayload) -> Self {
         kms::v1::DestroyMpcContextPayload {
             destroyed_context_id: Some(value.destroyed_context_id.into()),
-            destroyed_epoch_ids: value
-                .destroyed_epoch_ids
-                .iter()
-                .map(|e| (*e).into())
-                .collect(),
             extra_data: value.extra_data.clone(),
         }
     }

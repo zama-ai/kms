@@ -311,9 +311,9 @@ impl<
             .validate_destroy_mpc_context(request.get_ref())
             .await
             .map_err(Status::from)?;
-        // There are no epochs in the centralized case, so the confirmation lists none.
+        // There are no epochs in the centralized case, so the context can be destroyed directly.
         self.context_manager
-            .destroy_mpc_context(verified, Vec::new())
+            .destroy_mpc_context(verified)
             .await
             .map_err(Status::from)
     }

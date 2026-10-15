@@ -13,9 +13,9 @@ use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-use crate::{CoreClientConfig, CoreConf};
 #[cfg(feature = "testing")]
 use crate::s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys};
+use crate::{CoreClientConfig, CoreConf};
 use kms_lib::client::client_wasm::Client;
 
 #[cfg(feature = "testing")]
@@ -273,13 +273,12 @@ pub(crate) async fn do_destroy_mpc_context(
     let mut signers = HashSet::new();
     while let Some(inner) = req_tasks.join_next().await {
         let response = inner??.into_inner();
-        let (party_id, _destroyed_epochs) = internal_client
-            .process_destroy_mpc_context_response(
-                &response,
-                context_id,
-                &request.extra_data,
-                &domain,
-            )?;
+        let party_id = internal_client.process_destroy_mpc_context_response(
+            &response,
+            context_id,
+            &request.extra_data,
+            &domain,
+        )?;
         anyhow::ensure!(
             signers.insert(party_id),
             "party {party_id} confirmed the destruction of context {context_id} more than once"

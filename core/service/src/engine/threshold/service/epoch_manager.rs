@@ -1594,6 +1594,12 @@ impl<
                 )
             })?;
 
+        // If the epoch does not exist, there is nothing to destroy.
+        if !self.session_maker.epoch_exists(epoch_id).await {
+            tracing::info!("Epoch {epoch_id} does not exist; nothing to destroy");
+            return Ok(());
+        }
+
         // NOTE: destroy_epoch will also destroy PRSS data
         Self::destroy_epoch(epoch_id, &self.crypto_storage, &self.session_maker).await
     }

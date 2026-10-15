@@ -64,14 +64,13 @@ pub trait ContextManager {
         request: &DestroyMpcContextRequest,
     ) -> Result<VerifiedDestroyMpcContext, MetricedError>;
 
-    /// Delete an MPC context and return a signed confirmation listing
-    /// `destroyed_epochs` as destroyed with it.
+    /// Delete an MPC context, if it still exists, and return a signed confirmation that it no
+    /// longer exists. The caller must have destroyed the context's epochs first.
     ///
     /// Before any destruction happens the request is validated using [`Self::validate_destroy_mpc_context`].
     async fn destroy_mpc_context(
         &self,
         verified: VerifiedDestroyMpcContext,
-        destroyed_epochs: Vec<EpochId>,
     ) -> Result<Response<DestroyMpcContextResponse>, MetricedError>;
 
     async fn new_custodian_context(
