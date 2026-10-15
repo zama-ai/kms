@@ -235,20 +235,20 @@ impl ClientAddress {
         let bytes = bs58::decode(client_address).into_vec().map_err(|e| {
             anyhow::anyhow!("error parsing base58 Solana address: {client_address} - {e}")
         })?;
-        let public_key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+        let public_verf_key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
             anyhow::anyhow!(
                 "a Solana address is 32 bytes, got {} for {client_address}",
                 bytes.len()
             )
         })?;
-        Ok(Self::Solana(public_key))
+        Ok(Self::Solana(public_verf_key))
     }
 
     /// The receiver id signcryption binds the result to.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Evm(address) => address.as_slice(),
-            Self::Solana(public_key) => public_key.as_slice(),
+            Self::Solana(public_verf_key) => public_verf_key.as_slice(),
         }
     }
 
@@ -272,10 +272,10 @@ impl ClientAddress {
                 userAddress: *address,
             }
             .eip712_signing_hash(domain),
-            Self::Solana(public_key) => SolanaUserDecryptionLinker {
+            Self::Solana(public_verf_key) => SolanaUserDecryptionLinker {
                 publicKey: enc_key.to_vec().into(),
                 handles,
-                userAddress: B256::from(*public_key),
+                userAddress: B256::from(*public_verf_key),
             }
             .eip712_signing_hash(domain),
         };
@@ -293,7 +293,9 @@ impl fmt::Display for ClientAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Evm(address) => write!(f, "{}", address.to_checksum(None)),
-            Self::Solana(public_key) => write!(f, "{}", bs58::encode(public_key).into_string()),
+            Self::Solana(public_verf_key) => {
+                write!(f, "{}", bs58::encode(public_verf_key).into_string())
+            }
         }
     }
 }
