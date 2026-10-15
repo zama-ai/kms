@@ -3552,26 +3552,34 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn test_destroy_epoch_not_found() {
+    async fn test_destroy_epoch_that_does_not_exist() {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
 
         let nonexistent_epoch_id = EpochId::new_random(&mut rng);
+        let epochs_before = epoch_manager.session_maker.epoch_count().await;
 
-        let err = RealThresholdEpochManager::<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::destroy_epoch(
-            &nonexistent_epoch_id,
-            &epoch_manager.crypto_storage,
-            &epoch_manager.session_maker,
-        )
-        .await
-        .unwrap_err();
+        // An epoch that does not exist is confirmed as gone, and nothing changes.
+        epoch_manager
+            .destroy_epoch_with_lease(&nonexistent_epoch_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            epoch_manager.session_maker.epoch_count().await,
+            epochs_before
+        );
 
-        assert_eq!(err.code(), Code::NotFound);
+        // An epoch that is not registered yet but is being created is refused, not confirmed.
+        let _creation_lease = epoch_manager
+            .session_maker
+            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &nonexistent_epoch_id, None)
+            .await
+            .unwrap();
+        let err = epoch_manager
+            .destroy_epoch_with_lease(&nonexistent_epoch_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), Code::FailedPrecondition);
     }
 
     /// The creation lease remains live after PRSS registers the epoch, preventing destruction while

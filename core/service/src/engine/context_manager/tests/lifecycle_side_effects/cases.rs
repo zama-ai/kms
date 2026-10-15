@@ -211,6 +211,30 @@ async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
     );
 }
 
+/// Destroying a context that does not exist confirms it, without touching storage or the
+/// remaining context.
+#[rstest::rstest]
+#[case::centralized(KMSType::Centralized)]
+#[case::threshold(KMSType::Threshold)]
+#[tokio::test]
+async fn destroying_an_absent_context_confirms_it(#[case] kms_type: KMSType) {
+    let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
+    let manager = fixture.manager(kms_type).await;
+
+    manager
+        .destroy_mpc_context(*fixture.target.context_id())
+        .await
+        .unwrap();
+
+    assert_eq!(fixture.state().await, fixture.before);
+    assert!(
+        manager
+            .mpc_context_exists_and_consistent(&fixture.keeper_id)
+            .await
+    );
+    assert_same_events(&fixture.events().await, &[]);
+}
+
 /// A delete error after mutation counts as success when the context is confirmed absent.
 #[rstest::rstest]
 #[case::centralized(KMSType::Centralized)]

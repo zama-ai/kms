@@ -76,9 +76,16 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
         .unwrap();
     let after_restart = threshold_storage_state(&material_path);
     assert_restart_state(&after_successful_delete, &after_restart);
-    assert_destroy_error(&restarted_clients, second_epoch, Code::NotFound).await;
-    // This response proves startup loaded the remaining epoch from disk. Without it, deletion
-    // would return `NotFound` instead of rejecting removal of the last epoch.
+    // The restarted parties have no record of destroying the epoch, yet they still confirm that it
+    // no longer exists, with signatures that verify.
+    destroy_epochs_and_assert_success(&restarted_clients, &internal_client, second_epoch).await;
+    assert_eq!(
+        threshold_storage_state(&material_path),
+        after_restart,
+        "confirming a destroyed epoch changed files"
+    );
+    // This response proves startup loaded the remaining epoch from disk. Without it, the epoch
+    // would be confirmed as gone instead of being protected as the last epoch.
     assert_destroy_error(
         &restarted_clients,
         *DEFAULT_EPOCH_ID,
