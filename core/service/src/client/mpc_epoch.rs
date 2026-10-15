@@ -54,25 +54,58 @@ mod tests {
     use super::*;
     use crate::consts::TEST_PARAM;
     use crate::cryptography::signatures::{
-        PrivateSigKey, compute_eip712_signature, gen_sig_keys,
+        NodeSigningIdentity, SigningSchemeType, VerfKeySet, test_support::seeded_identity,
     };
+    use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
-    use kms_grpc::rpc_types::ecdsa_signatures;
+    use alloy_sol_types::SolStruct;
+    use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
     use std::collections::HashMap;
     use threshold_types::rng::AesRng;
 
-    /// A response confirming `confirmed`, ECDSA-signed by `sk` over `signed`.
+    /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
+    /// verification are exercised.
+    const SCHEMES: [SigningSchemeType; 2] =
+        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+    /// A client that knows `identity` as party 1, holds its key for every scheme in [`SCHEMES`],
+    /// and requests them all.
+    fn client_knowing(identity: &NodeSigningIdentity) -> Client {
+        let pk = identity.verf_key();
+        let mut client = Client::new(
+            HashMap::from([(1, pk.clone())]),
+            HashMap::from([(1, VerfKeySet::from_identity(identity, &SCHEMES).unwrap())]),
+            pk.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        client.set_signing_schemes(&SCHEMES).unwrap();
+        client
+    }
+
+    /// A response confirming `confirmed`, signed by `identity` under `schemes` over `signed`, with
+    /// the same signing function a node uses.
     fn response(
-        sk: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
+        schemes: &[SigningSchemeType],
         confirmed: &EpochId,
         signed: &EpochId,
         extra_data: &[u8],
     ) -> DestroyMpcEpochResponse {
-        let signature = compute_eip712_signature(
-            sk,
-            &EpochDestructionVerification::new(signed, extra_data.to_vec()),
-            &dummy_domain(),
+        let eip712_hash = EpochDestructionVerification::new(signed, extra_data.to_vec())
+            .eip712_signing_hash(&dummy_domain());
+        let signed_payload = DestroyMpcEpochPayload {
+            destroyed_epoch_id: *signed,
+            extra_data: extra_data.to_vec(),
+        };
+        let signatures = sign_result_entries(
+            identity,
+            schemes,
+            &DSEP_DESTROY_EPOCH,
+            &eip712_hash,
+            &signed_payload,
         )
         .unwrap();
         let payload = DestroyMpcEpochPayload {
@@ -81,22 +114,16 @@ mod tests {
         };
         DestroyMpcEpochResponse {
             payload: Some((&payload).into()),
-            signatures: ecdsa_signatures(signature),
+            signatures: signatures.iter().map(TypedSignature::from).collect(),
         }
     }
 
+    /// The rejections a correct node never provokes, so they cannot be reached with real servers.
     #[test]
     fn destroy_epoch_response_signatures() {
         let mut rng = AesRng::seed_from_u64(0xDE57);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let client = Client::new(
-            HashMap::from([(1, pk.clone())]),
-            HashMap::new(),
-            pk.address(),
-            None,
-            TEST_PARAM,
-            None,
-        );
+        let identity = seeded_identity(&mut rng);
+        let client = client_knowing(&identity);
         let epoch_id = EpochId::from_bytes([1u8; 32]);
         let other_epoch_id = EpochId::from_bytes([2u8; 32]);
         let extra_data = vec![7u8; 3];
@@ -105,31 +132,49 @@ mod tests {
             client.process_destroy_mpc_epoch_response(response, &epoch_id, extra_data, &domain)
         };
 
-        let valid = response(&sk, &epoch_id, &epoch_id, &extra_data);
+        let valid = response(&identity, &SCHEMES, &epoch_id, &epoch_id, &extra_data);
         assert_eq!(check(&client, &valid, &extra_data).unwrap(), 1);
 
         // A correctly signed confirmation of another epoch is not a confirmation of ours.
-        let other = response(&sk, &other_epoch_id, &other_epoch_id, &extra_data);
+        let other = response(
+            &identity,
+            &SCHEMES,
+            &other_epoch_id,
+            &other_epoch_id,
+            &extra_data,
+        );
         assert!(check(&client, &other, &extra_data).is_err());
 
-        // A payload naming our epoch does not help if the signature covers another one.
-        let mismatched = response(&sk, &epoch_id, &other_epoch_id, &extra_data);
+        // A payload naming our epoch does not help if the signatures cover another one.
+        let mismatched = response(&identity, &SCHEMES, &epoch_id, &other_epoch_id, &extra_data);
         assert!(check(&client, &mismatched, &extra_data).is_err());
 
-        // The extra data is bound into the signature too.
+        // The extra data is bound into the signatures too.
         assert!(check(&client, &valid, &[]).is_err());
 
-        // A client that does not know the signer rejects the response.
-        let pk = gen_sig_keys(&mut rng).0;
-        let address = pk.address();
-        let stranger = Client::new(
-            HashMap::from([(1, pk)]),
-            HashMap::new(),
-            address,
-            None,
-            TEST_PARAM,
-            None,
+        // Every requested scheme has to be present: an ECDSA signature alone is not enough.
+        let ecdsa_only = response(
+            &identity,
+            &[SigningSchemeType::Ecdsa256k1],
+            &epoch_id,
+            &epoch_id,
+            &extra_data,
         );
+        assert!(check(&client, &ecdsa_only, &extra_data).is_err());
+
+        // The post-quantum signature is checked in its own right, not carried by the ECDSA one.
+        let mut tampered = valid.clone();
+        // Flip a bit of the ML-DSA-65 signature of `signatures`, leaving the others intact.
+        let entry = tampered
+            .signatures
+            .iter_mut()
+            .find(|entry| entry.scheme == SigningSchemeType::MlDsa65.as_wire())
+            .unwrap();
+        entry.signature[0] ^= 0x01;
+        assert!(check(&client, &tampered, &extra_data).is_err());
+
+        // A client that does not know the signer rejects the response.
+        let stranger = client_knowing(&seeded_identity(&mut rng));
         assert!(check(&stranger, &valid, &extra_data).is_err());
     }
 }

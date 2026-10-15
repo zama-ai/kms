@@ -18,7 +18,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
 use tonic::{Code, Response, Status, transport::Channel};
@@ -151,12 +151,13 @@ pub(super) async fn create_prss_epoch(
 async fn destroy_epoch(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     epoch_id: EpochId,
+    signing_schemes: Vec<i32>,
 ) -> Vec<(u32, Result<Response<DestroyMpcEpochResponse>, Status>)> {
     let request = DestroyMpcEpochRequest {
         epoch_id: Some(epoch_id.into()),
         domain: Some(domain_to_msg(&dummy_domain())),
         extra_data: Vec::new(),
-        signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()],
+        signing_schemes,
     };
     let mut tasks = JoinSet::new();
     for (party_id, client) in clients {
@@ -171,18 +172,33 @@ async fn destroy_epoch(
     tasks.join_all().await
 }
 
-/// Requires all four parties to delete `epoch_id`.
+/// Requires all four parties to delete `epoch_id`, each confirming it with a response that
+/// `internal_client` verifies under every scheme it requests.
 ///
 /// Panics on failure.
 pub(super) async fn destroy_epochs_and_assert_success(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &Client,
     epoch_id: EpochId,
 ) {
-    for (party_id, result) in destroy_epoch(clients, epoch_id).await {
-        result.unwrap_or_else(|error| {
-            panic!("party {party_id} failed to destroy the epoch: {error}")
-        });
+    let domain = dummy_domain();
+    let mut confirming_parties = HashSet::new();
+    let results = destroy_epoch(clients, epoch_id, internal_client.signing_schemes_proto()).await;
+    for (party_id, result) in results {
+        let response = result
+            .unwrap_or_else(|error| panic!("party {party_id} failed to destroy the epoch: {error}"))
+            .into_inner();
+        let signer = internal_client
+            .process_destroy_mpc_epoch_response(&response, &epoch_id, &[], &domain)
+            .unwrap_or_else(|error| {
+                panic!("party {party_id}'s confirmation does not verify: {error}")
+            });
+        assert!(
+            confirming_parties.insert(signer),
+            "party {signer} confirmed the destruction more than once"
+        );
     }
+    assert_eq!(confirming_parties.len(), clients.len());
 }
 
 /// Requires all four parties to reject deletion with `expected_code`.
@@ -193,7 +209,9 @@ pub(super) async fn assert_destroy_error(
     epoch_id: EpochId,
     expected_code: Code,
 ) {
-    for (party_id, result) in destroy_epoch(clients, epoch_id).await {
+    // The error is decided before anything is signed, so the requested schemes do not matter.
+    let ecdsa = vec![SigningSchemeType::Ecdsa256k1.into()];
+    for (party_id, result) in destroy_epoch(clients, epoch_id, ecdsa).await {
         let error = match result {
             Ok(_) => panic!("party {party_id} unexpectedly destroyed the epoch"),
             Err(error) => error,

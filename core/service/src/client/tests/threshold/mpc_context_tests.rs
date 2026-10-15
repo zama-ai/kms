@@ -4,6 +4,7 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
 };
 use rand::SeedableRng;
+use std::collections::HashSet;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
 };
@@ -194,8 +195,9 @@ async fn do_context_switch(
     // delete the new context
     {
         // This context owns no epoch, so the destruction has no epoch material to remove.
+        let domain = dummy_domain();
         let req = internal_client
-            .destroy_mpc_context_request(&new_context_id, &dummy_domain())
+            .destroy_mpc_context_request(&new_context_id, &domain)
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
@@ -210,6 +212,22 @@ async fn do_context_switch(
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), kms_clients.len());
+
+        // Every party confirms the destruction, and each confirmation verifies.
+        let mut confirming_parties = HashSet::new();
+        for response in &req_response_vec {
+            let (party_id, destroyed_epochs) = internal_client
+                .process_destroy_mpc_context_response(
+                    response,
+                    &new_context_id,
+                    &req.extra_data,
+                    &domain,
+                )
+                .unwrap();
+            assert!(destroyed_epochs.is_empty(), "the context owns no epoch");
+            assert!(confirming_parties.insert(party_id));
+        }
+        assert_eq!(confirming_parties.len(), kms_clients.len());
     }
 
     // The destruction removes the context from the storage of every party.

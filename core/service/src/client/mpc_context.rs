@@ -90,41 +90,62 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-        use kms_grpc::rpc_types::ecdsa_signatures;
-    use kms_lib::consts::TEST_PARAM;
-    use kms_lib::cryptography::signatures::{
-        PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
+    use crate::consts::TEST_PARAM;
+    use crate::cryptography::signatures::{
+        NodeSigningIdentity, SigningSchemeType, VerfKeySet, test_support::seeded_identity,
     };
+    use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
+    use alloy_sol_types::SolStruct;
+    use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
     use std::collections::HashMap;
     use threshold_types::rng::AesRng;
 
-    /// A client that knows `pk` as party 1 and requests ECDSA only.
-    fn client_knowing(pk: PublicSigKey) -> Client {
-        let address = pk.address();
-        Client::new(
-            HashMap::from([(1, pk)]),
-            HashMap::new(),
-            address,
+    /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
+    /// verification are exercised.
+    const SCHEMES: [SigningSchemeType; 2] =
+        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+    /// A client that knows `identity` as party 1, holds its key for every scheme in [`SCHEMES`],
+    /// and requests them all.
+    fn client_knowing(identity: &NodeSigningIdentity) -> Client {
+        let pk = identity.verf_key();
+        let mut client = Client::new(
+            HashMap::from([(1, pk.clone())]),
+            HashMap::from([(1, VerfKeySet::from_identity(identity, &SCHEMES).unwrap())]),
+            pk.address(),
             None,
             TEST_PARAM,
             None,
-        )
+        );
+        client.set_signing_schemes(&SCHEMES).unwrap();
+        client
     }
 
-    /// A response confirming `confirmed` with `confirmed_epochs`, ECDSA-signed by `sk` over
-    /// `signed` with `signed_epochs`.
+    /// A response confirming `confirmed` with `confirmed_epochs`, signed by `identity` under
+    /// `schemes` over `signed` with `signed_epochs`, with the same signing function a node uses.
     fn response(
-        sk: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
+        schemes: &[SigningSchemeType],
         (confirmed, confirmed_epochs): (&ContextId, &[EpochId]),
         (signed, signed_epochs): (&ContextId, &[EpochId]),
         extra_data: &[u8],
     ) -> DestroyMpcContextResponse {
-        let signature = compute_eip712_signature(
-            sk,
-            &ContextDestructionVerification::new(signed, signed_epochs, extra_data.to_vec()),
-            &dummy_domain(),
+        let eip712_hash =
+            ContextDestructionVerification::new(signed, signed_epochs, extra_data.to_vec())
+                .eip712_signing_hash(&dummy_domain());
+        let signed_payload = DestroyMpcContextPayload {
+            destroyed_context_id: *signed,
+            destroyed_epoch_ids: signed_epochs.to_vec(),
+            extra_data: extra_data.to_vec(),
+        };
+        let signatures = sign_result_entries(
+            identity,
+            schemes,
+            &DSEP_DESTROY_CONTEXT,
+            &eip712_hash,
+            &signed_payload,
         )
         .unwrap();
         let payload = DestroyMpcContextPayload {
@@ -134,65 +155,79 @@ mod tests {
         };
         DestroyMpcContextResponse {
             payload: Some((&payload).into()),
-            signatures: ecdsa_signatures(signature),
+            signatures: signatures.iter().map(TypedSignature::from).collect(),
         }
     }
 
+    /// The rejections a correct node never provokes, so they cannot be reached with real servers.
     #[test]
     fn destroy_context_response_signatures() {
         let mut rng = AesRng::seed_from_u64(0xC0DE);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let client = client_knowing(pk);
+        let identity = seeded_identity(&mut rng);
+        let client = client_knowing(&identity);
         let context_id = ContextId::from_bytes([1u8; 32]);
         let other_context_id = ContextId::from_bytes([2u8; 32]);
-        let epochs = [EpochId::from_bytes([3u8; 32]), EpochId::from_bytes([4u8; 32])];
+        let epochs = [
+            EpochId::from_bytes([3u8; 32]),
+            EpochId::from_bytes([4u8; 32]),
+        ];
         let extra_data = vec![7u8; 3];
         let domain = dummy_domain();
         let check = |client: &Client, response: &DestroyMpcContextResponse, extra_data: &[u8]| {
             client.process_destroy_mpc_context_response(response, &context_id, extra_data, &domain)
         };
+        let ours = (&context_id, &epochs[..]);
 
-        let valid = response(
-            &sk,
-            (&context_id, &epochs),
-            (&context_id, &epochs),
-            &extra_data,
-        );
+        let valid = response(&identity, &SCHEMES, ours, ours, &extra_data);
         assert_eq!(
             check(&client, &valid, &extra_data).unwrap(),
             (1, epochs.to_vec())
         );
 
         // A context without epochs, or whose epochs an earlier attempt removed, lists none.
-        let no_epochs = response(&sk, (&context_id, &[]), (&context_id, &[]), &extra_data);
+        let none = (&context_id, &[][..]);
+        let no_epochs = response(&identity, &SCHEMES, none, none, &extra_data);
         assert_eq!(
             check(&client, &no_epochs, &extra_data).unwrap(),
             (1, Vec::new())
         );
 
         // A correctly signed confirmation of another context is not a confirmation of ours.
-        let other = response(
-            &sk,
-            (&other_context_id, &epochs),
-            (&other_context_id, &epochs),
-            &extra_data,
-        );
+        let theirs = (&other_context_id, &epochs[..]);
+        let other = response(&identity, &SCHEMES, theirs, theirs, &extra_data);
         assert!(check(&client, &other, &extra_data).is_err());
 
-        // The epoch list in the payload must be the one the signature covers.
-        let altered_epochs = response(
-            &sk,
-            (&context_id, &epochs[..1]),
-            (&context_id, &epochs),
-            &extra_data,
-        );
+        // The epoch list in the payload must be the one the signatures cover.
+        let fewer = (&context_id, &epochs[..1]);
+        let altered_epochs = response(&identity, &SCHEMES, fewer, ours, &extra_data);
         assert!(check(&client, &altered_epochs, &extra_data).is_err());
 
-        // The extra data is bound into the signature too.
+        // The extra data is bound into the signatures too.
         assert!(check(&client, &valid, &[]).is_err());
 
+        // Every requested scheme has to be present: an ECDSA signature alone is not enough.
+        let ecdsa_only = response(
+            &identity,
+            &[SigningSchemeType::Ecdsa256k1],
+            ours,
+            ours,
+            &extra_data,
+        );
+        assert!(check(&client, &ecdsa_only, &extra_data).is_err());
+
+        // The post-quantum signature is checked in its own right, not carried by the ECDSA one.
+        let mut tampered = valid.clone();
+        // Flip a bit of the ML-DSA-65 signature of `signatures`, leaving the others intact.
+        let entry = tampered
+            .signatures
+            .iter_mut()
+            .find(|entry| entry.scheme == SigningSchemeType::MlDsa65.as_wire())
+            .unwrap();
+        entry.signature[0] ^= 0x01;
+        assert!(check(&client, &tampered, &extra_data).is_err());
+
         // A client that does not know the signer rejects the response.
-        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
+        let stranger = client_knowing(&seeded_identity(&mut rng));
         assert!(check(&stranger, &valid, &extra_data).is_err());
     }
 }

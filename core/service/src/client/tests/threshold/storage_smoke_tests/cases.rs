@@ -6,6 +6,7 @@ use super::support::{
     threshold_storage_state,
 };
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM};
+use crate::cryptography::signatures::SigningSchemeType;
 use crate::engine::base::derive_request_id;
 use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 use kms_grpc::identifiers::EpochId;
@@ -24,7 +25,7 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
         .build()
         .await
         .unwrap();
-    let internal_client = env.create_internal_client(&TEST_PARAM, None).await.unwrap();
+    let mut internal_client = env.create_internal_client(&TEST_PARAM, None).await.unwrap();
     let material_path = env.material_dir.path().to_path_buf();
 
     let before_rejected_delete = threshold_storage_state(&material_path);
@@ -48,7 +49,12 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     seed_fhe_storage_layout(&material_path, second_epoch).await;
 
     let before_successful_delete = threshold_storage_state(&material_path);
-    destroy_epochs_and_assert_success(&env.clients, second_epoch).await;
+    // Confirm the destruction under a post-quantum scheme too, so the real signing of every
+    // scheme is checked end to end.
+    internal_client
+        .set_signing_schemes(&[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65])
+        .unwrap();
+    destroy_epochs_and_assert_success(&env.clients, &internal_client, second_epoch).await;
     let after_successful_delete = threshold_storage_state(&material_path);
     assert_epoch_delete_delta(
         &before_successful_delete,
