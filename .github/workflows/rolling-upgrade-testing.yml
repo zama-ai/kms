@@ -95,10 +95,15 @@
 #                            Enable core-client tracing logs.
 #   build                  (boolean, default false)
 #                            If true, build new images via docker-build.yml and use
-#                            that tag as NEW; kms_branch applies to the build.
-#   kms_branch             (string, optional)
-#                            Branch to build from when build=true; also used with
-#                            new_kms_chart_version=repository for chart checkout.
+#                            that tag as NEW. The build always uses the ref the
+#                            workflow is dispatched from (docker-build.yml takes
+#                            no ref). To test another branch, run docker-build on
+#                            it and pass its tag as new_image_tag with build=false.
+#   kms_branch             (string, optional, default: the dispatched ref)
+#                            Branch whose chart, scripts and Argo YAMLs the run
+#                            checks out when new_kms_chart_version=repository.
+#                            Does not select what build=true builds: with
+#                            build=true it must be empty or the dispatched ref.
 #   fhe_params             (choice Default|Test, default Test)
 #                            FHE parameters for preprocessing and keygen in Argo.
 #   old_kms_chart_version  (string, default 1.5.1)
@@ -181,7 +186,7 @@ on:
         default: false
         type: boolean
       kms_branch:
-        description: 'KMS branch to build from (only used when build=true)'
+        description: 'Branch whose chart, scripts and Argo YAMLs are checked out when new_kms_chart_version=repository (default: the dispatched ref). Does NOT select what build=true builds; with build=true leave it empty or set it to the dispatched ref.'
         required: false
         type: string
       fhe_params:
@@ -244,7 +249,9 @@ jobs:
   # Only runs when build=true to create the "new" image
   ############################################################################
   docker-build:
-    if: inputs.build == true
+    # Skipped when kms_branch names another ref: docker-build.yml always builds the
+    # dispatched ref. "Determine image tags" then fails the run with the reason.
+    if: inputs.build == true && (inputs.kms_branch == '' || inputs.kms_branch == github.ref_name)
     name: rolling-upgrade/docker-build
     permissions:
       actions: read # Required to read workflow run information
@@ -307,8 +314,15 @@ jobs:
           INPUT_BUILD: ${{ inputs.build }}
           INPUT_NEW_REPOSITORY: ${{ inputs.new_image_repository }}
           INPUT_OLD_REPOSITORY: ${{ inputs.old_image_repository }}
+          INPUT_KMS_BRANCH: ${{ inputs.kms_branch }}
+          DISPATCHED_REF: ${{ github.ref_name }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
+
+          if [[ "${INPUT_BUILD}" == "true" && -n "${INPUT_KMS_BRANCH}" && "${INPUT_KMS_BRANCH}" != "${DISPATCHED_REF}" ]]; then
+            echo "ERROR: build=true builds the dispatched ref (${DISPATCHED_REF}), not kms_branch (${INPUT_KMS_BRANCH}). Run docker-build on ${INPUT_KMS_BRANCH} and pass its tag as new_image_tag with build=false, or dispatch this workflow from ${INPUT_KMS_BRANCH}."
+            exit 1
+          fi
 
           if [[ "${INPUT_BUILD}" == "true" && "${INPUT_NEW_REPOSITORY}" == "legacy" ]]; then
             echo "ERROR: build=true pushes the new images to the insecure repositories. Set new_image_repository=insecure, or set build=false to roll out a release tag from the legacy repositories."

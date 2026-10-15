@@ -263,7 +263,8 @@ Dispatch inputs:
 | `restart_parties` | After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From batch 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
-| `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |
+| `build` | Build the new images from the dispatched ref and use them instead of `new_image_tag`. To test another branch, run `docker-build` on it and pass its tag as `new_image_tag` |
+| `kms_branch` | Branch whose chart, scripts and Argo YAMLs are checked out when `new_kms_chart_version=repository` (default: the dispatched ref). It does not select what `build=true` builds: with `build=true`, the run fails unless it is empty or the dispatched ref |
 
 **`test_profile=decrypt`** (default): plain public + user decrypt correctness on the
 mixed cluster with random request-IDs. Every task must pass; the job fails on any
