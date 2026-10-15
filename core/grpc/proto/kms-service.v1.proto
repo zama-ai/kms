@@ -319,6 +319,65 @@ service CoreServiceEndpoint {
   // * The result can be retrieved again with `GetUserDecryptionResult`.
   rpc UserDecryptSync(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);
 
+  // Start pad decryption (tech-spec RFC-030).
+  //
+  // That is, it decrypts a prefix of the one-time pad stream of each label in the request and
+  // returns this KMS' shares of the pads, signed and encrypted under the user's public key.
+  // The method is async in the sense that it returns immediately, but the actual decryption is
+  // done in the background. Only the threshold KMS supports this method. The centralized KMS
+  // returns `Unimplemented`.
+  //
+  // The KMS does not authenticate or authorize the user. The caller (the KMS connector) must
+  // verify the user signature, the labels against their witnesses, the witness expiration and the
+  // context and epoch before it calls this method.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // * `pads` in `request` must be a non-empty vector of [`PadDecryptionEntry`]s with unique 32-byte labels.
+  //   Each `pad_length` must be at least 1, and the sum of all `pad_length` values must not be more than 2048.
+  //   Each entry must hold exactly ceil(`pad_length` / b) block ciphertexts, where `prf` fixes the block width b.
+  //   Observe that the KMS does _not_ check that the ciphertexts are the PRF output for the label!
+  // * `prf` in `request` must be a PRF instance identifier that the KMS supports.
+  // * `key_id` in `request` must be present, valid [`RequestId`] of a key that the KMS has generated.
+  // * `enc_key` in `request` must be the public key of the user. This must be a bincode (v.1) encoded ML-KEM 512 key.
+  // * `domain` in `request` _must_ be set.
+  // * `context_id` and `epoch_id` in `request` must be present and name an existing context and epoch.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed and the pad decryption has been started in the background using `request_id` as identifier.
+  rpc PadDecrypt(kms.v1.PadDecryptionRequest) returns (kms.v1.Empty);
+
+  // Retrieves the result from a pad decryption.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the pad decryption was started.
+  //
+  // # Returns
+  // * `Response<PadDecryptionResponse>` - The `encrypted` field holds the signed shares of this KMS, encrypted under the `enc_key` of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`] that was used to start a pad decryption with `PadDecrypt` or `PadDecryptSync`.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the pad decryption again in the future. However there is no guarantee on how long the result will be stored.
+  rpc GetPadDecryptionResult(kms.v1.RequestId) returns (kms.v1.PadDecryptionResponse);
+
+  // Synchronous variant of pad decryption.
+  //
+  // That is, it starts the pad decryption exactly as `PadDecrypt` does and then waits for the
+  // result within the same call. The rules for a known `request_id` are the same as for
+  // `UserDecryptSync`.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns
+  // * `Response<PadDecryptionResponse>` - Identical to what `GetPadDecryptionResult` returns.
+  rpc PadDecryptSync(kms.v1.PadDecryptionRequest) returns (kms.v1.PadDecryptionResponse);
+
   // Start CRS generation.
   //
   // That is, it generates a common reference string (CRS) for the KMS.

@@ -37,6 +37,9 @@ fn default_builder() -> Builder {
         .type_attribute("KeySetAddedInfo", DERIVES)
         .type_attribute("TypedSigncryptedCiphertext", DERIVES)
         .type_attribute("KeyDigest", DERIVES)
+        .type_attribute("PadDecryptionResponsePlaintext", DERIVES)
+        .type_attribute("PadDecryptionResponsePayload", DERIVES)
+        .type_attribute("PadShare", DERIVES)
         .bytes(".kms.v1.TypedCiphertext.ciphertext")
 }
 

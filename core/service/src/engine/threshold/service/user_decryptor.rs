@@ -20,8 +20,9 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
-        self, CiphertextFormat, Empty, TypedCiphertext, TypedSigncryptedCiphertext,
-        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, CiphertextFormat, Empty, PadDecryptionResponse, TypedCiphertext,
+        TypedSigncryptedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
+        UserDecryptionResponsePayload,
     },
 };
 use observability::{
@@ -132,6 +133,8 @@ pub(crate) struct UserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    /// The results of pad decryption, see [`Self::pad_decrypt`].
+    pub pad_decrypt_meta_store: Arc<RwLock<MetaStore<PadDecryptionResponse>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub decryption_mode: DecryptionMode,
@@ -420,6 +423,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: MetaStore::new_unlimited(),
+            pad_decrypt_meta_store: MetaStore::new_unlimited(),
             session_maker,
             tracker,
             decryption_mode: DecryptionMode::NoiseFloodSmall,

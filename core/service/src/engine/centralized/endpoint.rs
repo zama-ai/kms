@@ -197,6 +197,33 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
             .map_err(|e| e.into())
     }
 
+    async fn pad_decrypt(
+        &self,
+        _request: Request<v1::PadDecryptionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        Err(Status::unimplemented(
+            "Pad decryption is not supported in centralized KMS",
+        ))
+    }
+
+    async fn get_pad_decryption_result(
+        &self,
+        _request: Request<v1::RequestId>,
+    ) -> Result<Response<v1::PadDecryptionResponse>, Status> {
+        Err(Status::unimplemented(
+            "Pad decryption is not supported in centralized KMS",
+        ))
+    }
+
+    async fn pad_decrypt_sync(
+        &self,
+        _request: Request<v1::PadDecryptionRequest>,
+    ) -> Result<Response<v1::PadDecryptionResponse>, Status> {
+        Err(Status::unimplemented(
+            "Pad decryption is not supported in centralized KMS",
+        ))
+    }
+
     #[tracing::instrument(skip(self, request))]
     async fn public_decrypt(
         &self,

@@ -154,6 +154,39 @@ where
     }
 
     #[tracing::instrument(skip(self, request))]
+    async fn pad_decrypt(
+        &self,
+        request: Request<PadDecryptionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        self.user_decryptor
+            .pad_decrypt(request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn get_pad_decryption_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<PadDecryptionResponse>, Status> {
+        self.user_decryptor
+            .get_pad_result(request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn pad_decrypt_sync(
+        &self,
+        request: Request<PadDecryptionRequest>,
+    ) -> Result<Response<PadDecryptionResponse>, Status> {
+        self.user_decryptor
+            .pad_decrypt_sync(request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
     async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,

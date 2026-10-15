@@ -20,6 +20,8 @@ pub mod material_integrity;
 #[cfg(feature = "non-wasm")]
 pub mod migration;
 #[cfg(feature = "non-wasm")]
+pub mod pad;
+#[cfg(feature = "non-wasm")]
 pub(crate) mod public_material_sync;
 #[cfg(feature = "non-wasm")]
 pub mod rng_source;

@@ -23,6 +23,7 @@ pub(crate) mod epoch_manager;
 pub use epoch_manager::EpochData;
 //mod initiator;
 pub(crate) mod key_generator;
+mod pad_decryptor;
 pub(crate) mod preprocessor;
 pub(crate) mod public_decryptor;
 pub(crate) mod reshare_utils;

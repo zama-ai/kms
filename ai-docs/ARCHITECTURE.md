@@ -47,11 +47,11 @@ The **service interface** has no TLS, no authentication and no authorization in 
 
 Validation of a request is split across the stack. The [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector) performs the ACL checks on ciphertext handles and only forwards events emitted by the gateway contracts. Input proofs, verified on smart contract level and by the coprocessor, ensure that a ciphertext is well formed before it reaches the chain. The KMS core verifies EIP-712 signatures on user decryption requests, authenticates peers, and validates protocol messages.
 
-Request IDs work as follows. The gateway contracts assign each ID and bind it to its ciphertexts, and the connector resends the same payload on a retry, so the core assumes that a known ID carries the same ciphertexts as before. A meta store per operation type in the core tracks every accepted ID; MPC session IDs derive from the request ID, so this also stops a second MPC session under a used session ID. Key generation, preprocessing, CRS generation and context or epoch management reject a known ID with `AlreadyExists`. `PublicDecrypt` and `UserDecrypt` do the same unless the earlier attempt failed, in which case they reset the entry and decrypt again (`add_or_redo_failed_in_meta_store`). `PublicDecryptSync` and `UserDecryptSync` attach to the existing entry and return its result. A repeated decryption of the same ciphertexts is not a finding.
+Request IDs work as follows. The gateway contracts assign each ID and bind it to its ciphertexts, and the connector resends the same payload on a retry, so the core assumes that a known ID carries the same ciphertexts as before. A meta store per operation type in the core tracks every accepted ID; MPC session IDs derive from the request ID, so this also stops a second MPC session under a used session ID. Key generation, preprocessing, CRS generation and context or epoch management reject a known ID with `AlreadyExists`. `PublicDecrypt`, `UserDecrypt` and `PadDecrypt` do the same unless the earlier attempt failed, in which case they reset the entry and decrypt again (`add_or_redo_failed_in_meta_store`). `PublicDecryptSync`, `UserDecryptSync` and `PadDecryptSync` attach to the existing entry and return its result. A repeated decryption of the same ciphertexts is not a finding.
 
 The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
 
-Decryption meta stores bound admission independently for public and user requests. A full store returns `ResourceExhausted` when no completed entry permits eviction. Clients retry this status with the same request. The bandwidth benchmark also returns `ResourceExhausted` at its separate concurrency limit.
+Decryption meta stores bound admission independently for public, user and pad requests. A full store returns `ResourceExhausted` when no completed entry permits eviction. Clients retry this status with the same request. The bandwidth benchmark also returns `ResourceExhausted` at its separate concurrency limit.
 
 Consequences for agents:
 
@@ -280,6 +280,24 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   PRSS setup and each ciphertext's session ID let that party derive the mask locally.
   This path needs no network session. Public decryption and bit-decomposition user
   decryption use network sessions.
+- **Pad decryption** — `PadDecrypt` / `GetPadDecryptionResult` / `PadDecryptSync`
+  release a prefix of the one-time pad stream of each label (tech-spec RFC-030).
+  Only the threshold KMS supports them; the centralized KMS returns
+  `Unimplemented`. The connector authenticates and authorizes the user against
+  the label witnesses and fetches the encrypted pad blocks from the coprocessor;
+  the core does not see the witnesses. The PRF instance (`prf`) fixes the FHE type
+  of a block (`engine::pad::pad_block_fhe_type`), every block is a BigCompressed
+  ciphertext, and the pads of one request hold at most
+  `engine::pad::MAX_PAD_REQUEST_BITS` (2048) bits. Each party decrypts every block
+  with the noise-flooding path of user decryption, whatever the configured
+  decryption mode, in a session derived from the request ID and a counter that
+  starts at 2^63, so pad sessions never share a session ID with user or public
+  decryption. The party EIP-712-signs the payload
+  (`solidity_types::PadDecryptResponsePayload`), then hybrid-encrypts the bc2wrap
+  serialization of the payload and signature under the user's ML-KEM-512 key.
+  `Client::process_pad_decryption_resp` decrypts and checks each response and
+  reconstructs the pads robustly. The threshold `UserDecryptor` implements it,
+  with its own meta store.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched via
@@ -370,7 +388,7 @@ epoch-scoped entry it holds belongs to the default epoch. `KeyGen`, `CrsGen`,
 `KeyGenPreproc`, `NewMpcEpoch`, `PublicDecrypt` and `UserDecrypt` reject any
 other epoch ID with `InvalidArgument`. A request that omits the epoch ID still
 falls back to the default epoch, so a caller that never sets the field is
-unaffected.
+unaffected. Pad decryption is not available and returns `Unimplemented`.
 
 ### Threshold
 

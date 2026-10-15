@@ -571,6 +571,124 @@ message TypedSigncryptedCiphertext {
   uint32 packing_factor = 4;
 }
 
+// ===========================================================================
+// Pad decryption (tech-spec RFC-030, "Pad-based Input Encryption").
+//
+// A pad decryption releases a prefix of the one-time pad stream of a label.
+// The Connector authenticates the user, authorizes the user against each
+// label witness, validates the context and epoch, and fetches the encrypted
+// pad blocks from the coprocessor. The Core decrypts the blocks, signs the
+// shares and encrypts the signed shares to the user. The Core does not see
+// the witnesses.
+// ===========================================================================
+
+// One pad to decrypt.
+message PadDecryptionEntry {
+  // The 32-byte label from the user request.
+  bytes label = 1;
+
+  // The number of bits of the pad stream to release, at least 1.
+  uint32 pad_length = 2;
+
+  // The encrypted pad blocks FHE(block_i) for i = 0..num_blocks, in block
+  // index order, in the BigCompressed ciphertext format. The coprocessor
+  // evaluates block i from the seed `label ‖ i`. num_blocks is
+  // ceil(pad_length / b), where `prf` fixes the block width b.
+  repeated bytes block_ciphertexts = 3;
+}
+
+message PadDecryptionRequest {
+  // The 32 Byte / 256 Bit ID of the pad decryption request, without `0x`
+  // prefix. Future queries for the result must use this request ID.
+  RequestId request_id = 1;
+
+  // The pads to decrypt. Labels are unique in a request. The sum of all
+  // `pad_length` values must not be more than 2048 bits.
+  repeated PadDecryptionEntry pads = 2;
+
+  // The PRF instance identifier of the witnesses (uint16 on the wire to the
+  // user). It fixes the FHE type and the bit width of each pad block.
+  uint32 prf = 3;
+
+  // The key that encrypts the pad blocks. This is the request_id used for
+  // key generation.
+  RequestId key_id = 4;
+
+  // Encoding of the user's public encryption key `auth.publicKey`. This must
+  // be a bincode (v.1) encoded ML-KEM 512 key.
+  bytes enc_key = 5;
+
+  // The EIP-712 domain of the user request. The Core signs
+  // [PadDecryptionResponsePayload] under this domain.
+  Eip712DomainMsg domain = 6;
+
+  // The signed `auth.extraData` of the user request, as a v2 encoding. The
+  // Core copies it into [PadDecryptionResponsePayload] without change.
+  bytes extra_data = 7;
+
+  // The MPC context ID from `extra_data`. This field is required.
+  RequestId context_id = 8;
+
+  // The MPC epoch ID from `extra_data`. It selects the key shares. This field
+  // is required.
+  RequestId epoch_id = 9;
+}
+
+message PadDecryptionResponse {
+  // The request ID, for routing by the Connector. The signed copy is in
+  // [PadDecryptionResponsePayload].
+  RequestId request_id = 1;
+
+  // The MPC party ID of this Core, for routing by the Connector. The signed
+  // copy is in [PadDecryptionResponsePayload].
+  uint32 party_id = 2;
+
+  // The hybrid encryption under `enc_key` of the bc2wrap serialization of
+  // [PadDecryptionResponsePlaintext]. The encryption scheme is the one that
+  // user decryption uses.
+  bytes encrypted = 3;
+}
+
+// The plaintext in `PadDecryptionResponse.encrypted`. Only the user can read
+// it.
+message PadDecryptionResponsePlaintext {
+  PadDecryptionResponsePayload payload = 1;
+
+  // The EIP-712 signature over `payload` with the signing key of this node,
+  // under the request `domain`.
+  bytes signature = 2;
+}
+
+message PadDecryptionResponsePayload {
+  // The `extra_data` of the request, without change.
+  bytes extra_data = 1;
+
+  // The request ID. All shares that the user combines must have the same
+  // request ID.
+  RequestId request_id = 2;
+
+  // The degree t of the sharing.
+  uint32 degree = 3;
+
+  // The MPC party ID of this Core in the context.
+  uint32 party_id = 4;
+
+  // One entry for each pad of the request. The order has no meaning.
+  repeated PadShare pad_shares = 5;
+}
+
+message PadShare {
+  // The label of the pad that this share is for.
+  bytes label = 1;
+
+  // The partial decryption of this node for each pad block, in block index
+  // order. Each entry has the share encoding of user decryption.
+  repeated bytes block_shares = 2;
+
+  // The packing factor of the decrypted blocks, as in user decryption.
+  uint32 packing_factor = 3;
+}
+
 // The public information for a single KMS node.
 message MpcNode {
   // The field `mpc_identity` is used to identify the core in the MPC protocol.

@@ -746,7 +746,7 @@ impl Client {
     /// the numbers of corrupted shares + num_bots must be <= threshold,
     /// otherwise reconstruction fails (hence the NOTE about optimism in the code).
     /// Returns `Ok(None)` when there are no shares at all (empty slot).
-    fn reconstruct_blocks<Z: BaseRing + Zeroize>(
+    pub(crate) fn reconstruct_blocks<Z: BaseRing + Zeroize>(
         num_parties: usize,
         degree: usize,
         num_bots: usize,
@@ -1264,7 +1264,7 @@ pub fn compute_link(
 }
 
 /// Helper method for combining reconstructed messages after decryption.
-fn decrypted_blocks_to_plaintext(
+pub(crate) fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheTypes,
     packing_factor: u32,

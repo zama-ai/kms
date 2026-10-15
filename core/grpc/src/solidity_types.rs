@@ -14,6 +14,25 @@ alloy_sol_types::sol! {
     }
 }
 
+// EIP-712 types of the payload that each KMS node signs in a pad decryption
+// response (tech-spec RFC-030). They mirror `PadDecryptionResponsePayload` and
+// `PadShare` in kms.v1.proto.
+alloy_sol_types::sol! {
+    struct PadShare {
+        bytes32 label;
+        bytes[] blockShares;
+        uint32 packingFactor;
+    }
+
+    struct PadDecryptResponsePayload {
+        bytes extraData;
+        bytes32 requestId;
+        uint32 degree;
+        uint32 partyId;
+        PadShare[] padShares;
+    }
+}
+
 // This is used internally to link a request and a response.
 alloy_sol_types::sol! {
     struct UserDecryptionLinker {

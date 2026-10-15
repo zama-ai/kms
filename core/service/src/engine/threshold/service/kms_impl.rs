@@ -764,6 +764,10 @@ where
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
     );
+    let pad_decrypt_meta_store = MetaStore::new(
+        threshold_config.dec_capacity,
+        threshold_config.min_dec_cache,
+    );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
@@ -822,6 +826,7 @@ where
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
+        pad_decrypt_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         decryption_mode: threshold_config.decryption_mode,

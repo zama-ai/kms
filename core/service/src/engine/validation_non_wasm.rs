@@ -1,6 +1,7 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::{DSEP_PUBLIC_DECRYPTION, retrieve_parameters};
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
+use crate::engine::pad::{LABEL_BYTES, MAX_PAD_REQUEST_BITS, num_pad_blocks, pad_block_fhe_type};
 use crate::engine::utils::{MetricedError, sanity_check_extra_data};
 use crate::{
     anyhow_error_and_log,
@@ -19,7 +20,8 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PadDecryptionRequest,
+    PreviousEpochInfo,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{KeyId, RequestId};
@@ -31,7 +33,8 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use observability::metrics_names::{
-    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PAD_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
 use threshold_execution::keyset_config::KeySetConfig;
@@ -118,6 +121,8 @@ pub(crate) enum RequestIdParsingErr {
     PublicDecRequest,
     UserDecRequestBadKeyId,
     PublicDecRequestBadKeyId,
+    PadDecRequest,
+    PadDecRequestBadKeyId,
 
     CrsGenResponse,
     CrsGenAbort,
@@ -126,6 +131,7 @@ pub(crate) enum RequestIdParsingErr {
     KeyGenAbort,
     UserDecResponse,
     PublicDecResponse,
+    PadDecResponse,
     EpochResponse,
 
     CustodianContext,
@@ -152,6 +158,10 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::PublicDecRequestBadKeyId => {
                 write!(f, "Invalid key ID in public decryption request")
             }
+            RequestIdParsingErr::PadDecRequest => write!(f, "Invalid pad decryption request ID"),
+            RequestIdParsingErr::PadDecRequestBadKeyId => {
+                write!(f, "Invalid key ID in pad decryption request")
+            }
             RequestIdParsingErr::CrsGenResponse => {
                 write!(f, "Invalid get CRS generation result request ID")
             }
@@ -172,6 +182,9 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::PublicDecResponse => {
                 write!(f, "Invalid get public decryption result response ID")
+            }
+            RequestIdParsingErr::PadDecResponse => {
+                write!(f, "Invalid get pad decryption result response ID")
             }
             RequestIdParsingErr::CustodianContext => {
                 write!(f, "Invalid new custodian context result response ID")
@@ -414,6 +427,126 @@ fn unpack_public_decrypt_req(
         req.extra_data.clone(),
         SigningSchemeType::resolve_requested(&req.signing_schemes)?,
     ))
+}
+
+/// One pad of a validated [`PadDecryptionRequest`].
+pub(crate) struct ValidatedPad {
+    pub(crate) label: [u8; LABEL_BYTES],
+    /// The encrypted pad blocks, in block index order.
+    pub(crate) block_ciphertexts: Vec<Vec<u8>>,
+}
+
+/// The content of a [`PadDecryptionRequest`] after [`validate_pad_decrypt_req`].
+pub(crate) struct ValidatedPadDecryptRequest {
+    pub(crate) request_id: RequestId,
+    pub(crate) key_id: KeyId,
+    pub(crate) context_id: ContextId,
+    pub(crate) epoch_id: EpochId,
+    pub(crate) pads: Vec<ValidatedPad>,
+    pub(crate) block_fhe_type: tfhe::FheTypes,
+    /// The user's public encryption key, already deserialized and validated.
+    pub(crate) enc_key: UnifiedPublicEncKey,
+    pub(crate) domain: Eip712Domain,
+    pub(crate) extra_data: Vec<u8>,
+}
+
+/// Validates and unpacks a pad decryption request.
+///
+/// The checks cover the structure of the request only: the ID formats, the label lengths and
+/// uniqueness, the pad lengths against [`MAX_PAD_REQUEST_BITS`], the number of block ciphertexts
+/// for the PRF instance, the EIP-712 domain and the encryption key. The function does not check
+/// that the referenced key, context or epoch exist.
+pub(crate) fn validate_pad_decrypt_req(
+    req: &PadDecryptionRequest,
+) -> Result<ValidatedPadDecryptRequest, MetricedError> {
+    unpack_pad_decrypt_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_PAD_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+fn unpack_pad_decrypt_req(
+    req: &PadDecryptionRequest,
+) -> Result<ValidatedPadDecryptRequest, Box<dyn std::error::Error + Send + Sync>> {
+    let request_id: RequestId =
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::PadDecRequest)?;
+    let key_id: KeyId =
+        parse_optional_grpc_request_id(&req.key_id, RequestIdParsingErr::PadDecRequestBadKeyId)?;
+    let context_id: ContextId =
+        parse_optional_grpc_request_id(&req.context_id, RequestIdParsingErr::Context)?;
+    let epoch_id: EpochId =
+        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
+    sanity_check_extra_data(&req.extra_data, &epoch_id, &context_id);
+
+    if req.pads.is_empty() {
+        return Err(anyhow::anyhow!("No pads in pad decryption request").into());
+    }
+    let block_fhe_type = pad_block_fhe_type(req.prf)?;
+
+    let mut labels = HashSet::with_capacity(req.pads.len());
+    let mut total_bits: u64 = 0;
+    let mut pads = Vec::with_capacity(req.pads.len());
+    for (idx, pad) in req.pads.iter().enumerate() {
+        let label: [u8; LABEL_BYTES] = pad.label.as_slice().try_into().map_err(|_| {
+            anyhow::anyhow!(
+                "Label of pad {idx} has {} bytes, expected {LABEL_BYTES}",
+                pad.label.len()
+            )
+        })?;
+        if !labels.insert(label) {
+            return Err(anyhow::anyhow!(
+                "Duplicate label {} in pad decryption request",
+                hex::encode(label)
+            )
+            .into());
+        }
+        if pad.pad_length == 0 {
+            return Err(anyhow::anyhow!("Pad {idx} has a pad length of 0").into());
+        }
+        total_bits += u64::from(pad.pad_length);
+        if total_bits > MAX_PAD_REQUEST_BITS {
+            return Err(anyhow::anyhow!(
+                "The pads in the request have more than {MAX_PAD_REQUEST_BITS} bits"
+            )
+            .into());
+        }
+        let expected_blocks = num_pad_blocks(req.prf, pad.pad_length)?;
+        if pad.block_ciphertexts.len() != expected_blocks {
+            return Err(anyhow::anyhow!(
+                "Pad {idx} has {} block ciphertexts, expected {expected_blocks} for {} bits",
+                pad.block_ciphertexts.len(),
+                pad.pad_length
+            )
+            .into());
+        }
+        pads.push(ValidatedPad {
+            label,
+            block_ciphertexts: pad.block_ciphertexts.clone(),
+        });
+    }
+
+    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    let enc_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&req.enc_key)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Error deserializing UnifiedPublicEncKey from PadDecryptionRequest: {e}"
+            )
+        })?;
+    Ok(ValidatedPadDecryptRequest {
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        pads,
+        block_fhe_type,
+        enc_key,
+        domain,
+        extra_data: req.extra_data.clone(),
+    })
 }
 
 /// Verify the EIP-712 encoded payload in the request.
