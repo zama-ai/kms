@@ -9,7 +9,8 @@
 use alloy_primitives::{U256, hex};
 use alloy_sol_types::SolStruct;
 use kms_grpc::{
-    kms::v1::{Eip712DomainMsg, TypedCiphertext, UserDecryptionRequest},
+    ContextId, EpochId, KeyId, RequestId,
+    kms::v1::{Eip712DomainMsg, SigningSchemeType, TypedCiphertext, UserDecryptionRequest},
     rpc_types::ClientAddress,
     solidity_types::{SolanaUserDecryptionLinker, UserDecryptionLinker},
 };
@@ -60,11 +61,26 @@ fn frozen_domain() -> Eip712DomainMsg {
     }
 }
 
-/// A deterministic request. The link hashes `enc_key` as opaque bytes and never deserializes
-/// it, so a fixed pattern is enough.
+/// A 32-byte id: `prefix`, then zeros, then `last`. The gateway and the KMS give each kind of id
+/// its own first byte.
+fn id(prefix: u8, last: u8) -> [u8; 32] {
+    let mut id = [0u8; 32];
+    id[0] = prefix;
+    id[31] = last;
+    id
+}
+
+/// A deterministic request with every field set as a running system sets it: the gateway's
+/// first user decryption (`2 << 248` plus its counter), the first key, the first context and
+/// epoch, `extra_data` v2 naming that context and epoch, and ECDSA signing. Only the encryption
+/// key, the handles and the user address enter the link, so the goldens do not depend on the
+/// rest. The link hashes `enc_key` as opaque bytes and never deserializes it, so a fixed pattern
+/// is enough.
 fn frozen_request(user_address: &str, handles: [&str; 2]) -> UserDecryptionRequest {
+    let context_id = id(0x07, 1);
+    let epoch_id = id(0x08, 1);
     UserDecryptionRequest {
-        request_id: None,
+        request_id: Some(RequestId::from_bytes(id(0x02, 1)).into()),
         typed_ciphertexts: handles
             .map(|handle| TypedCiphertext {
                 ciphertext: vec![].into(),
@@ -73,14 +89,14 @@ fn frozen_request(user_address: &str, handles: [&str; 2]) -> UserDecryptionReque
                 ciphertext_format: 0,
             })
             .to_vec(),
-        key_id: None,
+        key_id: Some(KeyId::from_bytes(id(0x04, 1)).into()),
         client_address: user_address.to_string(),
         enc_key: (0u16..800).map(|byte| byte as u8).collect(),
         domain: Some(frozen_domain()),
-        extra_data: vec![],
-        context_id: None,
-        epoch_id: None,
-        signing_schemes: vec![],
+        extra_data: [&[2u8][..], &context_id, &epoch_id].concat(),
+        context_id: Some(ContextId::from_bytes(context_id).into()),
+        epoch_id: Some(EpochId::from_bytes(epoch_id).into()),
+        signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
     }
 }
 
