@@ -410,10 +410,11 @@ pub(crate) enum TestUser {
 
 impl TestUser {
     /// Makes `client` a user of this kind. An EVM client already is: its address comes from its
-    /// signing key.
+    /// signing key. A Solana client holds no ECDSA signing key.
     pub(crate) fn set_user(self, client: &mut Client) {
         if let Self::Solana = self {
             client.client_address = ClientAddress::Solana([0x11; 32]);
+            client.client_sk = None;
         }
     }
 }
