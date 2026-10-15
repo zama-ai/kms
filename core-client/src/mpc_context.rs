@@ -1,6 +1,6 @@
 use kms_grpc::{
     identifiers::ContextId,
-    kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
+    kms::v1::NewMpcContextRequest,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 #[cfg(feature = "testing")]
@@ -14,12 +14,10 @@ use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-use crate::CoreConf;
+use crate::{CoreClientConfig, CoreConf};
 #[cfg(feature = "testing")]
-use crate::{
-    CoreClientConfig,
-    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
-};
+use crate::s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys};
+use kms_lib::client::client_wasm::Client;
 
 #[cfg(feature = "testing")]
 pub async fn create_test_context_info_from_core_config(
@@ -259,20 +257,19 @@ pub(crate) async fn do_new_mpc_context(
 }
 
 pub(crate) async fn do_destroy_mpc_context(
+    internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    cc_conf: &CoreClientConfig,
     context_id: &ContextId,
 ) -> anyhow::Result<()> {
+    let domain = cc_conf.default_domain()?;
+    let request = internal_client.destroy_mpc_context_request(context_id, &domain)?;
+
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
-        let context_cloned = (*context_id).into();
-        req_tasks.spawn(async move {
-            cur_client
-                .destroy_mpc_context(DestroyMpcContextRequest {
-                    context_id: Some(context_cloned),
-                })
-                .await
-        });
+        let req_cloned = request.clone();
+        req_tasks.spawn(async move { cur_client.destroy_mpc_context(req_cloned).await });
     }
     while let Some(inner) = req_tasks.join_next().await {
         let _ = inner??;

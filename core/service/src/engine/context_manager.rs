@@ -9,7 +9,9 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::cryptography::signing::composite::sign_result_entries;
-use crate::engine::base::{DSEP_DESTROY_CONTEXT, stored_scheme_signatures_to_proto};
+use crate::engine::base::{
+    DSEP_DESTROY_CONTEXT, DestroyMpcContextPayload, stored_scheme_signatures_to_proto,
+};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -36,7 +38,7 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
-    CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextPayload,
+    CustodianContext, DestroyCustodianContextRequest,
     DestroyMpcContextRequest, NewCustodianContextRequest, NewMpcContextRequest,
 };
 use kms_grpc::kms::v1::{DestroyMpcContextResponse, Empty};
@@ -145,13 +147,13 @@ where
             )
         })?;
         let payload = DestroyMpcContextPayload {
-            destroyed_context_id: Some(context_id.into()),
-            destroyed_epoch_ids: destroyed_epoch_ids.iter().map(|c| c.into()).collect(),
+            destroyed_context_id: context_id,
+            destroyed_epoch_ids: destroyed_epoch_ids.to_vec(),
             extra_data: verified.extra_data.clone(),
         };
         let eip712_hash = ContextDestructionVerification::new(
             &context_id,
-            &destroyed_epoch_ids,
+            destroyed_epoch_ids,
             verified.extra_data.clone(),
         )
         .eip712_signing_hash(&verified.domain);

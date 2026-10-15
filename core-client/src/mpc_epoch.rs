@@ -1,10 +1,10 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, crsgen::check_crsgen_signatures,
-    dummy_domain, keygen::check_uncompressed_keyset_signatures,
-    s3_operations::fetch_public_elements,
+    keygen::check_uncompressed_keyset_signatures, s3_operations::fetch_public_elements,
 };
 use alloy_sol_types::Eip712Domain;
+use kms_grpc::solidity_types::EpochDestructionVerification;
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
@@ -19,9 +19,7 @@ use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
-use kms_lib::engine::base::{
-    DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload, destroy_epoch_payload, destroy_epoch_sol_type,
-};
+use kms_lib::engine::base::{DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -577,7 +575,7 @@ pub(crate) fn check_destroy_epoch_response(
         &response.signatures,
         // An epoch destruction response has no deprecated `external_signature`.
         &[],
-        &destroy_epoch_sol_type(epoch_id, extra_data),
+        &EpochDestructionVerification::new(epoch_id, extra_data.to_vec()),
         domain,
         &DSEP_DESTROY_EPOCH,
         &expected,
@@ -589,10 +587,11 @@ pub(crate) fn check_destroy_epoch_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dummy_domain;
     use kms_grpc::rpc_types::ecdsa_signatures;
     use kms_lib::consts::TEST_PARAM;
     use kms_lib::cryptography::signatures::{
-        PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
+        PrivateSigKey, compute_eip712_signature, gen_sig_keys,
     };
     use rand::SeedableRng;
     use threshold_types::rng::AesRng;
@@ -606,12 +605,16 @@ mod tests {
     ) -> DestroyMpcEpochResponse {
         let signature = compute_eip712_signature(
             sk,
-            &destroy_epoch_sol_type(signed, extra_data),
+            &EpochDestructionVerification::new(signed, extra_data.to_vec()),
             &dummy_domain(),
         )
         .unwrap();
+        let payload = DestroyMpcEpochPayload {
+            destroyed_epoch_id: *confirmed,
+            extra_data: extra_data.to_vec(),
+        };
         DestroyMpcEpochResponse {
-            payload: Some((&destroy_epoch_payload(confirmed, extra_data)).into()),
+            payload: Some((&payload).into()),
             signatures: ecdsa_signatures(signature),
         }
     }
@@ -656,7 +659,16 @@ mod tests {
         assert!(check_destroy_epoch_response(&client, &valid, &epoch_id, &[], &domain).is_err());
 
         // A client that does not know the signer rejects the response.
-        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
+        let pk = gen_sig_keys(&mut rng).0;
+        let address = pk.address();
+        let stranger = Client::new(
+            HashMap::from([(1, pk)]),
+            HashMap::new(),
+            address,
+            None,
+            TEST_PARAM,
+            None,
+        );
         assert!(
             check_destroy_epoch_response(&stranger, &valid, &epoch_id, &extra_data, &domain)
                 .is_err()

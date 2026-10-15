@@ -1,6 +1,6 @@
 use kms_grpc::{
     RequestId,
-    kms::v1::DestroyMpcContextRequest,
+    kms::v1::{DestroyMpcContextRequest, SigningSchemeType},
     rpc_types::{PrivDataType, PubDataType},
 };
 use rand::SeedableRng;
@@ -10,6 +10,8 @@ use threshold_execution::{
 use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 
+use crate::dummy_domain;
+use crate::testing::helpers::domain_to_msg;
 use crate::{
     client::tests::threshold::public_decryption_tests::{
         run_decryption_threshold, run_decryption_threshold_optionally_fail,
@@ -193,7 +195,7 @@ async fn do_context_switch(
     {
         // This context owns no epoch, so the destruction has no epoch material to remove.
         let req = internal_client
-            .destroy_mpc_context_request(&new_context_id)
+            .destroy_mpc_context_request(&new_context_id, &dummy_domain())
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
@@ -312,6 +314,9 @@ async fn test_destroy_only_context_is_rejected_4p() {
         let mut client = client.clone();
         let req = DestroyMpcContextRequest {
             context_id: Some(default_context.into()),
+            domain: Some(domain_to_msg(&dummy_domain())),
+            extra_data: Vec::new(),
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()],
         };
         destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
     }

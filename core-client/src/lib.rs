@@ -2974,7 +2974,13 @@ pub async fn execute_cmd(
             )]
         }
         CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
-            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
+            do_destroy_mpc_context(
+                &mut internal_client.expect("DestroyMpcContext requires a KMS client"),
+                &core_endpoints_req,
+                &cc_conf,
+                context_id,
+            )
+            .await?;
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),

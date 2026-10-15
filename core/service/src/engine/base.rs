@@ -339,7 +339,11 @@ impl From<&DestroyMpcContextPayload> for kms::v1::DestroyMpcContextPayload {
     fn from(value: &DestroyMpcContextPayload) -> Self {
         kms::v1::DestroyMpcContextPayload {
             destroyed_context_id: Some(value.destroyed_context_id.into()),
-            destroyed_epoch_ids: value.destroyed_epoch_ids.iter().map(|e| e.into()).collect(),
+            destroyed_epoch_ids: value
+                .destroyed_epoch_ids
+                .iter()
+                .map(|e| (*e).into())
+                .collect(),
             extra_data: value.extra_data.clone(),
         }
     }

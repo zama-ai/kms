@@ -79,7 +79,7 @@ use crate::{
     },
     engine::{
         base::{
-            CrsGenMetadata, DSEP_DESTROY_EPOCH, KeyGenMetadata,
+            CrsGenMetadata, DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload, KeyGenMetadata,
             compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             compute_info_standard_keygen_from_digests, retrieve_parameters,
             stored_scheme_signatures_to_proto,
@@ -2056,8 +2056,8 @@ impl<
             .base_kms
             .signing_identity()
             .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
-        let payload = engine::DestroyMpcEpochPayload {
-            destroyed_epoch_id: epoch_id.clone(),
+        let payload = DestroyMpcEpochPayload {
+            destroyed_epoch_id: epoch_id,
             extra_data: inner.extra_data.clone(),
         };
         let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())

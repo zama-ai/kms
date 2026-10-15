@@ -17,7 +17,7 @@ use kms_grpc::kms::v1::{
     DestroyMpcEpochRequest, DestroyMpcEpochResponse, EpochResultResponse, SigningSchemeType,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::task::JoinSet;
@@ -162,8 +162,9 @@ async fn destroy_epoch(
     for (party_id, client) in clients {
         let party_id = *party_id;
         let mut client = client.clone();
+        let cur_req = request.clone();
         tasks.spawn(async move {
-            let result = client.destroy_mpc_epoch(request).await;
+            let result = client.destroy_mpc_epoch(cur_req).await;
             (party_id, result)
         });
     }
