@@ -20,7 +20,7 @@ use crate::{
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
-const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses found in context";
+const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses or digests found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 const ERR_CA_SUBJECT_MISMATCH: &str = "CA certificate subject does not match mpc_identity";
@@ -602,7 +602,7 @@ impl ContextInfo {
             ));
         }
 
-        // A signer verf key digest identifies one node across contexts, so two nodes must not share the same digest.
+        // A verification-key digest identifies one node across contexts, so two nodes must not share it.
         for scheme in SigningSchemeType::iter() {
             let mut seen: HashMap<&[u8], &str> = HashMap::new();
             for node in &self.mpc_nodes {
