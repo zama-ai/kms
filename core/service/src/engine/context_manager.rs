@@ -148,7 +148,7 @@ where
             ContextDestructionVerification::new(&context_id, verified.extra_data.clone())
                 .eip712_signing_hash(&verified.domain);
         let payload = DestroyMpcContextPayload {
-            destroyed_context_id: context_id,
+            context_id,
             extra_data: verified.extra_data.clone(),
         };
         let signatures = sign_result_entries(

@@ -1851,11 +1851,7 @@ impl<
         })
     }
 
-    async fn destroy_mpc_epochs(
-        &self,
-        epoch_ids: &[EpochId],
-    ) -> Result<Vec<EpochId>, MetricedError> {
-        let mut destroyed_epochs = Vec::new();
+    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
         let mut first_error: Option<MetricedError> = None;
         for epoch_id in epoch_ids {
             if !self.session_maker.epoch_exists(epoch_id).await {
@@ -1868,18 +1864,16 @@ impl<
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-                continue;
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(e);
             }
-            destroyed_epochs.push(*epoch_id);
         }
 
         match first_error {
             Some(e) => Err(e),
-            None => Ok(destroyed_epochs),
+            None => Ok(()),
         }
     }
 }
@@ -2063,7 +2057,7 @@ impl<
             .signing_identity()
             .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
         let payload = DestroyMpcEpochPayload {
-            destroyed_epoch_id: epoch_id,
+            epoch_id,
             extra_data: inner.extra_data.clone(),
         };
         let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())
@@ -2089,7 +2083,7 @@ impl<
     async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
-    ) -> Result<Vec<EpochId>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
@@ -3937,49 +3931,8 @@ pub(crate) mod tests {
         .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_destroy_mpc_epochs_reports_destroyed() {
-        let mut rng = AesRng::seed_from_u64(11);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-
-        let epoch_a = EpochId::new_random(&mut rng);
-        let epoch_b = EpochId::new_random(&mut rng);
-        let nonexistent = EpochId::new_random(&mut rng);
-        seed_epoch(&epoch_manager, epoch_a, *DEFAULT_MPC_CONTEXT).await;
-        seed_epoch(&epoch_manager, epoch_b, *DEFAULT_MPC_CONTEXT).await;
-
-        // A "keeper" epoch guarantees the two targets are never the last remaining epoch, so both
-        // can actually be destroyed (`destroy_epoch` refuses to remove the final epoch).
-        let keeper = EpochId::new_random(&mut rng);
-        epoch_manager
-            .session_maker
-            .add_epoch(keeper, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
-            .await;
-
-        // The nonexistent epoch is skipped, so only the two real epochs are reported, in input order.
-        let destroyed = epoch_manager
-            .destroy_mpc_epochs(&[epoch_a, nonexistent, epoch_b])
-            .await
-            .unwrap();
-        assert_eq!(
-            destroyed,
-            vec![epoch_a, epoch_b],
-            "only actually-destroyed epochs should be reported"
-        );
-
-        // A second run has nothing left to destroy, so the reported list is empty.
-        let destroyed_again = epoch_manager
-            .destroy_mpc_epochs(&[epoch_a, epoch_b])
-            .await
-            .unwrap();
-        assert!(
-            destroyed_again.is_empty(),
-            "re-destroying already-gone epochs must report an empty list"
-        );
-    }
-
     /// `destroy_epochs_for_context` must destroy exactly the epochs belonging to the given context,
-    /// leave epochs of other contexts intact, and report the destroyed epochs.
+    /// and leave epochs of other contexts intact.
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
@@ -3995,17 +3948,10 @@ pub(crate) mod tests {
         seed_epoch(&epoch_manager, epoch_a2, context_a).await;
         seed_epoch(&epoch_manager, epoch_b, context_b).await;
 
-        // Destroying context A must report both of its epochs (order is not guaranteed since the
-        // epochs are gathered from a map, so compare as sets).
-        let destroyed: std::collections::HashSet<EpochId> = epoch_manager
+        epoch_manager
             .destroy_epochs_for_context(&context_a)
             .await
-            .unwrap()
-            .into_iter()
-            .collect();
-        let expected: std::collections::HashSet<EpochId> =
-            [epoch_a1, epoch_a2].into_iter().collect();
-        assert_eq!(destroyed, expected);
+            .unwrap();
 
         // Context A's epochs are gone; context B's epoch is untouched.
         assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a1).await);
@@ -4026,15 +3972,12 @@ pub(crate) mod tests {
             vec![epoch_b]
         );
 
-        // Destroying a context with no epochs is a successful no-op reporting an empty list.
+        // Destroying a context with no epochs is a successful no-op.
         let empty_context = ContextId::new_random(&mut rng);
-        assert!(
-            epoch_manager
-                .destroy_epochs_for_context(&empty_context)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        epoch_manager
+            .destroy_epochs_for_context(&empty_context)
+            .await
+            .unwrap();
     }
 
     /// Store `bytes` as the `data_type` public material of `data_id` and return their digest,

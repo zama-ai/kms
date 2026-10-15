@@ -57,9 +57,9 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("the context destruction response carries no payload"))?
             .try_into()?;
         anyhow::ensure!(
-            received.destroyed_context_id == *context_id,
+            received.context_id == *context_id,
             "the context destruction response confirms context {}, but {context_id} was requested",
-            received.destroyed_context_id
+            received.context_id
         );
         anyhow::ensure!(
             received.extra_data == extra_data,
@@ -127,7 +127,7 @@ mod tests {
         let eip712_hash = ContextDestructionVerification::new(signed, extra_data.to_vec())
             .eip712_signing_hash(&dummy_domain());
         let signed_payload = DestroyMpcContextPayload {
-            destroyed_context_id: *signed,
+            context_id: *signed,
             extra_data: extra_data.to_vec(),
         };
         let signatures = sign_result_entries(
@@ -139,7 +139,7 @@ mod tests {
         )
         .unwrap();
         let payload = DestroyMpcContextPayload {
-            destroyed_context_id: *confirmed,
+            context_id: *confirmed,
             extra_data: extra_data.to_vec(),
         };
         DestroyMpcContextResponse {

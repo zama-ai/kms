@@ -262,7 +262,7 @@ pub enum DestroyMpcEpochPayloadVersions {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(DestroyMpcEpochPayloadVersions)]
 pub struct DestroyMpcEpochPayload {
-    pub destroyed_epoch_id: EpochId,
+    pub epoch_id: EpochId,
     pub extra_data: Vec<u8>,
 }
 
@@ -274,13 +274,13 @@ impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
-        let destroyed_epoch_id = value
-            .destroyed_epoch_id
+        let epoch_id = value
+            .epoch_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("missing destroyed_epoch_id"))?
+            .ok_or_else(|| anyhow::anyhow!("missing epoch_id"))?
             .try_into()?;
         Ok(DestroyMpcEpochPayload {
-            destroyed_epoch_id,
+            epoch_id,
             extra_data: value.extra_data,
         })
     }
@@ -289,7 +289,7 @@ impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
 impl From<&DestroyMpcEpochPayload> for kms::v1::DestroyMpcEpochPayload {
     fn from(value: &DestroyMpcEpochPayload) -> Self {
         kms::v1::DestroyMpcEpochPayload {
-            destroyed_epoch_id: Some(value.destroyed_epoch_id.into()),
+            epoch_id: Some(value.epoch_id.into()),
             extra_data: value.extra_data.clone(),
         }
     }
@@ -304,7 +304,7 @@ pub enum DestroyMpcContextPayloadVersions {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(DestroyMpcContextPayloadVersions)]
 pub struct DestroyMpcContextPayload {
-    pub destroyed_context_id: ContextId,
+    pub context_id: ContextId,
     pub extra_data: Vec<u8>,
 }
 
@@ -316,13 +316,13 @@ impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::DestroyMpcContextPayload) -> Result<Self, Self::Error> {
-        let destroyed_context_id = value
-            .destroyed_context_id
+        let context_id = value
+            .context_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("missing destroyed_context_id"))?
+            .ok_or_else(|| anyhow::anyhow!("missing context_id"))?
             .try_into()?;
         Ok(DestroyMpcContextPayload {
-            destroyed_context_id,
+            context_id,
             extra_data: value.extra_data,
         })
     }
@@ -331,7 +331,7 @@ impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextPayload {
 impl From<&DestroyMpcContextPayload> for kms::v1::DestroyMpcContextPayload {
     fn from(value: &DestroyMpcContextPayload) -> Self {
         kms::v1::DestroyMpcContextPayload {
-            destroyed_context_id: Some(value.destroyed_context_id.into()),
+            context_id: Some(value.context_id.into()),
             extra_data: value.extra_data.clone(),
         }
     }

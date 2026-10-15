@@ -570,11 +570,6 @@ pub mod test_support {
     use crate::cryptography::signing::seed::RootSigningSeed;
     use rand::RngCore;
 
-    /// Lets a test outside this crate sign a result the way a node does, so it can check a
-    /// verifier against every scheme rather than ECDSA alone.
-    #[cfg(feature = "non-wasm")]
-    pub use super::composite::sign_result_entries;
-
     /// 32 bytes drawn from `rng`, for a backend that takes its key material as a seed.
     pub fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
         let mut s = [0u8; 32];

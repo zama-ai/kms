@@ -1,6 +1,6 @@
 use hashing::DomainSep;
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
-use kms_grpc::{ContextId, EpochId};
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -112,17 +112,14 @@ pub trait EpochManager {
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError>;
 
-    /// Destroy every epoch associated with `context_id`  and
-    /// return the list of epochs succesfully destroyed.
+    /// Destroy every epoch associated with `context_id`.
     ///
     /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
     /// created on this party) is skipped; every epoch is attempted even if an earlier one fails;
     /// the first deletion error is returned only after all attempts, so a failed run can be
     /// retried until no shares remain.
-    async fn destroy_epochs_for_context(
-        &self,
-        context_id: &ContextId,
-    ) -> Result<Vec<EpochId>, MetricedError>;
+    async fn destroy_epochs_for_context(&self, context_id: &ContextId)
+    -> Result<(), MetricedError>;
 }
 
 #[tonic::async_trait]

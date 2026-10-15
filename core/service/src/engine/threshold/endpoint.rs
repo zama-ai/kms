@@ -250,9 +250,8 @@ impl_endpoint! {
         ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             let inner = request.into_inner();
-            // Validate the whole request before mutating anything: a request with valid epoch_ids
-            // but a missing/malformed context_id must not erase epochs and only then fail context
-            // parsing.
+            // Validate the whole request before mutating anything, so an invalid request never
+            // erases epochs and only then fails.
             let verified = self.context_manager.validate_destroy_mpc_context(&inner).await?;
             // Hold the exclusive context lease across both phases. This makes the epoch snapshot
             // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS

@@ -396,10 +396,12 @@ service CoreServiceEndpoint {
   // Care must be taken to ensure that the currently active MPC context is not destroyed; the KMS is agnostic to which
   // context is active and which is not. It does however ensure that at least 1 context will remain after the destruction call.
   //
-  // The call returns the set of epoch IDs that belong to the context in `epoch_ids` which has also been destroyed as part of the call.
-  // If something goes wrong, an error is returned, and the call should be retried as some epochs might have been removed from disk.
-  // The response lists only the epochs destroyed by the call that returns it; epochs removed by an earlier, failed attempt are
-  // not listed again. After a successful call, any further calls will produce a NotFound error.
+  // The epochs of the context are destroyed first, and the context only once all of them are gone. The signed confirmation
+  // attests that the context no longer exists on this party, whether it was destroyed by this call, by an earlier one, or
+  // never existed; it does not prove that the context ever existed. The call is therefore idempotent. 
+  // 
+  // If something goes wrong, an error is returned, and the call should be retried as some epochs might
+  // have been removed from disk.
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
@@ -409,20 +411,16 @@ service CoreServiceEndpoint {
   //
   // # Returns
   // * `payload` - The signed result of the destruction:
-  //   * `destroyed_context_id` - The ID of the destroyed context.
-  //   * `destroyed_epoch_ids` - The epochs of the context destroyed by this call, in ascending order. May be empty for a
-  //     context that has no epochs, or whose epochs were all removed by an earlier, failed attempt.
+  //   * `context_id` - The ID of the context that no longer exists.
   //   * `extra_data` - The `extra_data` of the request.
   // * `signatures` - One signature per scheme in `signing_schemes`, each covering the fields of `payload`.
   //
   // # Conditions
   // ## Pre-condition:
-  // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
+  // * `context_id` in `request` must be present and a valid [`RequestId`].
   // ## Post-condition:
-  // * The `context_id` in `request` and any `epoch_id` in the list returned in the response can no longer be used.
-  //   All MPC context data and epoch data associated with these ids, that may have existed, has been purged from both memory and disk.
-  //   Concretely each epoch in `epoch_ids` that existed has had its private key shares and PRSS data purged from both memory and disk.
-  //   Epochs NOT listed in the `epoch_ids` response are left untouched, even if they belong to the destroyed context.
+  // * The `context_id` in `request` can no longer be used. All MPC context data, and the private key shares and PRSS data of
+  //   every epoch that belonged to the context, have been purged from both memory and disk.
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.DestroyMpcContextResponse);
 
   // Creates a new MPC epoch.
@@ -457,7 +455,10 @@ service CoreServiceEndpoint {
   // Destroys an MPC epoch, by first erasing the PRSS
   // and then the shares of the secret key.
   //
-  // The request is validated before anything is destroyed, hence a failure means nothing was removed. 
+  // The request is validated before anything is destroyed, hence a failure means nothing was removed.
+  //
+  // The signed confirmation attests that the epoch no longer exists on this party, whether it was destroyed by this call, by
+  // an earlier one, or never existed; it does not prove that the epoch ever existed. The call is therefore idempotent.
   //
   // # Parameters
   // * `epoch_id` - Epoch ID of the MPC epoch to destroy.
@@ -470,7 +471,7 @@ service CoreServiceEndpoint {
   //
   // # Returns
   // * `payload` - The signed result of the destruction:
-  //   * `destroyed_epoch_id` - The ID of the destroyed epoch.
+  //   * `epoch_id` - The ID of the epoch that no longer exists.
   //   * `extra_data` - The `extra_data` of the request.
   // * `signatures` - One signature per scheme in `signing_schemes`, each covering the fields of `payload`.
   rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.DestroyMpcEpochResponse);

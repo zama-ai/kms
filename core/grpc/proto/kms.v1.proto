@@ -718,8 +718,8 @@ message DestroyMpcContextResponse {
 }
 
 message DestroyMpcContextPayload {
-    // The ID of the context that was destroyed
-  RequestId destroyed_context_id = 1;
+  // The ID of the context that no longer exists
+  RequestId context_id = 1;
 
   // Extra meta data used in the signature
   bytes extra_data = 2;
@@ -1002,8 +1002,8 @@ message DestroyMpcEpochResponse {
 }
 
 message DestroyMpcEpochPayload {
-  // The ID of the epoch destroyed
-  RequestId destroyed_epoch_id = 1;
+  // The ID of the epoch that no longer exists
+  RequestId epoch_id = 1;
   
   // Extra meta data used in the signature
   bytes extra_data = 2;

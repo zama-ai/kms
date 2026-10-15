@@ -23,7 +23,7 @@ impl Client {
         // The signatures are checked against what was requested rather than what came back, so a
         // party cannot confirm the destruction of some other epoch.
         let expected = DestroyMpcEpochPayload {
-            destroyed_epoch_id: *epoch_id,
+            epoch_id: *epoch_id,
             extra_data: extra_data.to_vec(),
         };
         let received: DestroyMpcEpochPayload = response
@@ -97,7 +97,7 @@ mod tests {
         let eip712_hash = EpochDestructionVerification::new(signed, extra_data.to_vec())
             .eip712_signing_hash(&dummy_domain());
         let signed_payload = DestroyMpcEpochPayload {
-            destroyed_epoch_id: *signed,
+            epoch_id: *signed,
             extra_data: extra_data.to_vec(),
         };
         let signatures = sign_result_entries(
@@ -109,7 +109,7 @@ mod tests {
         )
         .unwrap();
         let payload = DestroyMpcEpochPayload {
-            destroyed_epoch_id: *confirmed,
+            epoch_id: *confirmed,
             extra_data: extra_data.to_vec(),
         };
         DestroyMpcEpochResponse {
