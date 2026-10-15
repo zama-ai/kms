@@ -246,6 +246,10 @@ impl TryFrom<SchemeDigestsRepr> for SchemeDigests {
     }
 }
 
+impl Named for SchemeDigests {
+    const NAME: &'static str = "kms::SchemeDigests";
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
 pub enum NodeInfoVersions {
     V0(NodeInfoV0),
@@ -728,9 +732,11 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
 mod tests {
     use kms_grpc::rpc_types::PrivDataType;
     use strum::EnumCount;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
     use tfhe_versionable::{Unversionize, UnversionizeError, VersionizeOwned};
 
     use crate::{
+        consts::SAFE_SER_SIZE_LIMIT,
         cryptography::signatures::{PrivateSigKey, gen_sig_keys},
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
@@ -1238,25 +1244,20 @@ mod tests {
         assert_eq!(bc2wrap::serialize(&digests).unwrap(), bytes);
     }
 
-    /// Reads `bytes` back the way a stored context reads its `SchemeDigests`.
-    fn unversionize_scheme_digests(bytes: &[u8]) -> Result<SchemeDigests, UnversionizeError> {
-        let versioned =
-            bc2wrap::deserialize_slice::<<SchemeDigests as VersionizeOwned>::VersionedOwned>(bytes)
-                .unwrap();
-        SchemeDigests::unversionize(versioned)
-    }
-
     #[test]
-    fn unversionize_accepts_valid_digests() {
+    fn safe_deserialize_accepts_valid_digests() {
         let mut digests = SchemeDigests::new();
         for scheme in SigningSchemeType::iter() {
             digests
                 .insert(scheme, vec![0xab; scheme.expected_digest_len()])
                 .unwrap();
         }
-        let bytes = bc2wrap::serialize(&digests.versionize()).unwrap();
+        let mut bytes = Vec::new();
+        safe_serialize(&digests, &mut bytes, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        assert_eq!(unversionize_scheme_digests(&bytes).unwrap(), digests);
+        let read: SchemeDigests =
+            safe_deserialize(std::io::Cursor::new(&bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+        assert_eq!(read, digests);
     }
 
     /// A stored context is read back through `tfhe-versionable` and not through `serde`, so the
@@ -1267,9 +1268,16 @@ mod tests {
             SigningSchemeType::Ecdsa256k1,
             vec![7u8; 3],
         )]));
+        // `safe_deserialize` checks the type name in the header before unversioning, so it would
+        // reject bytes written for `SchemeDigestsRepr` on the name alone. `bc2wrap` writes the
+        // same bincode encoding as the payload that follows that header.
         let bytes = bc2wrap::serialize(&corrupt.versionize()).unwrap();
+        let versioned = bc2wrap::deserialize_slice::<
+            <SchemeDigests as VersionizeOwned>::VersionedOwned,
+        >(&bytes)
+        .unwrap();
 
-        let err = unversionize_scheme_digests(&bytes).unwrap_err();
+        let err = SchemeDigests::unversionize(versioned).unwrap_err();
         assert!(matches!(err, UnversionizeError::Conversion { .. }), "{err}");
         assert!(
             err.to_string()
