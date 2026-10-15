@@ -294,8 +294,8 @@ A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On 
 
 #### Core-client compatibility
 
-The Argo command strings target the **`v0.13.x` and `v0.14.x` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x`). The baseline pins the client to `old_image_tag`, so `old_image_tag` can be a `v0.13.x` or a `v0.14.x` tag.
-A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. Its replacement (`--rate`/`--duration`) does not fail the command when a request gets too few responses, so it cannot replace the `-a` correctness check. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client, which is compatible when `old_image_tag` is a `v0.13.x` or `v0.14.x` tag. Do not set `core_client_image_tag` to a main or `build=true` tag.
+The Argo command strings work with the **`v0.13.x`, `v0.14.x` and `v0.15+` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x` and later). The baseline pins the client to `old_image_tag`.
+The decrypt steps send one request with `--batch-size N` ciphertexts, an option that all these clients have (`--num-requests` was removed in `v0.15`). They do not use rate mode (`--rate`/`--duration`), because it does not fail the command when a request gets too few responses. In single-request mode, `-a` fails the command unless all parties respond. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client.
 The `prss-threshold` profile is `v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config). Its probes pass `--request-id`, which no released core-client supports, so it also needs an explicit `core_client_image_tag`. The workflow fails at the start if either condition is not met.
 
 ### Debugging
