@@ -449,14 +449,18 @@ impl<
         &self,
         _request: Request<v1::RequestId>,
     ) -> Result<Response<v1::EpochResultResponse>, Status> {
-        unimplemented!("MPC epochs are not supported in centralized KMS");
+        Result::Err(Status::unimplemented(
+            "MPC epochs are not supported in centralized KMS",
+        ))
     }
 
     async fn destroy_mpc_epoch(
         &self,
         _request: Request<v1::DestroyMpcEpochRequest>,
     ) -> Result<Response<DestroyMpcEpochResponse>, Status> {
-        unimplemented!("MPC epochs are not supported in centralized KMS");
+        Result::Err(Status::unimplemented(
+            "MPC epochs are not supported in centralized KMS",
+        ))
     }
 
     async fn bandwidth_benchmark(
