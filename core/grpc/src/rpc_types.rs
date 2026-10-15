@@ -202,6 +202,8 @@ impl std::str::FromStr for ClientAddress {
     type Err = anyhow::Error;
 
     fn from_str(client_address: &str) -> Result<Self, Self::Err> {
+        // `0` is not in the base58 alphabet, so no Solana address starts with `0x`: the prefix
+        // alone tells the two formats apart.
         if client_address.starts_with("0x") {
             Self::parse_evm(client_address)
         } else {
