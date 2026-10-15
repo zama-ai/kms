@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)]
 pub mod base_ring;
 pub mod bivariate;
 pub mod commitment;
