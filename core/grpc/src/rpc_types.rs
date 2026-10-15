@@ -1844,10 +1844,13 @@ mod tests {
         );
 
         let error = |address: &str| address.parse::<ClientAddress>().unwrap_err().to_string();
-        assert!(
-            error("0xd8da6BF26964aF9D7eEd9e03E53415D37aA96045")
-                .starts_with("error parsing checksummed address")
-        );
+        // `evm_address` with its fourth hex digit lowercased (`d8da`, not `d8dA`): the same 20
+        // bytes, but the casing no longer matches the EIP-55 checksum, so it is refused.
+        let bad_checksum = "0xd8da6BF26964aF9D7eEd9e03E53415D37aA96045";
+        assert!(error(bad_checksum).starts_with("error parsing checksummed address"));
+        assert!(error(bad_checksum).contains("Bad address checksum"));
+        // An `0x` address that is not 20 bytes is refused on its length before its checksum.
+        assert!(error(&evm_address[..40]).contains("invalid string length"));
         // Without the `0x` prefix an address is read as base58, which has no `0`, and the error
         // names both formats.
         for address in [&evm_address[2..], ""] {
