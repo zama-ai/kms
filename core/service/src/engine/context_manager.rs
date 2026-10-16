@@ -1117,21 +1117,50 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    /// Check that `context_id` may be destroyed: it must not be the last context in the session
-    /// maker, nor hold the last epoch.
+    /// Check that `context_id` may be destroyed: destroying it must leave at least one context in
+    /// the session maker, and it must not hold the last epoch.
     ///
-    /// Returns `true` if the context is loaded and is to be deleted, and `false` if it does not
+    /// A context counts as existing if it is loaded in the session maker or stored in private
+    /// storage. A stored context is not loaded when it failed verification at boot, and its
+    /// absence must not be confirmed while it is still on disk.
+    ///
+    /// Returns `true` if the context exists and is to be deleted, and `false` if it does not
     /// exist, in which case only its absence is confirmed.
     async fn ensure_context_destroyable(
         &self,
         context_id: &ContextId,
     ) -> Result<bool, MetricedError> {
-        if !self.session_maker.context_exists(context_id).await {
+        let loaded = self.session_maker.context_exists(context_id).await;
+        let stored = {
+            let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
+            let guarded_priv_storage = private_storage.lock().await;
+            guarded_priv_storage
+                .data_exists(
+                    &(*context_id).into(),
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_DESTROY_MPC_CONTEXT,
+                        Some((*context_id).into()),
+                        anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
+                        tonic::Code::Internal,
+                    )
+                })?
+        };
+        if !loaded && !stored {
             // Already destroyed, or never created: there is nothing to delete, only to confirm.
             return Ok(false);
         }
 
-        if self.session_maker.context_count().await < 2 {
+        // Only loaded contexts can run sessions, so at least one of them must remain.
+        let remaining_loaded = self
+            .session_maker
+            .context_count()
+            .await
+            .saturating_sub(usize::from(loaded));
+        if remaining_loaded == 0 {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,
                 Some((*context_id).into()),
@@ -1494,18 +1523,21 @@ where
             })?;
         drop(guarded_priv_storage);
 
-        // Also remove it from the session maker, so no further sessions can be run in it
-        self.session_maker
-            .remove_context(&verified.context_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(verified.context_id.into()),
-                    e,
-                    tonic::Code::Internal,
-                )
-            })?;
+        // Also remove it from the session maker, so no further sessions can be run in it. A
+        // context that failed verification at boot was never loaded, so there is nothing to remove.
+        if self.session_maker.context_exists(&verified.context_id).await {
+            self.session_maker
+                .remove_context(&verified.context_id)
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_DESTROY_MPC_CONTEXT,
+                        Some(verified.context_id.into()),
+                        e,
+                        tonic::Code::Internal,
+                    )
+                })?;
+        }
         let remaining_contexts = self.session_maker.context_count().await;
 
         tracing::info!(

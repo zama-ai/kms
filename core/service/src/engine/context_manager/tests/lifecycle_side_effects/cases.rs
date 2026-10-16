@@ -235,6 +235,42 @@ async fn destroying_an_absent_context_confirms_it(#[case] kms_type: KMSType) {
     assert_same_events(&fixture.events().await, &[]);
 }
 
+/// A stored threshold context that is not loaded in the session maker, as happens when it fails
+/// verification at boot, is deleted from storage rather than confirmed absent while still on disk.
+#[tokio::test]
+async fn destroying_a_stored_but_unloaded_context_deletes_it() {
+    let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
+    let manager = fixture.manager(KMSType::Threshold).await;
+    let TestContextManager::Threshold(threshold_manager) = &manager else {
+        unreachable!("the fixture built a threshold manager");
+    };
+    threshold_manager
+        .session_maker
+        .remove_context(fixture.target.context_id())
+        .await
+        .unwrap();
+
+    manager
+        .destroy_mpc_context(*fixture.target.context_id())
+        .await
+        .unwrap();
+
+    assert_eq!(fixture.state().await, state_without_target(&fixture));
+    assert!(
+        manager
+            .mpc_context_exists_and_consistent(&fixture.keeper_id)
+            .await
+    );
+    assert_same_events(
+        &fixture.events().await,
+        &[StorageEvent::new(
+            fixture.target_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
+    );
+}
+
 /// A delete error after mutation counts as success when the context is confirmed absent.
 #[rstest::rstest]
 #[case::centralized(KMSType::Centralized)]
