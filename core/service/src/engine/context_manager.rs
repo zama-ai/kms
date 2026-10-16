@@ -1189,7 +1189,7 @@ where
             ));
         }
 
-        // Ensure that we do not delete the last epoch in connection with the context construction
+        // Ensure that we do not delete the last epoch in connection with the context destruction.
         // While this should not be able to happen in theory the check is here as a safeguard
         let epoch_ctx_count = self
             .session_maker
@@ -1197,14 +1197,7 @@ where
             .await
             .len();
         // We need to also allow destruction if the context has no epochs associated with it, hence the `epoch_ctx_count != 0` check
-        if epoch_ctx_count != 0
-            && self.session_maker.epoch_count().await
-                == self
-                    .session_maker
-                    .epochs_for_context(context_id)
-                    .await
-                    .len()
-        {
+        if epoch_ctx_count != 0 && self.session_maker.epoch_count().await == epoch_ctx_count {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,
                 Some((*context_id).into()),

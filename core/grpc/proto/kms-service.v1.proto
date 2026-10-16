@@ -398,8 +398,8 @@ service CoreServiceEndpoint {
   //
   // The epochs of the context are destroyed first, and the context only once all of them are gone. The signed confirmation
   // attests that the context no longer exists on this party, whether it was destroyed by this call, by an earlier one, or
-  // never existed; it does not prove that the context ever existed. The call is therefore idempotent. 
-  // 
+  // never existed; it does not prove that the context ever existed. The call is therefore idempotent.
+  //
   // If something goes wrong, an error is returned, and the call should be retried as some epochs might
   // have been removed from disk.
   //

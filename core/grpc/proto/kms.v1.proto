@@ -981,7 +981,7 @@ message EpochResultResponse {
 message DestroyMpcEpochRequest {
   // The epoch ID to destroy
   RequestId epoch_id = 1;
-  
+
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 2;
 
@@ -1004,7 +1004,7 @@ message DestroyMpcEpochResponse {
 message DestroyMpcEpochPayload {
   // The ID of the epoch that no longer exists
   RequestId epoch_id = 1;
-  
+
   // Extra meta data used in the signature
   bytes extra_data = 2;
 }

@@ -52,38 +52,16 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::TEST_PARAM;
+    use crate::client::mpc_context::tests::{SCHEMES, client_knowing};
     use crate::cryptography::signatures::{
-        NodeSigningIdentity, SigningSchemeType, VerfKeySet, test_support::seeded_identity,
+        NodeSigningIdentity, SigningSchemeType, test_support::seeded_identity,
     };
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
-    use std::collections::HashMap;
     use threshold_types::rng::AesRng;
-
-    /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
-    /// verification are exercised.
-    const SCHEMES: [SigningSchemeType; 2] =
-        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
-
-    /// A client that knows `identity` as party 1, holds its key for every scheme in [`SCHEMES`],
-    /// and requests them all.
-    fn client_knowing(identity: &NodeSigningIdentity) -> Client {
-        let pk = identity.verf_key();
-        let mut client = Client::new(
-            HashMap::from([(1, pk.clone())]),
-            HashMap::from([(1, VerfKeySet::from_identity(identity, &SCHEMES).unwrap())]),
-            pk.address(),
-            None,
-            TEST_PARAM,
-            None,
-        );
-        client.set_signing_schemes(&SCHEMES).unwrap();
-        client
-    }
 
     /// A response confirming `confirmed`, signed by `identity` under `schemes` over `signed`, with
     /// the same signing function a node uses.

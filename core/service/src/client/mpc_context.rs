@@ -28,7 +28,7 @@ impl Client {
     /// Build a [`DestroyMpcContextRequest`] for `context_id`, asking for the confirmation to be
     /// signed under `eip712_domain` and every scheme this client requests.
     pub fn destroy_mpc_context_request(
-        &mut self,
+        &self,
         context_id: &ContextId,
         eip712_domain: &Eip712Domain,
     ) -> anyhow::Result<DestroyMpcContextRequest> {
@@ -51,19 +51,20 @@ impl Client {
         extra_data: &[u8],
         domain: &Eip712Domain,
     ) -> anyhow::Result<u32> {
+        // The signatures are checked against what was requested rather than what came back, so a
+        // party cannot confirm the destruction of some other context.
+        let expected = DestroyMpcContextSignedPayload {
+            context_id: *context_id,
+            extra_data: extra_data.to_vec(),
+        };
         let received: DestroyMpcContextSignedPayload = response
             .payload
             .clone()
             .ok_or_else(|| anyhow::anyhow!("the context destruction response carries no payload"))?
             .try_into()?;
         anyhow::ensure!(
-            received.context_id == *context_id,
-            "the context destruction response confirms context {}, but {context_id} was requested",
-            received.context_id
-        );
-        anyhow::ensure!(
-            received.extra_data == extra_data,
-            "the context destruction response carries other extra data than was requested"
+            received == expected,
+            "the context destruction response confirms {received:?}, but {expected:?} was requested"
         );
         let (party_id, _address) = self.verify_result_signatures(
             &response.signatures,
@@ -72,7 +73,7 @@ impl Client {
             &ContextDestructionVerification::new(context_id, extra_data.to_vec()),
             domain,
             &DSEP_DESTROY_CONTEXT,
-            &received,
+            &expected,
         )?;
         tracing::info!("Destruction of context {context_id} verified as done by party {party_id}");
         Ok(party_id)
@@ -80,7 +81,7 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::consts::TEST_PARAM;
     use crate::cryptography::signatures::{
@@ -96,12 +97,12 @@ mod tests {
 
     /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
     /// verification are exercised.
-    const SCHEMES: [SigningSchemeType; 2] =
+    pub(crate) const SCHEMES: [SigningSchemeType; 2] =
         [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
     /// A client that knows `identity` as party 1, holds its key for every scheme in [`SCHEMES`],
     /// and requests them all.
-    fn client_knowing(identity: &NodeSigningIdentity) -> Client {
+    pub(crate) fn client_knowing(identity: &NodeSigningIdentity) -> Client {
         let pk = identity.verf_key();
         let mut client = Client::new(
             HashMap::from([(1, pk.clone())]),
