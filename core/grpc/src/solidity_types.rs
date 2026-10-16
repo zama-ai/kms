@@ -2,7 +2,7 @@
 //! WARNING: any changes to these structures is a breaking change. Align with the smart contract
 //! team before changing any of them, since the contracts verify signatures over them.
 
-use crate::{EpochId, RequestId};
+use crate::{ContextId, EpochId, RequestId};
 use alloy_primitives::U256;
 
 alloy_sol_types::sol! {
@@ -106,6 +106,24 @@ impl EpochDestructionVerification {
     pub fn new(epoch_id: &EpochId, extra_data: Vec<u8>) -> Self {
         Self {
             epochId: U256::from_be_slice(epoch_id.as_bytes()),
+            extraData: extra_data.into(),
+        }
+    }
+}
+
+alloy_sol_types::sol! {
+    struct ContextDestructionVerification {
+        /// @notice The ID of the destroyed context.
+        uint256 contextId;
+        /// @notice Extra data for client-specific context.
+        bytes extraData;
+    }
+}
+
+impl ContextDestructionVerification {
+    pub fn new(context_id: &ContextId, extra_data: Vec<u8>) -> Self {
+        Self {
+            contextId: U256::from_be_slice(context_id.as_bytes()),
             extraData: extra_data.into(),
         }
     }

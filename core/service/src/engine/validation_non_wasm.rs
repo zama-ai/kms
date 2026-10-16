@@ -1147,10 +1147,10 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     })
 }
 
-/// A validated and parsed `DestroyMpcEpoch` request.
+/// A validated and parsed `DestroyMpcContext` or `DestroyMpcEpoch` request.
 #[derive(Debug)]
 pub struct VerifiedDestroy<Id> {
-    /// The epoch to destroy.
+    /// The context or epoch to destroy.
     pub id: Id,
     /// The EIP-712 domain the confirmation is signed under.
     pub domain: Eip712Domain,
@@ -1160,10 +1160,13 @@ pub struct VerifiedDestroy<Id> {
     pub signing_schemes: Vec<SigningSchemeType>,
 }
 
+/// A validated and parsed `DestroyMpcContext` request.
+pub type VerifiedDestroyMpcContext = VerifiedDestroy<ContextId>;
+
 /// A validated and parsed `DestroyMpcEpoch` request.
 pub type VerifiedDestroyMpcEpoch = VerifiedDestroy<EpochId>;
 
-/// Parse a `DestroyMpcEpochRequest` from its fields.
+/// Parse a `DestroyMpcContextRequest` or `DestroyMpcEpochRequest`, given the fields they share.
 pub(crate) fn unpack_destroy_req<'a, Id: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
     id: &'a Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
@@ -2486,8 +2489,8 @@ mod tests {
         }
     }
 
-    /// `unpack_destroy_req` parses the fields of a `DestroyMpcEpoch` request, and rejects a request
-    /// without an ID or a domain, or naming an unknown scheme.
+    /// `unpack_destroy_req` parses the fields `DestroyMpcContext` and `DestroyMpcEpoch` share, and
+    /// rejects a request without an ID or a domain, or naming an unknown scheme.
     #[test]
     fn test_unpack_destroy_req() {
         let epoch_id: kms_grpc::EpochId = derive_request_id("unpack_destroy_req").unwrap().into();
