@@ -312,20 +312,16 @@ async fn invalid_context_destruction_requests_change_nothing(#[case] kms_type: K
         },
     ];
     for request in invalid_requests {
-        match manager {
-            manager::Centralized(inner_manager) => {
-                inner_manager
-                    .validate_destroy_mpc_context(request)
-                    .await
-                    .unwrap_err();
-            }
-            manager::Threshold(inner_manager) => {
-                inner_manager
-                    .validate_destroy_mpc_context(request)
-                    .await
-                    .unwrap_err();
-            }
-        }
+        let error = match manager {
+            TestContextManager::Centralized(ref inner_manager) => inner_manager
+                .validate_destroy_mpc_context(&request)
+                .await
+                .unwrap_err(),
+            TestContextManager::Threshold(ref inner_manager) => inner_manager
+                .validate_destroy_mpc_context(&request)
+                .await
+                .unwrap_err(),
+        };
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
     }
 
