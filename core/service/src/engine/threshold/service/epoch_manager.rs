@@ -1516,12 +1516,83 @@ impl<
         Ok(())
     }
 
+    /// Check that `epoch_id` may be destroyed: destroying it must leave at least one epoch in the
+    /// session maker.
+    ///
+    /// An epoch counts as existing if it is loaded in the session maker or holds private material
+    /// in storage.
+    /// Returns `true` if the epoch exists and is to be deleted, and `false` if it does not exist,
+    /// in which case only its absence is confirmed.
+    async fn ensure_epoch_destroyable(
+        epoch_id: &EpochId,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        session_maker: &SessionMaker,
+    ) -> Result<bool, MetricedError> {
+        let loaded = session_maker.epoch_exists(epoch_id).await;
+        let stored = async {
+            let mut stored = false;
+            let private_storage = crypto_storage.get_private_storage();
+            let guarded_priv_storage = private_storage.lock().await;
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                if !guarded_priv_storage
+                    .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
+                    .await?
+                    .is_empty()
+                {
+                    stored = true;
+                    break;
+                }
+            }
+            #[expect(deprecated)]
+            let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
+            for data_type in [PrivDataType::EpochData.to_string(), legacy_prss_type] {
+                if guarded_priv_storage
+                    .data_exists(&epoch_id.into(), &data_type)
+                    .await?
+                {
+                    stored = true;
+                    break;
+                }
+            }
+            anyhow::Ok(stored)
+        }
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!("Failed to check if epoch exists in storage: {e}"),
+                Code::Internal,
+            )
+        })?;
+        if !loaded && !stored {
+            // Already destroyed, or never created: there is nothing to delete, only to confirm.
+            return Ok(false);
+        }
+
+        // Only loaded epochs can run sessions, so at least one of them must remain.
+        let remaining_loaded = session_maker
+            .epoch_count()
+            .await
+            .saturating_sub(usize::from(loaded));
+        if remaining_loaded == 0 {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy epoch ID {epoch_id} because it is the only epoch remaining"
+                ),
+                Code::FailedPrecondition,
+            ));
+        }
+        Ok(true)
+    }
+
     /// Destroys an epoch by removing all private data stored under the given epoch, dropping its
     /// entries from the key cache, and then removing the epoch from the session maker.
     ///
     /// An epoch that does not exist is already destroyed, so this returns `Ok` without changing
-    /// anything. The epoch must not be the last epoch on the node. A rejected precondition leaves
-    /// the epoch untouched, cache included.
+    /// anything. A rejected precondition leaves the epoch untouched, cache included.
     ///
     /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
     /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
@@ -1530,23 +1601,17 @@ impl<
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
     ) -> Result<(), MetricedError> {
-        if !session_maker.epoch_exists(epoch_id).await {
-            tracing::info!("Epoch {epoch_id} does not exist; nothing to destroy");
+        let epoch_exists =
+            Self::ensure_epoch_destroyable(epoch_id, crypto_storage, session_maker).await?;
+        if !epoch_exists {
+            tracing::info!(
+                epoch_id = %epoch_id,
+                "MPC epoch does not exist; confirming its destruction"
+            );
             return Ok(());
         }
 
-        if session_maker.epoch_count().await < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!(
-                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
-                    epoch_id
-                ),
-                Code::FailedPrecondition,
-            ));
-        }
-
+        // Now actually destroy the epoch
         let priv_storage = crypto_storage.get_private_storage();
         let purge_res = Self::purge_epoch_material(epoch_id, &priv_storage, session_maker).await;
 
@@ -2187,7 +2252,7 @@ impl<
 pub(crate) mod tests {
     use super::*;
     use crate::engine::rng_source::test_rng_source;
-
+    use crate::vault::storage::{store_versioned_at_request_and_epoch_id, tests::TestType};
     use crate::{
         client::test_tools::{self},
         consts::{
