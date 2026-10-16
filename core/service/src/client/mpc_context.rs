@@ -1,7 +1,7 @@
 use crate::{
     client::client_wasm::Client,
     engine::{
-        base::{DSEP_DESTROY_CONTEXT, DestroyMpcContextPayload},
+        base::{DSEP_DESTROY_CONTEXT, DestroyMpcContextSignedPayload},
         context::ContextInfo,
     },
 };
@@ -51,7 +51,7 @@ impl Client {
         extra_data: &[u8],
         domain: &Eip712Domain,
     ) -> anyhow::Result<u32> {
-        let received: DestroyMpcContextPayload = response
+        let received: DestroyMpcContextSignedPayload = response
             .payload
             .clone()
             .ok_or_else(|| anyhow::anyhow!("the context destruction response carries no payload"))?
@@ -126,7 +126,7 @@ mod tests {
     ) -> DestroyMpcContextResponse {
         let eip712_hash = ContextDestructionVerification::new(signed, extra_data.to_vec())
             .eip712_signing_hash(&dummy_domain());
-        let signed_payload = DestroyMpcContextPayload {
+        let signed_payload = DestroyMpcContextSignedPayload {
             context_id: *signed,
             extra_data: extra_data.to_vec(),
         };
@@ -138,7 +138,7 @@ mod tests {
             &signed_payload,
         )
         .unwrap();
-        let payload = DestroyMpcContextPayload {
+        let payload = DestroyMpcContextSignedPayload {
             context_id: *confirmed,
             extra_data: extra_data.to_vec(),
         };

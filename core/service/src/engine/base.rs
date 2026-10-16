@@ -254,23 +254,25 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     Ok(RequestId::from_str(&res_hex)?)
 }
 
+/// The result payload that every non-ECDSA scheme signs for an epoch destruction.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum DestroyMpcEpochPayloadVersions {
-    V0(DestroyMpcEpochPayload),
+pub enum DestroyMpcEpochSignedPayloadVersions {
+    V0(DestroyMpcEpochSignedPayload),
 }
 
+/// The confirmation that an epoch no longer exists, in the form non-ECDSA schemes sign it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(DestroyMpcEpochPayloadVersions)]
-pub struct DestroyMpcEpochPayload {
+#[versionize(DestroyMpcEpochSignedPayloadVersions)]
+pub struct DestroyMpcEpochSignedPayload {
     pub epoch_id: EpochId,
     pub extra_data: Vec<u8>,
 }
 
-impl Named for DestroyMpcEpochPayload {
-    const NAME: &'static str = "DestroyMpcEpochPayload";
+impl Named for DestroyMpcEpochSignedPayload {
+    const NAME: &'static str = "DestroyMpcEpochSignedPayload";
 }
 
-impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
+impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochSignedPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
@@ -279,15 +281,15 @@ impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochPayload {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing epoch_id"))?
             .try_into()?;
-        Ok(DestroyMpcEpochPayload {
+        Ok(DestroyMpcEpochSignedPayload {
             epoch_id,
             extra_data: value.extra_data,
         })
     }
 }
 
-impl From<&DestroyMpcEpochPayload> for kms::v1::DestroyMpcEpochPayload {
-    fn from(value: &DestroyMpcEpochPayload) -> Self {
+impl From<&DestroyMpcEpochSignedPayload> for kms::v1::DestroyMpcEpochPayload {
+    fn from(value: &DestroyMpcEpochSignedPayload) -> Self {
         kms::v1::DestroyMpcEpochPayload {
             epoch_id: Some(value.epoch_id.into()),
             extra_data: value.extra_data.clone(),
@@ -295,24 +297,25 @@ impl From<&DestroyMpcEpochPayload> for kms::v1::DestroyMpcEpochPayload {
     }
 }
 
+/// The result payload that every non-ECDSA scheme signs for a context destruction.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum DestroyMpcContextPayloadVersions {
-    V0(DestroyMpcContextPayload),
+pub enum DestroyMpcContextSignedPayloadVersions {
+    V0(DestroyMpcContextSignedPayload),
 }
 
-// Todo validate if these also work with the current ecdsa flows
+/// The confirmation that a context no longer exists, in the form non-ECDSA schemes sign it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(DestroyMpcContextPayloadVersions)]
-pub struct DestroyMpcContextPayload {
+#[versionize(DestroyMpcContextSignedPayloadVersions)]
+pub struct DestroyMpcContextSignedPayload {
     pub context_id: ContextId,
     pub extra_data: Vec<u8>,
 }
 
-impl Named for DestroyMpcContextPayload {
-    const NAME: &'static str = "DestroyMpcContextPayload";
+impl Named for DestroyMpcContextSignedPayload {
+    const NAME: &'static str = "DestroyMpcContextSignedPayload";
 }
 
-impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextPayload {
+impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextSignedPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::DestroyMpcContextPayload) -> Result<Self, Self::Error> {
@@ -321,15 +324,15 @@ impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextPayload {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing context_id"))?
             .try_into()?;
-        Ok(DestroyMpcContextPayload {
+        Ok(DestroyMpcContextSignedPayload {
             context_id,
             extra_data: value.extra_data,
         })
     }
 }
 
-impl From<&DestroyMpcContextPayload> for kms::v1::DestroyMpcContextPayload {
-    fn from(value: &DestroyMpcContextPayload) -> Self {
+impl From<&DestroyMpcContextSignedPayload> for kms::v1::DestroyMpcContextPayload {
+    fn from(value: &DestroyMpcContextSignedPayload) -> Self {
         kms::v1::DestroyMpcContextPayload {
             context_id: Some(value.context_id.into()),
             extra_data: value.extra_data.clone(),

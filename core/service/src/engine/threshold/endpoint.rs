@@ -256,9 +256,9 @@ impl_endpoint! {
             // Hold the exclusive context lease across both phases. This makes the epoch snapshot
             // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS
             // and therefore have not registered their epoch in the session maker yet.
-            let _destruction_lease = self.session_maker.try_start_context_destruction(&verified.context_id).await.map_err(|e| {
+            let _destruction_lease = self.session_maker.try_start_context_destruction(&verified.id).await.map_err(|e| {
                     Status::failed_precondition(format!(
-                        "Cannot destroy MPC context {}: {e}. Retry once epoch creation has settled.", verified.context_id
+                        "Cannot destroy MPC context {}: {e}. Retry once epoch creation has settled.", verified.id
                     ))
                 })?;
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
@@ -267,7 +267,7 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            self.epoch_manager.destroy_epochs_for_context(&verified.context_id).await.map_err(Status::from)?;
+            self.epoch_manager.destroy_epochs_for_context(&verified.id).await.map_err(Status::from)?;
             // Only now, with every epoch of the context gone, is the context's destruction confirmed.
             self.context_manager.destroy_mpc_context(verified).await.map_err(|e| e.into())
         }

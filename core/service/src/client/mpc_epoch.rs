@@ -1,6 +1,6 @@
 use crate::{
     client::client_wasm::Client,
-    engine::base::{DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload},
+    engine::base::{DSEP_DESTROY_EPOCH, DestroyMpcEpochSignedPayload},
 };
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
@@ -22,11 +22,11 @@ impl Client {
     ) -> anyhow::Result<u32> {
         // The signatures are checked against what was requested rather than what came back, so a
         // party cannot confirm the destruction of some other epoch.
-        let expected = DestroyMpcEpochPayload {
+        let expected = DestroyMpcEpochSignedPayload {
             epoch_id: *epoch_id,
             extra_data: extra_data.to_vec(),
         };
-        let received: DestroyMpcEpochPayload = response
+        let received: DestroyMpcEpochSignedPayload = response
             .payload
             .clone()
             .ok_or_else(|| anyhow::anyhow!("the epoch destruction response carries no payload"))?
@@ -96,7 +96,7 @@ mod tests {
     ) -> DestroyMpcEpochResponse {
         let eip712_hash = EpochDestructionVerification::new(signed, extra_data.to_vec())
             .eip712_signing_hash(&dummy_domain());
-        let signed_payload = DestroyMpcEpochPayload {
+        let signed_payload = DestroyMpcEpochSignedPayload {
             epoch_id: *signed,
             extra_data: extra_data.to_vec(),
         };
@@ -108,7 +108,7 @@ mod tests {
             &signed_payload,
         )
         .unwrap();
-        let payload = DestroyMpcEpochPayload {
+        let payload = DestroyMpcEpochSignedPayload {
             epoch_id: *confirmed,
             extra_data: extra_data.to_vec(),
         };

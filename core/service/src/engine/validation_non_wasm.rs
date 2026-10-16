@@ -19,8 +19,7 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, DestroyMpcContextRequest, KeyGenPreprocRequest, KeyGenRequest,
-    NewMpcEpochRequest, PreviousEpochInfo,
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{KeyId, RequestId};
@@ -1148,11 +1147,11 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     })
 }
 
-/// A validated and parsed `DestroyMpcContext` request.
+/// A validated and parsed `DestroyMpcContext` or `DestroyMpcEpoch` request.
 #[derive(Debug)]
-pub struct VerifiedDestroyMpcContext {
-    /// The context to destroy.
-    pub context_id: ContextId,
+pub struct VerifiedDestroy<Id> {
+    /// The context or epoch to destroy.
+    pub id: Id,
     /// The EIP-712 domain the confirmation is signed under.
     pub domain: Eip712Domain,
     /// Extra data bound into the signatures and echoed back in the response.
@@ -1161,18 +1160,28 @@ pub struct VerifiedDestroyMpcContext {
     pub signing_schemes: Vec<SigningSchemeType>,
 }
 
-pub(crate) fn unpack_destroy_mpc_context_req(
-    req: &DestroyMpcContextRequest,
-) -> anyhow::Result<VerifiedDestroyMpcContext> {
-    let context_id: ContextId =
-        parse_optional_grpc_request_id(&req.context_id, RequestIdParsingErr::Context)?;
-    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-    let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(VerifiedDestroyMpcContext {
-        context_id,
+/// A validated and parsed `DestroyMpcContext` request.
+pub type VerifiedDestroyMpcContext = VerifiedDestroy<ContextId>;
+
+/// A validated and parsed `DestroyMpcEpoch` request.
+pub type VerifiedDestroyMpcEpoch = VerifiedDestroy<EpochId>;
+
+/// Parse a `DestroyMpcContextRequest` or `DestroyMpcEpochRequest`, given the fields they share.
+pub(crate) fn unpack_destroy_req<'a, Id: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    id: &'a Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+    domain: Option<&kms_grpc::kms::v1::Eip712DomainMsg>,
+    extra_data: &[u8],
+    signing_schemes: &[i32],
+) -> anyhow::Result<VerifiedDestroy<Id>> {
+    let id: Id = parse_optional_grpc_request_id(id, id_type)?;
+    let domain = optional_protobuf_to_alloy_domain(domain)?;
+    let signing_schemes =
+        SigningSchemeType::resolve_requested(signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(VerifiedDestroy {
+        id,
         domain,
-        extra_data: req.extra_data.clone(),
+        extra_data: extra_data.to_vec(),
         signing_schemes,
     })
 }

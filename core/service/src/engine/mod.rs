@@ -38,7 +38,7 @@ mod validation_wasm;
 
 /// Public because it crosses the public [`traits::ContextManager`] interface.
 #[cfg(feature = "non-wasm")]
-pub use validation_non_wasm::VerifiedDestroyMpcContext;
+pub use validation_non_wasm::{VerifiedDestroy, VerifiedDestroyMpcContext};
 
 pub(crate) mod signed_payload;
 

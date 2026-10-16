@@ -38,7 +38,7 @@ use kms_grpc::{
         CrsGenResult, DestroyMpcEpochRequest, DestroyMpcEpochResponse, Empty, EpochResultResponse,
         KeyDigest, KeyGenResult, NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
-    rpc_types::{PrivDataType, PubDataType, optional_protobuf_to_alloy_domain},
+    rpc_types::{PrivDataType, PubDataType},
     solidity_types::EpochDestructionVerification,
     utils::tonic_result::BoxedStatus,
 };
@@ -79,7 +79,7 @@ use crate::{
     },
     engine::{
         base::{
-            CrsGenMetadata, DSEP_DESTROY_EPOCH, DestroyMpcEpochPayload, KeyGenMetadata,
+            CrsGenMetadata, DSEP_DESTROY_EPOCH, DestroyMpcEpochSignedPayload, KeyGenMetadata,
             compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             compute_info_standard_keygen_from_digests, retrieve_parameters,
             stored_scheme_signatures_to_proto,
@@ -96,8 +96,9 @@ use crate::{
         traits::EpochManager,
         utils::{MetricedError, signing_identity_for},
         validation::{
-            RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
-            parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
+            RequestIdParsingErr, ResharingParams, VerifiedDestroyMpcEpoch,
+            VerifiedNewMpcEpochRequest, parse_grpc_request_id, parse_optional_grpc_request_id,
+            unpack_destroy_req, validate_new_mpc_epoch_request,
         },
     },
     util::{
@@ -2089,38 +2090,40 @@ impl<
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError> {
         let inner = request.into_inner();
-        let epoch_id: EpochId =
-            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
-                |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, Code::InvalidArgument),
-            )?;
-        let some_epoch_id = Some(epoch_id.into());
-        let schemes =
-            SigningSchemeType::resolve_requested(&inner.signing_schemes).map_err(|e| {
-                MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
-            })?;
-        let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
-            MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
-        })?;
+        let verified: VerifiedDestroyMpcEpoch = unpack_destroy_req(
+            &inner.epoch_id,
+            RequestIdParsingErr::Epoch,
+            inner.domain.as_ref(),
+            &inner.extra_data,
+            &inner.signing_schemes,
+        )
+        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, None, e, Code::InvalidArgument))?;
+        let some_epoch_id = Some(verified.id.into());
         // Refuse a scheme this node cannot sign, with the same error codes as the other signed calls.
-        let identity =
-            signing_identity_for(&self.base_kms, &schemes, OP_DESTROY_EPOCH, some_epoch_id)?;
-        let payload = DestroyMpcEpochPayload {
-            epoch_id,
-            extra_data: inner.extra_data.clone(),
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            OP_DESTROY_EPOCH,
+            some_epoch_id,
+        )?;
+        let payload = DestroyMpcEpochSignedPayload {
+            epoch_id: verified.id,
+            extra_data: verified.extra_data.clone(),
         };
-        let eip712_hash = EpochDestructionVerification::new(&epoch_id, inner.extra_data.clone())
-            .eip712_signing_hash(&domain);
+        let eip712_hash =
+            EpochDestructionVerification::new(&verified.id, verified.extra_data.clone())
+                .eip712_signing_hash(&verified.domain);
         // Ensure we can sign the result before actually destroying, since it is a fallible operation
         let signatures = sign_result_entries(
             &identity,
-            &schemes,
+            &verified.signing_schemes,
             &DSEP_DESTROY_EPOCH,
             &eip712_hash,
             &payload,
         )
         .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
 
-        self.destroy_epoch_with_lease(&epoch_id).await?;
+        self.destroy_epoch_with_lease(&verified.id).await?;
 
         Ok(Response::new(DestroyMpcEpochResponse {
             payload: Some((&payload).into()),
