@@ -1324,10 +1324,10 @@ pub fn compute_public_decryption_message(
         .iter()
         .enumerate()
         .map(|(idx, h)| {
-            if h.as_slice().len() > 32 {
+            if h.len() > 32 {
                 anyhow::bail!(
                     "external_handle at index {idx} too long: {} bytes (max 32)",
-                    h.as_slice().len()
+                    h.len()
                 );
             }
             Ok(FixedBytes::<32>::left_padding_from(h.as_slice()))
