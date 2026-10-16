@@ -256,7 +256,7 @@ pub(crate) async fn do_new_mpc_context(
 }
 
 pub(crate) async fn do_destroy_mpc_context(
-    internal_client: &mut Client,
+    internal_client: &Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     cc_conf: &CoreClientConfig,
     context_id: &ContextId,
