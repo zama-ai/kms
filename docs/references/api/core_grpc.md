@@ -1101,7 +1101,7 @@ Unlike `UserDecrypt`, this method never rejects a `request_id` that is already k
 
 </details>
 
-## MPC Context and Epoch Destruction
+## MPC Epoch Destruction
 
 <details>
     <summary> DestroyMpcEpoch </summary>
@@ -1136,39 +1136,4 @@ message DestroyMpcEpochPayload {
 Erases the epoch's PRSS data and secret key shares from memory and storage, and returns a confirmation, signed under every scheme in `signing_schemes`, that the epoch no longer exists on this party.
 An epoch that is already absent, or never existed, is confirmed the same way, so the call can be repeated; the confirmation therefore does not prove that the epoch ever existed.
 The request is validated before anything is erased. If the erasure fails part way, an error is returned and the call should be retried.
-</details>
-
-<details>
-    <summary> DestroyMpcContext </summary>
-
-### Input
-
-```proto
-message DestroyMpcContextRequest {
-  RequestId context_id = 1;
-  Eip712DomainMsg domain = 2;
-  bytes extra_data = 3;
-  repeated SigningSchemeType signing_schemes = 4;
-}
-```
-
-### Output
-
-```proto
-message DestroyMpcContextResponse {
-  DestroyMpcContextPayload payload = 1;
-  repeated TypedSignature signatures = 2;
-}
-
-message DestroyMpcContextPayload {
-  RequestId context_id = 1;
-  bytes extra_data = 2;
-}
-```
-
-### Description
-
-Erases every epoch of the context, then the context itself, and returns a confirmation, signed under every scheme in `signing_schemes`, that the context no longer exists on this party.
-A context that is already absent, or never existed, is confirmed the same way, so the call can be repeated; the confirmation therefore does not prove that the context ever existed.
-The request is validated before anything is erased. If an epoch fails to be erased, an error is returned and the call should be retried.
 </details>

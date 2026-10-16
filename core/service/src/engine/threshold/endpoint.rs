@@ -7,6 +7,7 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{metrics::METRICS, metrics_names::*};
@@ -250,26 +251,47 @@ impl_endpoint! {
         ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             let inner = request.into_inner();
-            // Validate the whole request before mutating anything, so an invalid request never
-            // erases epochs and only then fails.
-            let verified = self.context_manager.validate_destroy_mpc_context(&inner).await?;
+
+            // Validate the whole request before mutating anything: a request with valid epoch_ids
+            // but a missing/malformed context_id must not erase epochs and only then fail context
+            // parsing.
+            //
+            // Note: we extract the inner message and later re-wrap it in `Request::new(inner)`.
+            let proto_context_id = inner
+                .context_id
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+            let context_id = parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+
             // Hold the exclusive context lease across both phases. This makes the epoch snapshot
             // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS
             // and therefore have not registered their epoch in the session maker yet.
-            let _destruction_lease = self.session_maker.try_start_context_destruction(&verified.id).await.map_err(|e| {
+            let _destruction_lease = self
+                .session_maker
+                .try_start_context_destruction(&context_id)
+                .await
+                .map_err(|e| {
                     Status::failed_precondition(format!(
-                        "Cannot destroy MPC context {}: {e}. Retry once epoch creation has settled.", verified.id
+                        "Cannot destroy MPC context {context_id}: {e}. Retry once epoch creation has settled."
                     ))
                 })?;
+
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
             // state is "shares gone, context metadata lingers" rather than "context gone, shares still on disk".
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            self.epoch_manager.destroy_epochs_for_context(&verified.id).await.map_err(Status::from)?;
-            // Only now, with every epoch of the context gone, is the context's destruction confirmed.
-            self.context_manager.destroy_mpc_context(verified).await.map_err(|e| e.into())
+            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
+
+            // Every epoch is now gone, so it is safe to remove the context.
+            self.context_manager
+                .destroy_mpc_context(Request::new(inner))
+                .await
+                .map_err(Status::from)?;
+            Ok(Response::new(DestroyMpcContextResponse {
+                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+            }))
         }
 
         #[tracing::instrument(skip_all)]

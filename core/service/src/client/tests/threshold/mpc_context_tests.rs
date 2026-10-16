@@ -1,18 +1,15 @@
 use kms_grpc::{
     RequestId,
-    kms::v1::{DestroyMpcContextRequest, SigningSchemeType},
+    kms::v1::DestroyMpcContextRequest,
     rpc_types::{PrivDataType, PubDataType},
 };
 use rand::SeedableRng;
-use std::collections::HashSet;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 
-use crate::dummy_domain;
-use crate::testing::helpers::domain_to_msg;
 use crate::{
     client::tests::threshold::public_decryption_tests::{
         run_decryption_threshold, run_decryption_threshold_optionally_fail,
@@ -195,42 +192,22 @@ async fn do_context_switch(
     // delete the new context
     {
         // This context owns no epoch, so the destruction has no epoch material to remove.
-        let domain = dummy_domain();
         let req = internal_client
-            .destroy_mpc_context_request(&new_context_id, &domain)
+            .destroy_mpc_context_request(&new_context_id)
             .unwrap();
 
-        // The second round asks again for a context that no longer exists, which every party must
-        // confirm just the same.
-        for _round in 0..2 {
-            let mut req_tasks = JoinSet::new();
-            for client in kms_clients.values() {
-                let req_clone = req.clone();
-                let mut client = client.clone();
-                req_tasks.spawn(async move { client.destroy_mpc_context(req_clone).await });
-            }
-
-            let mut req_response_vec = Vec::new();
-            while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
-            }
-            assert_eq!(req_response_vec.len(), kms_clients.len());
-
-            // Every party confirms the destruction, and each confirmation verifies.
-            let mut confirming_parties = HashSet::new();
-            for response in &req_response_vec {
-                let party_id = internal_client
-                    .process_destroy_mpc_context_response(
-                        response,
-                        &new_context_id,
-                        &req.extra_data,
-                        &domain,
-                    )
-                    .unwrap();
-                assert!(confirming_parties.insert(party_id));
-            }
-            assert_eq!(confirming_parties.len(), kms_clients.len());
+        let mut req_tasks = JoinSet::new();
+        for client in kms_clients.values() {
+            let req_clone = req.clone();
+            let mut client = client.clone();
+            req_tasks.spawn(async move { client.destroy_mpc_context(req_clone).await });
         }
+
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len());
     }
 
     // The destruction removes the context from the storage of every party.
@@ -335,9 +312,6 @@ async fn test_destroy_only_context_is_rejected_4p() {
         let mut client = client.clone();
         let req = DestroyMpcContextRequest {
             context_id: Some(default_context.into()),
-            domain: Some(domain_to_msg(&dummy_domain())),
-            extra_data: Vec::new(),
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1.into()],
         };
         destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
     }

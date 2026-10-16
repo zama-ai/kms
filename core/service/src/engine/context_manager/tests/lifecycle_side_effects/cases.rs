@@ -178,11 +178,10 @@ async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
 
     fixture.clear_faults().await;
     let restarted_manager = fixture.manager(kms_type).await;
-    let response = restarted_manager
+    restarted_manager
         .destroy_mpc_context(*fixture.target.context_id())
         .await
         .unwrap();
-    fixture.assert_confirms(&response, fixture.target.context_id());
 
     assert_eq!(fixture.state().await, state_without_target(&fixture));
     assert!(
@@ -210,188 +209,6 @@ async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
             ),
         ],
     );
-}
-
-/// Destroying a context that does not exist confirms it, without touching storage or the
-/// remaining context.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
-#[tokio::test]
-async fn destroying_an_absent_context_confirms_it(#[case] kms_type: KMSType) {
-    let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let manager = fixture.manager(kms_type).await;
-
-    let response = manager
-        .destroy_mpc_context(*fixture.target.context_id())
-        .await
-        .unwrap();
-    fixture.assert_confirms(&response, fixture.target.context_id());
-
-    assert_eq!(fixture.state().await, fixture.before);
-    assert!(
-        manager
-            .mpc_context_exists_and_consistent(&fixture.keeper_id)
-            .await
-    );
-    assert_same_events(&fixture.events().await, &[]);
-}
-
-/// A stored threshold context that is not loaded in the session maker, as happens when it fails
-/// verification at boot, is deleted from storage rather than confirmed absent while still on disk.
-#[tokio::test]
-async fn destroying_a_stored_but_unloaded_context_deletes_it() {
-    let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let manager = fixture.manager(KMSType::Threshold).await;
-    let TestContextManager::Threshold(threshold_manager) = &manager else {
-        unreachable!("the fixture built a threshold manager");
-    };
-    threshold_manager
-        .session_maker
-        .remove_context(fixture.target.context_id())
-        .await
-        .unwrap();
-
-    let response = manager
-        .destroy_mpc_context(*fixture.target.context_id())
-        .await
-        .unwrap();
-    fixture.assert_confirms(&response, fixture.target.context_id());
-
-    assert_eq!(fixture.state().await, state_without_target(&fixture));
-    assert!(
-        manager
-            .mpc_context_exists_and_consistent(&fixture.keeper_id)
-            .await
-    );
-    assert_same_events(
-        &fixture.events().await,
-        &[StorageEvent::new(
-            fixture.target_entry.clone(),
-            StorageOp::Delete,
-            StorageOutcome::Deleted,
-        )],
-    );
-}
-
-/// A malformed destruction request, or one naming a scheme the node cannot sign, is refused with
-/// `InvalidArgument` before anything changes.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
-#[tokio::test]
-async fn invalid_context_destruction_requests_change_nothing(#[case] kms_type: KMSType) {
-    let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let manager = fixture.manager(kms_type).await;
-
-    let valid = DestroyMpcContextRequest {
-        context_id: Some((*fixture.target.context_id()).into()),
-        domain: Some(crate::testing::helpers::domain_to_msg(
-            &crate::dummy_domain(),
-        )),
-        extra_data: Vec::new(),
-        signing_schemes: Vec::new(),
-    };
-    let invalid_requests = [
-        DestroyMpcContextRequest {
-            context_id: None,
-            ..valid.clone()
-        },
-        DestroyMpcContextRequest {
-            domain: None,
-            ..valid.clone()
-        },
-        DestroyMpcContextRequest {
-            signing_schemes: vec![9999],
-            ..valid.clone()
-        },
-        // The fixture's key is an ECDSA key only.
-        DestroyMpcContextRequest {
-            signing_schemes: vec![SigningSchemeType::MlDsa65.as_wire()],
-            ..valid.clone()
-        },
-    ];
-    for request in invalid_requests {
-        let error = match manager {
-            TestContextManager::Centralized(ref inner_manager) => inner_manager
-                .validate_destroy_mpc_context(&request)
-                .await
-                .unwrap_err(),
-            TestContextManager::Threshold(ref inner_manager) => inner_manager
-                .validate_destroy_mpc_context(&request)
-                .await
-                .unwrap_err(),
-        };
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-    }
-
-    assert_eq!(fixture.state().await, fixture.before);
-    assert!(
-        manager
-            .mpc_context_exists_and_consistent(fixture.target.context_id())
-            .await
-    );
-    assert_same_events(&fixture.events().await, &[]);
-}
-
-/// The last context cannot be destroyed, and refusing it changes nothing.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
-#[tokio::test]
-async fn destroying_the_last_context_is_refused(#[case] kms_type: KMSType) {
-    // Without a target, the keeper is the only context.
-    let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let manager = fixture.manager(kms_type).await;
-
-    let error = manager
-        .destroy_mpc_context(fixture.keeper_id)
-        .await
-        .unwrap_err();
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-
-    assert_eq!(fixture.state().await, fixture.before);
-    assert!(
-        manager
-            .mpc_context_exists_and_consistent(&fixture.keeper_id)
-            .await
-    );
-    assert_same_events(&fixture.events().await, &[]);
-}
-
-/// A threshold context that holds the last epoch cannot be destroyed, even though another context
-/// remains.
-#[tokio::test]
-async fn destroying_a_context_holding_the_last_epoch_is_refused() {
-    let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let manager = fixture.manager(KMSType::Threshold).await;
-    let TestContextManager::Threshold(threshold_manager) = &manager else {
-        unreachable!("the fixture built a threshold manager");
-    };
-    threshold_manager
-        .session_maker
-        .add_epoch(
-            kms_grpc::EpochId::from_bytes([43; 32]),
-            crate::engine::threshold::service::epoch_manager::tests::dummy_epoch_data(
-                *fixture.target.context_id(),
-            ),
-        )
-        .await;
-
-    let error = manager
-        .destroy_mpc_context(*fixture.target.context_id())
-        .await
-        .unwrap_err();
-    // Notice that the fixture contains two contexts and the epoch is only added to the target context.
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-
-    assert_eq!(fixture.state().await, fixture.before);
-    assert!(
-        manager
-            .mpc_context_exists_and_consistent(fixture.target.context_id())
-            .await
-    );
-    assert_same_events(&fixture.events().await, &[]);
 }
 
 /// A delete error after mutation counts as success when the context is confirmed absent.
@@ -581,10 +398,11 @@ async fn context_updates_wait_for_the_lifecycle_lock(
     let update = async {
         match update_kind {
             ContextUpdate::Create => manager.new_mpc_context(&fixture.target).await.map(|_| ()),
-            ContextUpdate::Destroy => manager
-                .destroy_mpc_context(*fixture.target.context_id())
-                .await
-                .map(|_| ()),
+            ContextUpdate::Destroy => {
+                manager
+                    .destroy_mpc_context(*fixture.target.context_id())
+                    .await
+            }
         }
     };
     tokio::pin!(update);

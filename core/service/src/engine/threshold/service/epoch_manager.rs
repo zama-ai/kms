@@ -70,7 +70,7 @@ use threshold_types::network::NetworkMode;
 use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
-use tonic::{Code, Request, Response};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 use crate::{
@@ -302,7 +302,7 @@ fn verify_epoch_info(
             OP_NEW_EPOCH,
             Some(*epoch_id_as_request_id),
             e,
-            Code::InvalidArgument,
+            tonic::Code::InvalidArgument,
         )
     };
     let context_id =
@@ -347,7 +347,7 @@ fn verify_epoch_info(
                         OP_NEW_EPOCH,
                         Some(*epoch_id_as_request_id),
                         e,
-                        Code::InvalidArgument,
+                        tonic::Code::InvalidArgument,
                     )
                 })?;
             // Every party validates the same digest shape before role dispatch. Set 2 also
@@ -357,7 +357,7 @@ fn verify_epoch_info(
                     OP_NEW_EPOCH,
                     Some(*epoch_id_as_request_id),
                     e.context(format!("Invalid key digests for key {key_id}")),
-                    Code::InvalidArgument,
+                    tonic::Code::InvalidArgument,
                 )
             })?;
             Ok(VerifiedKeyInfo {
@@ -567,7 +567,7 @@ impl<
                             OP_NEW_EPOCH,
                             Some(epoch_id_as_request_id),
                             e,
-                            Code::InvalidArgument,
+                            tonic::Code::InvalidArgument,
                         )
                     })?;
                 let private_keyset = keys.private_keys.as_ref().clone();
@@ -603,7 +603,7 @@ impl<
                         OP_NEW_EPOCH,
                         Some(epoch_id_as_request_id),
                         e,
-                        Code::InvalidArgument,
+                        tonic::Code::InvalidArgument,
                     )
                 })
             });
@@ -1564,7 +1564,7 @@ impl<
                 OP_DESTROY_EPOCH,
                 Some((*epoch_id).into()),
                 anyhow::anyhow!("Failed to check if epoch exists in storage: {e}"),
-                Code::Internal,
+                tonic::Code::Internal,
             )
         })?;
         if !loaded && !stored {
@@ -1584,7 +1584,7 @@ impl<
                 anyhow::anyhow!(
                     "Cannot destroy epoch ID {epoch_id} because it is the only epoch remaining"
                 ),
-                Code::FailedPrecondition,
+                tonic::Code::FailedPrecondition,
             ));
         }
         Ok(true)
@@ -1628,7 +1628,7 @@ impl<
                 OP_DESTROY_EPOCH,
                 Some((*epoch_id).into()),
                 e,
-                Code::Internal,
+                tonic::Code::Internal,
             )
         })?;
 
@@ -1654,7 +1654,7 @@ impl<
                         "Cannot destroy epoch ID {epoch_id}: {e}. Retry once epoch creation has \
                          settled."
                     ),
-                    Code::FailedPrecondition,
+                    tonic::Code::FailedPrecondition,
                 )
             })?;
 
@@ -1707,7 +1707,7 @@ impl<
                             previous_epoch_id,
                             key_info.preproc_id
                         ),
-                        Code::InvalidArgument,
+                        tonic::Code::InvalidArgument,
                     ));
                 }
                 // Pure set 2: this party never held the key, so there is nothing local to compare
@@ -1736,7 +1736,7 @@ impl<
                     OP_NEW_EPOCH,
                     Some(new_epoch_id_as_request_id),
                     e,
-                    Code::InvalidArgument,
+                    tonic::Code::InvalidArgument,
                 )
             })?;
         }
@@ -1784,7 +1784,7 @@ impl<
                 OP_NEW_EPOCH,
                 Some(new_epoch_id_as_request_id),
                 e,
-                Code::InvalidArgument,
+                tonic::Code::InvalidArgument,
             )
         })?;
 
@@ -1908,25 +1908,6 @@ impl<
                 .boxed(),
         })
     }
-
-    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
-        let mut first_error: Option<MetricedError> = None;
-        for epoch_id in epoch_ids {
-            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
-            // caller learns that some shares may remain and can retry. Later failures are logged via their own
-            // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
-                && first_error.is_none()
-            {
-                first_error = Some(e);
-            }
-        }
-
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
 }
 
 #[tonic::async_trait]
@@ -1980,7 +1961,7 @@ impl<
                     OP_NEW_EPOCH,
                     Some(epoch_id.into()),
                     anyhow::anyhow!("Cannot create epoch ID {epoch_id}: {e}"),
-                    Code::FailedPrecondition,
+                    tonic::Code::FailedPrecondition,
                 )
             })?;
 
@@ -1989,13 +1970,18 @@ impl<
                 OP_NEW_EPOCH,
                 Some(epoch_id.into()),
                 anyhow::anyhow!("Epoch ID {} already exists", epoch_id),
-                Code::InvalidArgument,
+                tonic::Code::InvalidArgument,
             ));
         }
 
         // Refresh before forking either session, including for old-committee parties that skip PRSS init.
         self.session_maker.reseed_rng().map_err(|e| {
-            MetricedError::new(OP_NEW_EPOCH, Some(epoch_id.into()), e, Code::Unavailable)
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id.into()),
+                e,
+                tonic::Code::Unavailable,
+            )
         })?;
 
         let resharing_task = match resharing_params {
@@ -2020,7 +2006,12 @@ impl<
             .my_role(&context_id)
             .await
             .map_err(|e| {
-                MetricedError::new(OP_NEW_EPOCH, Some(epoch_id.into()), e, Code::NotFound)
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(epoch_id.into()),
+                    e,
+                    tonic::Code::NotFound,
+                )
             })?
             .is_some();
 
@@ -2098,7 +2089,7 @@ impl<
             &inner.extra_data,
             &inner.signing_schemes,
         )
-        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, None, e, Code::InvalidArgument))?;
+        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument))?;
         let some_epoch_id = Some(verified.id.into());
         // Refuse a scheme this node cannot sign, with the same error codes as the other signed calls.
         let identity = signing_identity_for(
@@ -2122,7 +2113,9 @@ impl<
             &eip712_hash,
             &payload,
         )
-        .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
+        .map_err(|e| {
+            MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, tonic::Code::Internal)
+        })?;
 
         self.destroy_epoch_with_lease(&verified.id).await?;
 
@@ -2135,9 +2128,41 @@ impl<
     async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
-    ) -> Result<(), MetricedError> {
+    ) -> Result<Vec<EpochId>, MetricedError> {
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
+    }
+
+    async fn destroy_mpc_epochs(
+        &self,
+        epoch_ids: &[EpochId],
+    ) -> Result<Vec<EpochId>, MetricedError> {
+        let mut destroyed_epochs = Vec::new();
+        let mut first_error: Option<MetricedError> = None;
+        for epoch_id in epoch_ids {
+            if !self.session_maker.epoch_exists(epoch_id).await {
+                tracing::info!(
+                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
+                );
+                continue;
+            }
+
+            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
+            // caller learns that some shares may remain and can retry. Later failures are logged via their own
+            // `MetricedError` drop handling.
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+                continue;
+            }
+            destroyed_epochs.push(*epoch_id);
+        }
+
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(destroyed_epochs),
+        }
     }
 
     async fn get_epoch_result(
@@ -2147,7 +2172,7 @@ impl<
         let request_id =
             parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)
                 .map_err(|e| {
-                    MetricedError::new(OP_GET_EPOCH_RESULT, None, e, Code::InvalidArgument)
+                    MetricedError::new(OP_GET_EPOCH_RESULT, None, e, tonic::Code::InvalidArgument)
                 })?;
 
         let res = retrieve_from_meta_store(
@@ -2208,7 +2233,7 @@ impl<
                                     "Resharing should not return legacy metadata for request ID {:?}",
                                     request_id
                                 ),
-                                Code::InvalidArgument,
+                                tonic::Code::InvalidArgument,
                             ));
                         }
                     }
@@ -2238,7 +2263,7 @@ impl<
                                     "CRS re-sign should not return legacy metadata for request ID {:?}",
                                     request_id
                                 ),
-                                Code::InvalidArgument,
+                                tonic::Code::InvalidArgument,
                             ));
                         }
                     }
@@ -2769,7 +2794,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap_err()
                 .code(),
-            Code::ResourceExhausted
+            tonic::Code::ResourceExhausted
         );
     }
 
@@ -2798,7 +2823,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap_err()
                     .code(),
-                Code::InvalidArgument
+                tonic::Code::InvalidArgument
             );
         }
         {
@@ -2818,7 +2843,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap_err()
                     .code(),
-                Code::InvalidArgument
+                tonic::Code::InvalidArgument
             );
         }
     }
@@ -2842,7 +2867,7 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(err.code(), Code::NotFound);
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
     #[tokio::test]
@@ -2878,7 +2903,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap_err()
                 .code(),
-            Code::AlreadyExists
+            tonic::Code::AlreadyExists
         );
     }
 
@@ -3143,7 +3168,7 @@ pub(crate) mod tests {
         ] {
             let err = verify_epoch_info(&new_epoch_id, previous_epoch_with_digests(key_digests))
                 .unwrap_err();
-            assert_eq!(err.code(), Code::InvalidArgument);
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
             let msg = err.internal_err().to_string();
             assert!(msg.contains("digest"), "unexpected error: {msg}");
         }
@@ -3276,7 +3301,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::InvalidArgument);
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
 
         // Legacy metadata has no preprocessing ID to compare against, so validation accepts it.
         let legacy_key_id = derive_request_id("validate_preproc_legacy_key").unwrap();
@@ -3332,7 +3357,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::InvalidArgument);
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
 
         // For a party joining the new context this is the expected state: it never held the key,
         // so there is nothing to compare against and the request is accepted.
@@ -3396,7 +3421,7 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::InvalidArgument);
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
         // Session setup also reports InvalidArgument, so pin down that the preprocessing ID is
         // what got us rejected.
         let msg = err.internal_err().to_string();
@@ -3436,7 +3461,7 @@ pub(crate) mod tests {
             .destroy_epoch_with_lease(&DEFAULT_EPOCH_ID)
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::FailedPrecondition);
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
         assert!(
             epoch_manager
                 .session_maker
@@ -3463,7 +3488,7 @@ pub(crate) mod tests {
                 .destroy_epoch_with_lease(&absent_epoch_id)
                 .await
                 .unwrap_err();
-            assert_eq!(err.code(), Code::FailedPrecondition);
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition);
         }
 
         // Store key shares and CRS metadata under an epoch that is not loaded in the session maker,
@@ -3495,7 +3520,7 @@ pub(crate) mod tests {
             .destroy_epoch_with_lease(&unloaded_epoch_id)
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::FailedPrecondition);
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
         assert_eq!(
             stored_count(&private_storage, &unloaded_epoch_id).await,
             EPOCH_SCOPED_PRIVATE_TYPES.len()
@@ -3589,7 +3614,7 @@ pub(crate) mod tests {
                 .destroy_mpc_epoch(tonic::Request::new(request))
                 .await
                 .unwrap_err();
-            assert_eq!(err.code(), Code::InvalidArgument);
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
         // Nothing was erased.
@@ -3630,7 +3655,7 @@ pub(crate) mod tests {
             .destroy_epoch_with_lease(&epoch_id)
             .await
             .unwrap_err();
-        assert_eq!(err.code(), Code::FailedPrecondition);
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
 
         // Destruction must return before touching the registered epoch or its persisted PRSS data.
         assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
@@ -3741,7 +3766,7 @@ pub(crate) mod tests {
         >::destroy_epoch(&epoch_id, &crypto_storage, session_maker)
         .await
         .unwrap_err();
-        assert_eq!(err.code(), Code::Internal);
+        assert_eq!(err.code(), tonic::Code::Internal);
 
         // The epoch must still be present so the caller can retry, and the keeper must be untouched.
         assert!(
@@ -3856,8 +3881,8 @@ pub(crate) mod tests {
     }
 
     /// `destroy_epochs_for_context` erases every epoch of the given context, with all of its
-    /// private material, and leaves the epochs of other contexts intact. A repeated call, and a
-    /// call for a context without epochs, succeed without changing anything.
+    /// private material, reports them, and leaves the epochs of other contexts intact. A repeated
+    /// call, and a call for a context without epochs, succeed without changing anything.
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
@@ -3905,10 +3930,14 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        epoch_manager
+        // The destroyed epochs are reported, in any order since they come from a map.
+        let destroyed: std::collections::HashSet<EpochId> = epoch_manager
             .destroy_epochs_for_context(&context_a)
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(destroyed, [epoch_a1, epoch_a2].into_iter().collect());
 
         // Context A's epochs are gone from the session maker, and all of their private data — key
         // shares, CRS, and PRSS, the legacy one included — has been erased from storage.
@@ -3970,15 +3999,22 @@ pub(crate) mod tests {
             vec![epoch_b]
         );
 
-        // A repeated call, and a call for a context without epochs, are successful no-ops.
-        epoch_manager
-            .destroy_epochs_for_context(&context_a)
-            .await
-            .unwrap();
-        epoch_manager
-            .destroy_epochs_for_context(&ContextId::new_random(&mut rng))
-            .await
-            .unwrap();
+        // A repeated call, and a call for a context without epochs, are successful no-ops that
+        // report no epochs.
+        assert!(
+            epoch_manager
+                .destroy_epochs_for_context(&context_a)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            epoch_manager
+                .destroy_epochs_for_context(&ContextId::new_random(&mut rng))
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
         assert!(
             epoch_manager

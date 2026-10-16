@@ -3634,19 +3634,6 @@
     (
         kms_core_version_min: "0.16.0",
         kms_core_module: "kms",
-        metadata: DestroyMpcContextSignedPayload((
-            test_filename: "destroy_mpc_context_signed_payload",
-            context_id: (50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50),
-            extra_data: [
-                36,
-                37,
-                38,
-            ],
-        )),
-    ),
-    (
-        kms_core_version_min: "0.16.0",
-        kms_core_module: "kms",
         metadata: CompositeEnvelope((
             test_filename: "composite_envelope",
             msg: [

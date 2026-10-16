@@ -2940,60 +2940,6 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     Ok(())
 }
 
-/// Test destroying an MPC epoch and an MPC context through the CLI.
-///
-/// Builds context A with epoch A1 and context B with epochs B1 and B2, so that neither
-/// destruction removes the last context or the last epoch. Then:
-/// 1. Destroys epoch B2, then asks again: both calls confirm it no longer exists.
-/// 2. Destroys context A, together with its epoch A1, then asks again: both calls confirm it no
-///    longer exists.
-///
-/// The CLI requires a verified confirmation from every party, so each successful command also
-/// proves the cores' signatures check out end to end.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_mpc_epoch_and_context_destruction() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_signing_only("threshold_mpc_destruction", 4).await?;
-    let test_path = material_dir.path();
-
-    let context_a: ContextId = derive_request_id("DESTRUCTION_CONTEXT_A")?.into();
-    let context_b: ContextId = derive_request_id("DESTRUCTION_CONTEXT_B")?.into();
-    for (context_id, file_name) in [
-        (context_a, "mpc_context_a.bin"),
-        (context_b, "mpc_context_b.bin"),
-    ] {
-        let context_path = test_path.join(file_name);
-        store_mpc_context_in_file(&context_path, &config_path, context_id).await?;
-        new_mpc_context(&config_path, &context_path, test_path).await?;
-    }
-
-    let epoch_a1: EpochId = derive_request_id("DESTRUCTION_EPOCH_A1")?.into();
-    let epoch_b1: EpochId = derive_request_id("DESTRUCTION_EPOCH_B1")?.into();
-    let epoch_b2: EpochId = derive_request_id("DESTRUCTION_EPOCH_B2")?.into();
-    new_prss(&config_path, context_a, epoch_a1, test_path).await?;
-    new_prss(&config_path, context_b, epoch_b1, test_path).await?;
-    new_prss(&config_path, context_b, epoch_b2, test_path).await?;
-
-    // The repeated call asks for an epoch that no longer exists, which must be confirmed as well.
-    for label in ["destroy epoch", "destroy epoch again"] {
-        let command = CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id: epoch_b2 });
-        run_cmd_no_id(&cmd_config(&config_path, command, 200), test_path, label).await?;
-    }
-
-    // The same holds for the context, whose epoch A1 is destroyed before the context itself.
-    for label in ["destroy context", "destroy context again"] {
-        let command = CCCommand::DestroyMpcContext(DestroyMpcContextParameters {
-            context_id: context_a,
-        });
-        run_cmd_no_id(&cmd_config(&config_path, command, 200), test_path, label).await?;
-    }
-
-    info!("MPC epoch and context destruction test completed successfully");
-    Ok(())
-}
-
 /// Test 6-party MPC context switching with real party resharing (ISOLATED, NO TLS)
 ///
 /// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.

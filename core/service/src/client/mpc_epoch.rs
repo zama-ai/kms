@@ -50,10 +50,11 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::client::mpc_context::tests::SCHEMES;
-    use crate::cryptography::signatures::{NodeSigningIdentity, test_support::seeded_identity};
+    use crate::cryptography::signatures::{
+        NodeSigningIdentity, SigningSchemeType, test_support::seeded_identity,
+    };
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
     use crate::testing::helpers::client_knowing;
@@ -61,6 +62,11 @@ mod tests {
     use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
     use threshold_types::rng::AesRng;
+
+    /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
+    /// verification are exercised.
+    pub(crate) const SCHEMES: [SigningSchemeType; 2] =
+        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
     /// A response confirming `epoch_id` with `extra_data`, signed by `identity` the way a node
     /// signs it.
