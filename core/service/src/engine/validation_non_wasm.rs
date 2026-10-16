@@ -1176,8 +1176,8 @@ pub(crate) fn unpack_destroy_req<'a, Id: TryFrom<&'a kms_grpc::kms::v1::RequestI
 ) -> anyhow::Result<VerifiedDestroy<Id>> {
     let id: Id = parse_optional_grpc_request_id(id, id_type)?;
     let domain = optional_protobuf_to_alloy_domain(domain)?;
-    let signing_schemes =
-        SigningSchemeType::resolve_requested(signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let signing_schemes = SigningSchemeType::resolve_requested(signing_schemes)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(VerifiedDestroy {
         id,
         domain,

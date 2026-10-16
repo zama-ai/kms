@@ -1522,6 +1522,7 @@ impl<
     ///
     /// An epoch counts as existing if it is loaded in the session maker or holds private material
     /// in storage.
+    ///
     /// Returns `true` if the epoch exists and is to be deleted, and `false` if it does not exist,
     /// in which case only its absence is confirmed.
     async fn ensure_epoch_destroyable(
@@ -1531,7 +1532,6 @@ impl<
     ) -> Result<bool, MetricedError> {
         let loaded = session_maker.epoch_exists(epoch_id).await;
         let stored = async {
-            let mut stored = false;
             let private_storage = crypto_storage.get_private_storage();
             let guarded_priv_storage = private_storage.lock().await;
             for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
@@ -1540,8 +1540,8 @@ impl<
                     .await?
                     .is_empty()
                 {
-                    stored = true;
-                    break;
+                    // Return for the block, not the entire function.
+                    return Ok(true);
                 }
             }
             #[expect(deprecated)]
@@ -1551,11 +1551,12 @@ impl<
                     .data_exists(&epoch_id.into(), &data_type)
                     .await?
                 {
-                    stored = true;
-                    break;
+                    // Return for the block, not the entire function.
+                    return Ok(true);
                 }
             }
-            anyhow::Ok(stored)
+            // Return for the block, not the entire function.
+            anyhow::Ok(false)
         }
         .await
         .map_err(|e| {

@@ -58,7 +58,9 @@ pub trait ContextManager {
     ) -> Result<Response<Empty>, MetricedError>;
 
     /// Check a destroy request without changing anything: parse it, resolve the signing schemes and
-    /// domain, check the node can sign them, and check the context exists and is not the last one.
+    /// domain, check the node can sign them, and check that destroying the context would not remove
+    /// the last context or the last epoch. A context that does not exist passes, so that its absence
+    /// can be confirmed.
     async fn validate_destroy_mpc_context(
         &self,
         request: &DestroyMpcContextRequest,
