@@ -58,16 +58,15 @@ impl TestContextManager {
     pub(super) async fn destroy_mpc_context(
         &self,
         context_id: ContextId,
-    ) -> Result<(), MetricedError> {
-        let response = match self {
+    ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
+        match self {
             Self::Centralized(manager) => {
                 destroy_mpc_context_without_epochs(manager, context_id).await
             }
             Self::Threshold(manager) => {
                 destroy_mpc_context_without_epochs(manager, context_id).await
             }
-        };
-        response.map(|_| ())
+        }
     }
 
     /// Holds the manager's lifecycle lock so tests can verify that an update waits for it.
@@ -227,6 +226,32 @@ impl ContextFixture {
 
     pub(super) async fn events(&self) -> Vec<StorageEvent> {
         self.storage.private_storage.lock().await.events().to_vec()
+    }
+
+    /// Check that `response` is a confirmation, signed with the fixture's key, that `context_id`
+    /// no longer exists.
+    pub(super) fn assert_confirms(
+        &self,
+        response: &Response<DestroyMpcContextResponse>,
+        context_id: &ContextId,
+    ) {
+        let pk = self.signing_key.verf_key();
+        let client = crate::client::client_wasm::Client::new(
+            std::collections::HashMap::from([(1, pk.clone())]),
+            std::collections::HashMap::from([(1, VerfKeySet::ecdsa_only(pk.clone()))]),
+            pk.address(),
+            None,
+            crate::consts::TEST_PARAM,
+            None,
+        );
+        client
+            .process_destroy_mpc_context_response(
+                response.get_ref(),
+                context_id,
+                &[],
+                &crate::dummy_domain(),
+            )
+            .unwrap();
     }
 }
 

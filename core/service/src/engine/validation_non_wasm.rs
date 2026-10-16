@@ -1192,6 +1192,7 @@ mod tests {
     use crate::cryptography::signing::composite::{
         sign_result_entries, wire_scheme_bound_preimage,
     };
+    use crate::engine::validation::{VerifiedDestroyMpcEpoch, unpack_destroy_req};
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
         RequestId,
@@ -2486,6 +2487,40 @@ mod tests {
                 .expect_err("unknown signing scheme must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
+    }
+
+    /// `unpack_destroy_req` parses the fields `DestroyMpcContext` and `DestroyMpcEpoch` share, and
+    /// rejects a request without an ID or a domain, or naming an unknown scheme.
+    #[test]
+    fn test_unpack_destroy_req() {
+        let epoch_id: kms_grpc::EpochId = derive_request_id("unpack_destroy_req").unwrap().into();
+        let proto_id: Option<v1::RequestId> = Some(epoch_id.into());
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let ecdsa = [v1::SigningSchemeType::Ecdsa256k1 as i32];
+        let mldsa87 = [v1::SigningSchemeType::Mldsa87 as i32];
+        let unpack = |id: &Option<v1::RequestId>,
+                      domain: Option<&v1::Eip712DomainMsg>,
+                      schemes: &[i32]|
+         -> anyhow::Result<VerifiedDestroyMpcEpoch> {
+            unpack_destroy_req(id, RequestIdParsingErr::Epoch, domain, &[1, 2], schemes)
+        };
+
+        let verified = unpack(&proto_id, Some(&domain), &mldsa87).unwrap();
+        assert_eq!(verified.id, epoch_id);
+        assert_eq!(verified.domain, dummy_domain());
+        assert_eq!(verified.extra_data, vec![1, 2]);
+        assert_eq!(verified.signing_schemes, vec![SigningSchemeType::MlDsa87]);
+
+        // No requested scheme means ECDSA.
+        let verified = unpack(&proto_id, Some(&domain), &[]).unwrap();
+        assert_eq!(
+            verified.signing_schemes,
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        assert!(unpack(&None, Some(&domain), &ecdsa).is_err());
+        assert!(unpack(&proto_id, None, &ecdsa).is_err());
+        assert!(unpack(&proto_id, Some(&domain), &[9999]).is_err());
     }
 
     #[test]

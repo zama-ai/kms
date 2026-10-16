@@ -3407,230 +3407,198 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn test_destroy_epoch_success() {
-        use crate::vault::storage::{
-            StorageReaderExt, store_versioned_at_request_and_epoch_id, tests::TestType,
-        };
-
-        let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let epoch_id = *DEFAULT_EPOCH_ID;
-
-        // Add the epoch to the session maker with PRSS data
-        let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
-        let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
-        let epoch = EpochData {
-            context_id: *DEFAULT_MPC_CONTEXT,
-            prss: PRSSSetupCombined {
-                prss_setup_z128,
-                prss_setup_z64,
-                num_parties: 4,
-                threshold: 1,
-            },
-        };
-        epoch_manager
-            .session_maker
-            .add_epoch(epoch_id, epoch.clone())
-            .await;
-
-        // Add a second "keeper" epoch: `destroy_epoch` refuses to remove the last remaining epoch,
-        // so the target epoch must not be the only one for the destruction to succeed.
-        let keeper_epoch_id = EpochId::new_random(&mut rng);
-        epoch_manager
-            .session_maker
-            .add_epoch(keeper_epoch_id, epoch.clone())
-            .await;
-
-        // Store some test data under this epoch
-        let data_type = PrivDataType::FheKeyInfo;
-        let data = TestType { i: 42 };
-        let data_id = derive_request_id("test_data_1").unwrap();
-
-        {
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
-            let mut priv_storage = private_storage.lock().await;
-            store_versioned_at_request_and_epoch_id(
-                &mut (*priv_storage),
-                &data_id,
-                &epoch_id,
-                &data,
-                &data_type.to_string(),
-            )
-            .await
-            .unwrap();
-
-            // Also store the PRSS setup in storage
-            store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &epoch_id.into(),
-                &epoch,
-                &PrivDataType::EpochData.to_string(),
-            )
-            .await
-            .unwrap();
-        }
-
-        // Verify epoch exists and data is present
-        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
-        {
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+    async fn test_destroy_epoch_existence_states() {
+        /// The number of epoch-scoped private entries stored under `epoch_id`.
+        async fn stored_count(
+            private_storage: &tokio::sync::Mutex<ram::RamStorage>,
+            epoch_id: &EpochId,
+        ) -> usize {
             let priv_storage = private_storage.lock().await;
-            let ids = priv_storage
-                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
-                .await
-                .unwrap();
-            assert!(ids.contains(&data_id));
+            let mut count = 0;
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                count += priv_storage
+                    .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
+                    .await
+                    .unwrap()
+                    .len();
+            }
+            count
         }
 
-        // Destroy the epoch
-        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
-        RealThresholdEpochManager::<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::destroy_epoch(
-            &epoch_id,
-            &epoch_manager.crypto_storage,
-            &epoch_manager.session_maker,
-        )
-        .await
-        .unwrap();
-
-        // Verify epoch is gone from session maker, while the keeper epoch remains.
-        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
-        assert!(
-            epoch_manager
-                .session_maker
-                .epoch_exists(&keeper_epoch_id)
-                .await
-        );
-
-        // Verify data is gone from storage
-        {
-            let priv_storage = priv_storage.lock().await;
-            let ids = priv_storage
-                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
-                .await
-                .unwrap();
-            assert!(ids.is_empty());
-        }
-    }
-
-    /// A destroyed epoch must also drop any lingering legacy `PrssSetupCombined` stored under its
-    /// epoch id as it might otherwise be resurrected on the next restart by the migration code.
-    #[tokio::test]
-    async fn test_destroy_epoch_removes_legacy_prss() {
-        let mut rng = AesRng::seed_from_u64(43);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let epoch_id = *DEFAULT_EPOCH_ID;
-
-        let epoch = dummy_epoch_data(*DEFAULT_MPC_CONTEXT);
-        epoch_manager
-            .session_maker
-            .add_epoch(epoch_id, epoch.clone())
-            .await;
-
-        // A "keeper" epoch so the target is not the last remaining one (`destroy_epoch` refuses to
-        // remove the final epoch).
-        let keeper_epoch_id = EpochId::new_random(&mut rng);
-        epoch_manager
-            .session_maker
-            .add_epoch(keeper_epoch_id, epoch.clone())
-            .await;
-
-        {
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
-            let mut priv_storage = private_storage.lock().await;
-            // The current epoch data, plus a lingering legacy combined PRSS at the same epoch id
-            // (as left behind by a pre-0.16 install where the legacy PRSS is not yet deleted).
-            store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &epoch_id.into(),
-                &epoch,
-                &PrivDataType::EpochData.to_string(),
-            )
-            .await
-            .unwrap();
-            store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &epoch_id.into(),
-                &epoch.prss,
-                #[expect(deprecated)]
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap();
-        }
-
-        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
-        RealThresholdEpochManager::<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::destroy_epoch(
-            &epoch_id,
-            &epoch_manager.crypto_storage,
-            &epoch_manager.session_maker,
-        )
-        .await
-        .unwrap();
-
-        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
-
-        // Both the epoch data and the legacy combined PRSS must be gone, so nothing can revive the
-        // epoch on the next restart.
-        let priv_storage = priv_storage.lock().await;
-        assert!(
-            !priv_storage
-                .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
-                .await
-                .unwrap(),
-            "EpochData must be deleted"
-        );
-        assert!(
-            !priv_storage
-                .data_exists(
-                    &epoch_id.into(),
-                    #[expect(deprecated)]
-                    &PrivDataType::PrssSetupCombined.to_string(),
-                )
-                .await
-                .unwrap(),
-            "legacy PrssSetupCombined must be deleted so migration cannot resurrect the epoch"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_destroy_epoch_that_does_not_exist() {
         let mut rng = AesRng::seed_from_u64(42);
+        // Holds `DEFAULT_EPOCH_ID` as its only loaded epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
-        let nonexistent_epoch_id = EpochId::new_random(&mut rng);
-        let epochs_before = epoch_manager.session_maker.epoch_count().await;
-
-        // An epoch that does not exist is confirmed as gone, and nothing changes.
-        epoch_manager
-            .destroy_epoch_with_lease(&nonexistent_epoch_id)
-            .await
-            .unwrap();
-        assert_eq!(
-            epoch_manager.session_maker.epoch_count().await,
-            epochs_before
-        );
-
-        // An epoch that is not registered yet but is being created is refused, not confirmed.
-        let _creation_lease = epoch_manager
-            .session_maker
-            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &nonexistent_epoch_id, None)
-            .await
-            .unwrap();
+        // The last loaded epoch is refused, and stays loaded.
         let err = epoch_manager
-            .destroy_epoch_with_lease(&nonexistent_epoch_id)
+            .destroy_epoch_with_lease(&DEFAULT_EPOCH_ID)
             .await
             .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&DEFAULT_EPOCH_ID)
+                .await
+        );
+
+        // An epoch that does not exist is confirmed as gone, and nothing changes.
+        let absent_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .destroy_epoch_with_lease(&absent_epoch_id)
+            .await
+            .unwrap();
+        assert_eq!(epoch_manager.session_maker.epoch_count().await, 1);
+
+        // An epoch that is not loaded yet because it is being created is refused, not confirmed.
+        {
+            let _creation_lease = epoch_manager
+                .session_maker
+                .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &absent_epoch_id, None)
+                .await
+                .unwrap();
+            let err = epoch_manager
+                .destroy_epoch_with_lease(&absent_epoch_id)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), Code::FailedPrecondition);
+        }
+
+        // Store key shares and CRS metadata under an epoch that is not loaded in the session maker,
+        // as is the case when its epoch data is gone.
+        let unloaded_epoch_id = EpochId::new_random(&mut rng);
+        let data_id = derive_request_id("unloaded_epoch_data").unwrap();
+        {
+            let mut priv_storage = private_storage.lock().await;
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                store_versioned_at_request_and_epoch_id(
+                    &mut (*priv_storage),
+                    &data_id,
+                    &unloaded_epoch_id,
+                    &TestType { i: 42 },
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+        }
+
+        // That epoch still counts as existing, so without a loaded epoch to remain it is refused,
+        // like any other last epoch, and its material is kept.
+        epoch_manager
+            .session_maker
+            .remove_epoch(&DEFAULT_EPOCH_ID)
+            .await;
+        let err = epoch_manager
+            .destroy_epoch_with_lease(&unloaded_epoch_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), Code::FailedPrecondition);
+        assert_eq!(
+            stored_count(&private_storage, &unloaded_epoch_id).await,
+            EPOCH_SCOPED_PRIVATE_TYPES.len()
+        );
+
+        // With a loaded epoch to remain, its material is erased rather than its absence confirmed.
+        epoch_manager
+            .session_maker
+            .add_epoch(*DEFAULT_EPOCH_ID, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
+        epoch_manager
+            .destroy_epoch_with_lease(&unloaded_epoch_id)
+            .await
+            .unwrap();
+        assert_eq!(stored_count(&private_storage, &unloaded_epoch_id).await, 0);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&DEFAULT_EPOCH_ID)
+                .await
+        );
+    }
+
+    /// `destroy_mpc_epoch` erases the epoch and returns a confirmation that verifies, also when it
+    /// is asked again for the epoch that is now gone.
+    #[tokio::test]
+    async fn test_destroy_mpc_epoch_signs_the_confirmation() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let client = verifying_client(&epoch_manager);
+        let epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        let extra_data = vec![1, 2, 3];
+
+        for _round in 0..2 {
+            let response = epoch_manager
+                .destroy_mpc_epoch(tonic::Request::new(destroy_epoch_request(
+                    epoch_id,
+                    extra_data.clone(),
+                )))
+                .await
+                .unwrap()
+                .into_inner();
+            let party_id = client
+                .process_destroy_mpc_epoch_response(
+                    &response,
+                    &epoch_id,
+                    &extra_data,
+                    &dummy_domain(),
+                )
+                .unwrap();
+            assert_eq!(party_id, 1);
+            assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        }
+    }
+
+    /// `destroy_mpc_epoch` refuses a malformed request, or one naming a scheme the node cannot
+    /// sign, with `InvalidArgument` before anything is erased.
+    #[tokio::test]
+    async fn test_destroy_mpc_epoch_rejects_invalid_requests() {
+        let mut rng = AesRng::seed_from_u64(46);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+
+        let valid = destroy_epoch_request(epoch_id, Vec::new());
+        let invalid_requests = [
+            DestroyMpcEpochRequest {
+                epoch_id: None,
+                ..valid.clone()
+            },
+            DestroyMpcEpochRequest {
+                domain: None,
+                ..valid.clone()
+            },
+            DestroyMpcEpochRequest {
+                signing_schemes: vec![9999],
+                ..valid.clone()
+            },
+            // The node holds an ECDSA key only.
+            DestroyMpcEpochRequest {
+                signing_schemes: vec![SigningSchemeType::MlDsa65.as_wire()],
+                ..valid.clone()
+            },
+        ];
+        for request in invalid_requests {
+            let err = epoch_manager
+                .destroy_mpc_epoch(tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), Code::InvalidArgument);
+        }
+
+        // Nothing was erased.
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        assert!(
+            private_storage
+                .lock()
+                .await
+                .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+        );
     }
 
     /// The creation lease remains live after PRSS registers the epoch, preventing destruction while
@@ -3691,8 +3659,7 @@ pub(crate) mod tests {
     }
 
     /// Validates partial-failure in destroying MPC epoch:
-    /// If deleting the private data fails, retrying should be possible until success,
-    /// at which point all epoch Ids associated to the destroyed context should be returned.
+    /// If deleting the private data fails, retrying should be possible until success.
     #[tokio::test]
     async fn test_destroy_epoch_partial_failure_is_retryable() {
         let mut rng = AesRng::seed_from_u64(42);
@@ -3831,41 +3798,19 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_destroy_mpc_epochs() {
-        use crate::vault::storage::{
-            StorageReader, StorageReaderExt, store_versioned_at_request_and_epoch_id,
-            tests::TestType,
-        };
-
         let mut rng = AesRng::seed_from_u64(7);
+        // `DEFAULT_EPOCH_ID` stays loaded throughout, so neither target is the last epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         let epoch_ids = [EpochId::new_random(&mut rng), EpochId::new_random(&mut rng)];
-        // Cover both epoch-scoped private data types the cascade erases.
-        let data_types = [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo];
         let data_id = derive_request_id("cascade_test_data").unwrap();
 
-        // Seed two epochs, each with PRSS data plus a key share and a CRS entry.
+        // Seed two epochs, each with its epoch data plus a key share and a CRS entry.
         for epoch_id in &epoch_ids {
-            let epoch = EpochData {
-                context_id: *DEFAULT_MPC_CONTEXT,
-                prss: PRSSSetupCombined {
-                    prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
-                        vec![],
-                        vec![],
-                    ),
-                    prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
-                    num_parties: 4,
-                    threshold: 1,
-                },
-            };
-            epoch_manager
-                .session_maker
-                .add_epoch(*epoch_id, epoch.clone())
-                .await;
-
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            seed_epoch(&epoch_manager, *epoch_id, *DEFAULT_MPC_CONTEXT).await;
             let mut priv_storage = private_storage.lock().await;
-            for data_type in &data_types {
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
                 store_versioned_at_request_and_epoch_id(
                     &mut (*priv_storage),
                     &data_id,
@@ -3876,27 +3821,18 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             }
-            store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &epoch_id.into(),
-                &epoch,
-                &PrivDataType::EpochData.to_string(),
-            )
-            .await
-            .unwrap();
         }
-
-        for epoch_id in &epoch_ids {
-            assert!(epoch_manager.session_maker.epoch_exists(epoch_id).await);
-        }
-
-        // Add a "keeper" epoch so the two target epochs are never the last remaining one:
-        // `destroy_epoch` refuses to remove the final epoch.
-        let keeper_epoch_id = EpochId::new_random(&mut rng);
-        epoch_manager
-            .session_maker
-            .add_epoch(keeper_epoch_id, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
-            .await;
+        // The first epoch also holds a lingering legacy combined PRSS, as left behind by a pre-0.16
+        // install, which the migration code would otherwise use to revive the epoch on restart.
+        store_versioned_at_request_id(
+            &mut (*private_storage.lock().await),
+            &epoch_ids[0].into(),
+            &dummy_epoch_data(*DEFAULT_MPC_CONTEXT).prss,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        .unwrap();
 
         // Destroy both epochs plus one that was never created: the missing epoch must be skipped
         // (idempotent) while the call still succeeds.
@@ -3907,27 +3843,39 @@ pub(crate) mod tests {
             .unwrap();
 
         // Each epoch is gone from the session maker and all of its private data — key shares, CRS,
-        // and PRSS — has been erased from storage.
-        for epoch_id in &epoch_ids {
-            assert!(!epoch_manager.session_maker.epoch_exists(epoch_id).await);
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        // and PRSS, the legacy one included — has been erased from storage.
+        {
             let priv_storage = private_storage.lock().await;
-            for data_type in &data_types {
-                let ids = priv_storage
-                    .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
-                    .await
-                    .unwrap();
+            for epoch_id in &epoch_ids {
+                assert!(!epoch_manager.session_maker.epoch_exists(epoch_id).await);
+                for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                    let ids = priv_storage
+                        .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
+                        .await
+                        .unwrap();
+                    assert!(
+                        ids.is_empty(),
+                        "{data_type} data should be gone for {epoch_id}"
+                    );
+                }
                 assert!(
-                    ids.is_empty(),
-                    "{data_type} data should be gone for {epoch_id}"
+                    !priv_storage
+                        .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                        .await
+                        .unwrap(),
+                    "PRSS setup should be gone for {epoch_id}"
                 );
             }
             assert!(
                 !priv_storage
-                    .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                    .data_exists(
+                        &epoch_ids[0].into(),
+                        #[expect(deprecated)]
+                        &PrivDataType::PrssSetupCombined.to_string(),
+                    )
                     .await
                     .unwrap(),
-                "PRSS setup should be gone for {epoch_id}"
+                "legacy PrssSetupCombined must be deleted so migration cannot resurrect the epoch"
             );
         }
 
@@ -3941,7 +3889,7 @@ pub(crate) mod tests {
         assert!(
             epoch_manager
                 .session_maker
-                .epoch_exists(&keeper_epoch_id)
+                .epoch_exists(&DEFAULT_EPOCH_ID)
                 .await
         );
     }
@@ -3988,6 +3936,40 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+    }
+
+    /// An ECDSA-only client that knows the signing key of `epoch_manager` as party 1.
+    fn verifying_client(
+        epoch_manager: &RealThresholdEpochManager<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >,
+    ) -> crate::client::client_wasm::Client {
+        let pk = epoch_manager.base_kms.signing_identity().unwrap().verf_key();
+        crate::client::client_wasm::Client::new(
+            HashMap::from([(1, pk.clone())]),
+            HashMap::from([(
+                1,
+                crate::cryptography::signing::VerfKeySet::ecdsa_only(pk.clone()),
+            )]),
+            pk.address(),
+            None,
+            crate::consts::TEST_PARAM,
+            None,
+        )
+    }
+
+    /// A `DestroyMpcEpoch` request for `epoch_id` with `extra_data`, under ECDSA and the dummy
+    /// domain.
+    fn destroy_epoch_request(epoch_id: EpochId, extra_data: Vec<u8>) -> DestroyMpcEpochRequest {
+        DestroyMpcEpochRequest {
+            epoch_id: Some(epoch_id.into()),
+            domain: Some(crate::testing::helpers::domain_to_msg(&dummy_domain())),
+            extra_data,
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1.as_wire()],
+        }
     }
 
     /// `destroy_epochs_for_context` must destroy exactly the epochs belonging to the given context,
