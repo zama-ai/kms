@@ -802,13 +802,14 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Invert for ResiduePoly<Z, EXTEN
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
-    /// invert and lift an Integer to the large Ring
+    /// Invert a unit element by computing the inverse of its embedding into the residue field,
+    /// then lift to the Galois ring using Newton iteration.
     fn invert(self) -> anyhow::Result<Self> {
-        if self == Self::ZERO {
-            return Err(anyhow_error_and_log("Cannot invert 0"));
-        }
-
         let alpha_k = self.bit_compose(0);
+
+        if alpha_k.is_zero() {
+            return Err(anyhow_error_and_log("Cannot invert a non-unit"));
+        }
         let ainv = alpha_k.invert();
         let mut x0 = Self::embed_quotient_exceptional_sequence(ainv)?;
 
