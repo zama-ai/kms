@@ -197,6 +197,16 @@ impl CoreToCoreNetworkConfig {
         )
     }
 
+    /// Returns the per-message delivery deadline used after the sender observes local session closure.
+    ///
+    /// It balances two concerns: give messages outstanding after session closure a chance to be
+    /// delivered, while also allowing for quick cleanup once the sender is done with its work.
+    /// NOTE: A successful session can close before its peers receive all final messages; this
+    /// allowance can discard them if the receiving party is very slow or the network path is broken.
+    pub fn get_closed_session_delivery_timeout(&self) -> Duration {
+        self.get_max_waiting_time_for_message_queue() / 2
+    }
+
     pub fn get_max_buffered_future_msgs(&self) -> usize {
         self.max_buffered_future_msgs
             .map(|v| v as usize)
