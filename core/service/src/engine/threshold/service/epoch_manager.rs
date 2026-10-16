@@ -2283,9 +2283,8 @@ pub(crate) mod tests {
             ram::FailingRamStorage,
             ram::{self, RamStorage},
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            store_versioned_at_request_id,
             test_support::StorageEntry,
-            tests::TestType,
         },
     };
     use kms_grpc::{
