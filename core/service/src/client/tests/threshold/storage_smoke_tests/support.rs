@@ -209,7 +209,8 @@ pub(super) async fn assert_destroy_error(
     epoch_id: EpochId,
     expected_code: Code,
 ) {
-    // The error is decided before anything is signed, so the requested schemes do not matter.
+    // The node signs before checking the destruction preconditions, so request only ECDSA, which
+    // every node can sign: the error then comes from the preconditions under test.
     let ecdsa = vec![SigningSchemeType::Ecdsa256k1.into()];
     for (party_id, result) in destroy_epoch(clients, epoch_id, ecdsa).await {
         let error = match result {

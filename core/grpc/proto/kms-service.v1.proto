@@ -452,10 +452,10 @@ service CoreServiceEndpoint {
   // # Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
-  // Destroys an MPC epoch, by first erasing the PRSS
-  // and then the shares of the secret key.
+  // Destroys an MPC epoch, by first erasing the shares of the secret key
+  // and then the PRSS.
   //
-  // The request is validated before anything is destroyed, hence a failure means nothing was removed.
+  // The request is validated before anything is destroyed, hence an invalid request removes nothing.
   //
   // The signed confirmation attests that the epoch no longer exists on this party, whether it was destroyed by this call, by
   // an earlier one, or never existed; it does not prove that the epoch ever existed. The call is therefore idempotent.

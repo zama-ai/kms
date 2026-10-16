@@ -1135,7 +1135,7 @@ message DestroyMpcEpochPayload {
 
 Erases the epoch's PRSS data and secret key shares from memory and storage, and returns a confirmation, signed under every scheme in `signing_schemes`, that the epoch no longer exists on this party.
 An epoch that is already absent, or never existed, is confirmed the same way, so the call can be repeated; the confirmation therefore does not prove that the epoch ever existed.
-The request is validated before anything is erased.
+The request is validated before anything is erased. If the erasure fails part way, an error is returned and the call should be retried.
 </details>
 
 <details>

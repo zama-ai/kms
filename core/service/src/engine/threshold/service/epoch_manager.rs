@@ -1519,8 +1519,9 @@ impl<
     /// Destroys an epoch by removing all private data stored under the given epoch, dropping its
     /// entries from the key cache, and then removing the epoch from the session maker.
     ///
-    /// The epoch must exist and must not be the last epoch on the node. A rejected precondition
-    /// leaves the epoch untouched, cache included.
+    /// An epoch that does not exist is already destroyed, so this returns `Ok` without changing
+    /// anything. The epoch must not be the last epoch on the node. A rejected precondition leaves
+    /// the epoch untouched, cache included.
     ///
     /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
     /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
@@ -1530,12 +1531,8 @@ impl<
         session_maker: &SessionMaker,
     ) -> Result<(), MetricedError> {
         if !session_maker.epoch_exists(epoch_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
-                Code::NotFound,
-            ));
+            tracing::info!("Epoch {epoch_id} does not exist; nothing to destroy");
+            return Ok(());
         }
 
         if session_maker.epoch_count().await < 2 {
@@ -1593,12 +1590,6 @@ impl<
                     Code::FailedPrecondition,
                 )
             })?;
-
-        // If the epoch does not exist, there is nothing to destroy.
-        if !self.session_maker.epoch_exists(epoch_id).await {
-            tracing::info!("Epoch {epoch_id} does not exist; nothing to destroy");
-            return Ok(());
-        }
 
         // NOTE: destroy_epoch will also destroy PRSS data
         Self::destroy_epoch(epoch_id, &self.crypto_storage, &self.session_maker).await
@@ -1854,13 +1845,6 @@ impl<
     async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
         let mut first_error: Option<MetricedError> = None;
         for epoch_id in epoch_ids {
-            if !self.session_maker.epoch_exists(epoch_id).await {
-                tracing::info!(
-                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
-                );
-                continue;
-            }
-
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
@@ -2052,10 +2036,9 @@ impl<
         let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
             MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::InvalidArgument)
         })?;
-        let identity = self
-            .base_kms
-            .signing_identity()
-            .map_err(|e| MetricedError::new(OP_DESTROY_EPOCH, some_epoch_id, e, Code::Internal))?;
+        // Refuse a scheme this node cannot sign, with the same error codes as the other signed calls.
+        let identity =
+            signing_identity_for(&self.base_kms, &schemes, OP_DESTROY_EPOCH, some_epoch_id)?;
         let payload = DestroyMpcEpochPayload {
             epoch_id,
             extra_data: inner.extra_data.clone(),
