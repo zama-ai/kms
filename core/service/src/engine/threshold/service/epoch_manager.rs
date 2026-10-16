@@ -3408,8 +3408,12 @@ pub(crate) mod tests {
         }
 
         let mut rng = AesRng::seed_from_u64(42);
-        // Holds `DEFAULT_EPOCH_ID` as its only loaded epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        // `make_epoch_manager` loads no epoch, so load `DEFAULT_EPOCH_ID` as the only one.
+        epoch_manager
+            .session_maker
+            .add_epoch(*DEFAULT_EPOCH_ID, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
         let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         // The last loaded epoch is refused, and stays loaded.
