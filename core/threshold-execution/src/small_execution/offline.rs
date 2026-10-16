@@ -12,6 +12,7 @@ use crate::config::BatchParams;
 use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
+use crate::sharing::open::reconstruct_batch;
 use crate::{
     communication::broadcast::Broadcast, network_value::BroadcastValue, online::triple::Triple,
     runtime::sessions::small_session::SmallSessionHandles,
@@ -340,11 +341,11 @@ where
 
     // Reconstruct the `amount` values in parallel: value `i` is reconstructed
     // from share `i` of every party, indexed directly out of the kept per-party
-    // vectors.
+    // vectors. The optimistic path settles the values whose shares all agree,
+    // the decoder the rest (see `reconstruct_batch`).
     spawn_compute_bound(move || {
-        (0..amount)
+        let sharings: Vec<ShamirSharings<Z>> = (0..amount)
             .into_par_iter()
-            // Each item is a full (heavy) Shamir reconstruction; see the constant's doc.
             .with_min_len(*crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK)
             .map(|i| {
                 let shares = party_vectors
@@ -353,10 +354,20 @@ where
                     .map(|(cur_role, cur_values)| Share::new(*cur_role, cur_values[i]))
                     .collect_vec();
                 ShamirSharings::create(shares)
+            })
+            .collect();
+        reconstruct_batch(
+            &sharings,
+            &hints,
+            degree + 1,
+            *crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK,
+            |sharing| {
+                // Each item is a full (heavy) Shamir reconstruction; see the constant's doc.
+                sharing
                     .error_reconstruct_with_hints(degree, max_errors, &hints)
                     .ok()
-            })
-            .collect::<Vec<_>>()
+            },
+        )
     })
     .await
 }

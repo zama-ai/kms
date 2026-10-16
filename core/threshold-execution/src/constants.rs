@@ -95,6 +95,17 @@ cfg_if::cfg_if! {
             std::sync::LazyLock::new(|| {
                 env_usize("MPC_ROBUST_OPEN_PAR_MIN_CHUNK", 256)
             });
+        /// Whether reconstructions try the optimistic path (interpolate from `degree + 1` shares, accept
+        /// only if every share agrees; see `algebra::sharing::optimistic`) before the error-correcting
+        /// decoder. Env: `MPC_RECONSTRUCT=decoder` disables it, for before/after benchmarks; anything else
+        /// (or unset) enables it.
+        pub static RECONSTRUCT_OPTIMISTIC: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+            let optimistic = std::env::var("MPC_RECONSTRUCT")
+                .map(|v| v.trim() != "decoder")
+                .unwrap_or(true);
+            tracing::info!("Reconstruction: optimistic path {}", if optimistic { "on" } else { "off (MPC_RECONSTRUCT=decoder)" });
+            optimistic
+        });
     }
 }
 

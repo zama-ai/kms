@@ -1,5 +1,6 @@
 use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::ParallelIterator;
+use rayon::slice::ParallelSlice;
 use std::{
     collections::HashMap,
     mem,
@@ -16,13 +17,14 @@ use crate::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
             send_to_all,
         },
-        constants::ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
+        constants::{RECONSTRUCT_OPTIMISTIC, ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK},
         runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
 };
 use algebra::{
     error_correction::ReconstructionHints,
     sharing::{
+        optimistic::reconstruct_batch_optimistic,
         shamir::{
             ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
             reconstruct_w_errors_sync,
@@ -435,7 +437,8 @@ impl RobustOpen for SecureRobustOpen {
 }
 
 type JobResultType<R, Z> = (R, anyhow::Result<Vec<Z>>);
-type ReconsFunc<Z> = fn(
+/// A per-sharing reconstruction function: [`reconstruct_w_errors_sync`] or [`reconstruct_w_errors_async`].
+pub type ReconsFunc<Z> = fn(
     num_parties: usize,
     degree: usize,
     threshold: usize,
@@ -443,6 +446,51 @@ type ReconsFunc<Z> = fn(
     sharing: &ShamirSharings<Z>,
     hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
+
+/// Reconstructs a batch of sharings with the owner set of `hints`, in Rayon tasks of `par_chunk` sharings:
+/// each task takes the optimistic path first (every sharing whose shares all agree with the polynomial
+/// interpolated from its first `degree + 1` shares, see [`reconstruct_batch_optimistic`]; skipped when
+/// [`RECONSTRUCT_OPTIMISTIC`] is off), then runs `fallback` — the error-correcting decoder — on the sharings
+/// it left. `optimistic_min_shares` is the number of shares a sharing must have for the optimistic result to
+/// be accepted, i.e. the bar the fallback applies.
+///
+/// One pass, one fork-join: on a many-core machine waking the pool costs more than the optimistic check of
+/// a whole chunk, so the check and the decoding of its misses share a task. A batch of at most `par_chunk`
+/// sharings runs on the calling thread.
+///
+/// The result has one entry per sharing, `None` where `fallback` returned `None` (not reconstructible with
+/// the shares at hand).
+pub fn reconstruct_batch<Z: ErrorCorrect, F>(
+    sharings: &[ShamirSharings<Z>],
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Vec<Option<Z>>
+where
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    let reconstruct_chunk = |chunk: &[ShamirSharings<Z>]| -> Vec<Option<Z>> {
+        let optimistic = if *RECONSTRUCT_OPTIMISTIC {
+            reconstruct_batch_optimistic(chunk, hints, optimistic_min_shares)
+        } else {
+            vec![None; chunk.len()]
+        };
+        chunk
+            .iter()
+            .zip(optimistic)
+            .map(|(sharing, fast)| fast.or_else(|| fallback(sharing)))
+            .collect()
+    };
+    let par_chunk = par_chunk.max(1);
+    if sharings.len() <= par_chunk {
+        return reconstruct_chunk(sharings);
+    }
+    sharings
+        .par_chunks(par_chunk)
+        .flat_map_iter(reconstruct_chunk)
+        .collect()
+}
 
 /// Helper function of robust reconstructions which collects the shares and tries to reconstruct.
 ///
@@ -473,14 +521,18 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
 
     // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode needs degree + 2t.
     // Same for the robust async mode. The weaker async branch however can reconstruct from as few as degree + t shares.
+    // The optimistic path accepts a sharing whose shares all agree once it has `optimistic_min_shares` shares: the
+    // number the per-sharing function requires on the polynomial (more than degree + t in the weak async branch,
+    // the interpolation set otherwise), so that its results are exactly the function's.
     let t = threshold as usize;
-    let (reconstruct_fn, attempt_bound): (ReconsFunc<Z>, usize) = match network_mode {
-        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t),
-        NetworkMode::Async if degree + 3 * t < num_parties => {
-            (reconstruct_w_errors_async, degree + 2 * t)
-        }
-        NetworkMode::Async => (reconstruct_w_errors_async, degree + t),
-    };
+    let (reconstruct_fn, attempt_bound, optimistic_min_shares): (ReconsFunc<Z>, usize, usize) =
+        match network_mode {
+            NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t, degree + 1),
+            NetworkMode::Async if degree + 3 * t < num_parties => {
+                (reconstruct_w_errors_async, degree + 2 * t, degree + 1)
+            }
+            NetworkMode::Async => (reconstruct_w_errors_async, degree + t, degree + t + 1),
+        };
 
     let mut collected_shares = 0;
     let mut has_attempted = false;
@@ -540,6 +592,14 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         if should_attempt_reconstruction {
             has_attempted = true;
             last_reconstruction_attempt = collected_shares;
+            // The per-sharing functions decline to decode once more than `threshold` parties are known
+            // bots (their error budget would underflow); the optimistic path then stays out too, so that
+            // both paths accept under exactly the same conditions.
+            let optimistic_min_shares = if num_bots > t {
+                usize::MAX
+            } else {
+                optimistic_min_shares
+            };
 
             // Spawn a task on rayon.
             let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
@@ -560,10 +620,12 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
                 // other tasks.
-                let result: Option<Vec<_>> = locked_sharings
-                    .par_iter()
-                    .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
-                    .map(|sharing| {
+                let result: Option<Vec<_>> = reconstruct_batch(
+                    &locked_sharings,
+                    &hints,
+                    optimistic_min_shares,
+                    *ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
+                    |sharing| {
                         reconstruct_fn(
                             num_parties,
                             degree,
@@ -573,8 +635,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                             &hints,
                         )
                         .unwrap_or_default()
-                    })
-                    .collect();
+                    },
+                )
+                .into_iter()
+                .collect();
                 Ok(result)
             })
             .await??;

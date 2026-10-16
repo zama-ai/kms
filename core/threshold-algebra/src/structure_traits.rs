@@ -163,6 +163,13 @@ pub trait ErrorCorrect: RingWithExceptionalSequence {
     ) -> anyhow::Result<Poly<Self>> {
         Self::error_correct(sharing, degree, max_errors)
     }
+
+    /// The inverse of a unit of the ring, when the ring offers one. The optimistic reconstruction
+    /// ([`crate::sharing::optimistic`]) needs it for its Lagrange constants and is skipped for rings that
+    /// return `None` (the default).
+    fn invert_unit(_value: Self) -> Option<Self> {
+        None
+    }
 }
 
 pub trait Derive: Sized {
