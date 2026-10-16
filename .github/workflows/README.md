@@ -156,7 +156,7 @@ Schedule entry: `--release -F slow_tests nightly` — nightly-suffixed tests in 
 
 ### Test material
 
-Most test jobs depend on pre-generated FHE / signing material under `./test-material/`, produced by the `Generate Test Material` step in `common-testing.yml`. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).
+Most test jobs depend on FHE and signing material under `./test-material/`. The shared generator in `main.yml` writes it to EFS for Rust and WASM jobs. `common-testing.yml` generates material locally when its caller provides no EFS path. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).
 
 ---
 
@@ -164,7 +164,10 @@ Most test jobs depend on pre-generated FHE / signing material under `./test-mate
 
 ### `rust-testing.yml`
 
-Calls `common-testing.yml` for the main sharded Rust test matrix and shares one EFS-backed test-material set across its jobs. On scheduled runs, it also runs the slow `kms` library tests whose names contain `nightly` in five shards. The `notify-nightly` job in `main.yml` reports their results.
+Calls `common-testing.yml` for the main sharded Rust test matrix. It receives the
+EFS-backed test-material path from `main.yml` and shares it across its jobs. On
+scheduled runs, it also runs the slow `kms` library tests whose names contain
+`nightly` in five shards. The `notify-nightly` job in `main.yml` reports their results.
 
 ### `kms-nightly.yml`
 
@@ -199,7 +202,9 @@ Lint/format/security live in [`rust-lint.yml`](rust-lint.yml) and [`ci_lint.yml`
 
 ### `wasm-testing.yml`
 
-Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` packages with `wasm-pack`, runs them under `node --test`, and dry-runs `npm publish`.
+Uses the shared EFS test material to generate WASM test fixtures from Rust tests,
+builds `tkms` and `node-tkms` packages with `wasm-pack`, runs them under
+`node --test`, and dry-runs `npm publish`.
 
 ### `rust-lint.yml`
 
