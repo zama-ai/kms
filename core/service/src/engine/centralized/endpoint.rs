@@ -306,14 +306,16 @@ impl<
         request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<DestroyMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-        self.context_manager
-            .destroy_mpc_context(request)
+        let verified = self
+            .context_manager
+            .validate_destroy_mpc_context(request.get_ref())
             .await
             .map_err(Status::from)?;
-        // Note that there are no epochs in the centralized case, so we return an empty list of epoch IDs
-        Ok(Response::new(DestroyMpcContextResponse {
-            epoch_ids: Vec::new(),
-        }))
+        // There are no epochs in the centralized case, so the context can be destroyed directly.
+        self.context_manager
+            .destroy_mpc_context(verified)
+            .await
+            .map_err(Status::from)
     }
 
     #[tracing::instrument(skip(self, request))]

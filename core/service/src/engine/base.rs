@@ -19,6 +19,7 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
+use kms_grpc::ContextId;
 use kms_grpc::EpochId;
 use kms_grpc::RequestId;
 use kms_grpc::kms;
@@ -81,6 +82,8 @@ pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 /// Domain separator for destroying an epoch
 pub const DSEP_DESTROY_EPOCH: DomainSep = *b"DSTY_EPO";
+/// Domain separator for destroying a context
+pub const DSEP_DESTROY_CONTEXT: DomainSep = *b"DSTY_CTX";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
@@ -293,6 +296,53 @@ impl From<&DestroyMpcEpochSignedPayload> for kms::v1::DestroyMpcEpochPayload {
     fn from(value: &DestroyMpcEpochSignedPayload) -> Self {
         kms::v1::DestroyMpcEpochPayload {
             epoch_id: Some(value.epoch_id.into()),
+            extra_data: value.extra_data.clone(),
+        }
+    }
+}
+
+/// The result payload that every non-ECDSA scheme signs for a context destruction.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum DestroyMpcContextSignedPayloadVersions {
+    V0(DestroyMpcContextSignedPayload),
+}
+
+/// The confirmation that a context no longer exists, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(DestroyMpcContextSignedPayloadVersions)]
+pub struct DestroyMpcContextSignedPayload {
+    pub context_id: ContextId,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for DestroyMpcContextSignedPayload {
+    const NAME: &'static str = "DestroyMpcContextSignedPayload";
+}
+
+impl TryFrom<kms::v1::DestroyMpcContextPayload> for DestroyMpcContextSignedPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::DestroyMpcContextPayload) -> Result<Self, Self::Error> {
+        let context_id = value
+            .context_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing context_id"))?
+            .try_into()?;
+        Ok(DestroyMpcContextSignedPayload {
+            context_id,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl From<&DestroyMpcContextSignedPayload> for kms::v1::DestroyMpcContextPayload {
+    fn from(value: &DestroyMpcContextSignedPayload) -> Self {
+        kms::v1::DestroyMpcContextPayload {
+            context_id: Some(value.context_id.into()),
             extra_data: value.extra_data.clone(),
         }
     }

@@ -767,6 +767,8 @@ $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-conte
 
 #### Destroying an MPC Context
 
+The cores destroy the context's epochs first, then the context. Every core confirms, with a signature the client verifies, that the context no longer exists. A context that is already gone is confirmed too, so the command can be repeated.
+
 ```{bash}
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
 ```
