@@ -1,7 +1,7 @@
 {{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
-{{- if .Values.kmsCore.thresholdMode.enabled }}
+{{- if and .Values.kmsCore.thresholdMode.enabled (not .Values.kmsCore.thresholdMode.omitPeers) }}
 {{- $partyCount := int .Values.kmsPeers.count }}
 {{- if .Values.kmsCore.thresholdMode.peersList }}
 {{- $partyCount = len .Values.kmsCore.thresholdMode.peersList }}
@@ -79,7 +79,9 @@ data:
     {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- if .Values.kmsCore.addressOverride }}
+      {{- if .Values.kmsPeers.name }}
+    tls_subject = {{ .Values.kmsPeers.name | quote }}
+      {{- else if .Values.kmsCore.addressOverride }}
     tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ .Values.kmsPeers.id}}"
       {{- else }}
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
@@ -162,6 +164,7 @@ data:
         {{- end }}
       {{- end }}
 
+      {{- if not .Values.kmsCore.thresholdMode.omitPeers }}
       {{- if .Values.kmsCore.thresholdMode.peersList }}
         {{- range .Values.kmsCore.thresholdMode.peersList }}
     [[threshold.peers]]
@@ -186,6 +189,7 @@ data:
     address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     port = {{ int $.Values.kmsCore.ports.peer }}
         {{- end }}
+      {{- end }}
       {{- end }}
 
     {{ end }}
