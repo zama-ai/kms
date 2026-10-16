@@ -3856,9 +3856,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
-        // `DEFAULT_EPOCH_ID` of the default context stays loaded throughout, so no target is the
-        // last epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        // `make_epoch_manager` loads no epoch, so load `DEFAULT_EPOCH_ID` of the default context.
+        // It stays loaded throughout, so no target is the last epoch.
+        epoch_manager
+            .session_maker
+            .add_epoch(*DEFAULT_EPOCH_ID, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
         let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         let context_a = ContextId::new_random(&mut rng);
