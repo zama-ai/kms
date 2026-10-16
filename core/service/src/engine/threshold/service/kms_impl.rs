@@ -89,7 +89,7 @@ use crate::{
         traits::PrivateKeyMaterialMetadata,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    util::{meta_store::MetaStore, rate_limiter::RateLimiter},
+    util::meta_store::MetaStore,
     vault::{
         Vault, adopt_custodian_context,
         storage::{
@@ -533,7 +533,6 @@ where
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
-    let rate_limiter_conf = config.rate_limiter_conf.to_owned().unwrap_or_default();
     let telemetry_conf = config
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
@@ -836,7 +835,6 @@ where
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng_source());
 
     let tracker = Arc::new(TaskTracker::new());
-    let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
@@ -844,7 +842,6 @@ where
         base_kms: base_kms.new_instance(),
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
         _init: PhantomData,
         _reshare: PhantomData,
@@ -877,7 +874,6 @@ where
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
@@ -888,7 +884,6 @@ where
         pub_dec_meta_store: pub_dec_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
@@ -901,7 +896,6 @@ where
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
     };
@@ -917,7 +911,6 @@ where
         num_sessions_preproc,
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _producer_factory: PhantomData,
     };
 
@@ -928,7 +921,6 @@ where
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _ceremony: PhantomData,
     };
 
@@ -955,7 +947,6 @@ where
     }
     // Start updating system metrics
     update_threshold_kms_system_metrics(
-        rate_limiter.clone(),
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
@@ -1007,7 +998,6 @@ fn core_to_core_stop_fault(shutdown_requested: bool, serve_error: Option<&str>) 
 }
 
 fn update_threshold_kms_system_metrics<PubS, PrivS>(
-    rate_limiter: RateLimiter,
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
@@ -1020,7 +1010,6 @@ where
 {
     tokio::spawn(async move {
         loop {
-            metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
             metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
             // Skipped when the cache lock is contended: the gauge keeps its

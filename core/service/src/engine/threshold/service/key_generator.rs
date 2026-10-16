@@ -42,7 +42,7 @@ use threshold_execution::{
         public_keysets::FhePubKeySet,
     },
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -71,12 +71,9 @@ use crate::{
             validate_key_gen_request,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-            try_delete_in_meta_store, update_err_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+        try_delete_in_meta_store, update_err_req_in_meta_store,
     },
     vault::storage::{
         Storage, StorageExt,
@@ -144,7 +141,6 @@ pub struct RealKeyGenerator<
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks, indexed by the preprocessing ID
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
     // This is a lock to make sure calls to keygen do not happen concurrently.
     // It's needed because we lock the meta store at different times before starting the keygen
@@ -180,7 +176,6 @@ impl<
                 session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
-                rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
                 serial_lock: Arc::clone(&value.serial_lock),
             },
@@ -286,7 +281,6 @@ impl<
         signing_schemes: Vec<SigningSchemeType>,
         context_id: ContextId,
         epoch_id: EpochId,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
     ) -> Result<(), MetricedError> {
         let preproc_handle_w_mode = resolved_preprocessing.handle;
@@ -475,7 +469,6 @@ impl<
                         eip712_domain_copy,
                         extra_data,
                         signing_schemes,
-                        permit,
                         meta_permit,
                         token,
                         op_tag,
@@ -499,7 +492,6 @@ impl<
                         eip712_domain_copy,
                         extra_data,
                         signing_schemes,
-                        permit,
                         meta_permit,
                         token,
                     )
@@ -540,7 +532,6 @@ impl<
         };
         // Serialize keygen admission. The spawned DKG tasks still run concurrently.
         let _guard = self.serial_lock.lock().await;
-        let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
@@ -620,7 +611,6 @@ impl<
             signing_schemes,
             context_id,
             epoch_id,
-            permit,
             meta_permit,
         )
         .await?;
@@ -1071,11 +1061,9 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
     ) {
-        let _permit = permit;
         let start = Instant::now();
         // Race the (potentially long-running) DKG against an abort.
         let outcome = tokio::select! {
@@ -1336,14 +1324,12 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
         op_tag: &'static str,
         existing_key_tag: Option<tfhe::Tag>,
         existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
-        let _permit = permit;
         let start = Instant::now();
         let outcome = tokio::select! {
             biased;
@@ -1936,7 +1922,6 @@ mod tests {
             );
 
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 base_kms,
@@ -1946,18 +1931,9 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _kg: PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -2134,40 +2110,6 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_ids, mut kg) = setup_key_generator::<
-            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        >()
-        .await;
-        let mut rng = AesRng::seed_from_u64(11);
-        let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut rng);
-
-        // Set bucket size to zero, so no operations are allowed
-        kg.set_bucket_size(0);
-
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = tonic::Request::new(KeyGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(key_id.into()),
-            params: Some(FheParameter::Test as i32),
-            preproc_id: Some(prep_id.into()),
-            domain: Some(domain),
-            keyset_config: None,
-            keyset_added_info: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
-            extra_data: vec![],
-        });
-
-        assert_eq!(
-            kg.key_gen(request).await.unwrap_err().code(),
-            tonic::Code::ResourceExhausted
-        );
     }
 
     #[tokio::test]

@@ -1,5 +1,4 @@
 use self::threshold::{ThresholdPartyConf, TlsConf};
-use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -33,8 +32,6 @@ pub struct CoreConfig {
     pub private_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub backup_vault: Option<VaultConfig>,
-    #[validate(nested)]
-    pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
     pub bandwidth_benchmark: Option<BandwidthBenchmarkConfig>,
     #[validate(nested)]
@@ -181,8 +178,7 @@ pub struct BandwidthBenchmarkConfig {
     /// Max benchmark runs allowed to execute concurrently on a node. Each run spawns up to
     /// `max_sessions` sessions, every one allocating a payload the networking layer clones per
     /// peer, so N in-flight requests multiply peak memory and outbound peer traffic by N. The
-    /// endpoint takes no rate-limiter permit, so concurrency is bounded here instead; it is a
-    /// diagnostic, so serializing runs is acceptable.
+    /// limit bounds this resource usage. The endpoint is diagnostic, so serial execution is acceptable.
     #[validate(range(min = 1))]
     pub max_concurrent_runs: usize,
 }
@@ -370,10 +366,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{
-        conf::threshold::{TlsCert, TlsConf, TlsKey},
-        util::rate_limiter::RateLimiterConfig,
-    };
+    use crate::conf::threshold::{TlsCert, TlsConf, TlsKey};
 
     fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
         VaultConfig {
@@ -512,11 +505,6 @@ mod tests {
             })
         );
 
-        assert_eq!(
-            core_config.rate_limiter_conf.unwrap(),
-            RateLimiterConfig::default()
-        );
-
         let core_to_core_net = threshold_config.core_to_core_net;
         assert_eq!(core_to_core_net.message_limit, Some(70));
         assert_eq!(core_to_core_net.multiplier, Some(2.0));
@@ -530,8 +518,8 @@ mod tests {
             core_to_core_net.max_en_decode_message_size,
             Some(2147483648)
         );
-        assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
-        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
+        assert_eq!(core_to_core_net.session_update_interval_secs, Some(120));
+        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(21600));
         assert_eq!(
             core_to_core_net.discard_inactive_sessions_interval,
             Some(10800)
@@ -611,10 +599,6 @@ mod tests {
                 path: PathBuf::from("./keys"),
                 prefix: None,
             })
-        );
-        assert_eq!(
-            core_config.rate_limiter_conf.unwrap(),
-            RateLimiterConfig::default()
         );
         assert!(
             core_config.threshold.is_none(),
