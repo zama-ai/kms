@@ -14,6 +14,8 @@ pub mod local_crypto;
 #[cfg(feature = "non-wasm")]
 pub mod mpc_context;
 #[cfg(feature = "non-wasm")]
+pub mod mpc_epoch;
+#[cfg(feature = "non-wasm")]
 pub mod public_decryption;
 #[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]

@@ -38,8 +38,8 @@ use kms_0_16_0::cryptography::{
 };
 use kms_0_16_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
-    KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
-    PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
+    DestroyMpcEpochSignedPayload, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
+    PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
 };
 use kms_0_16_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_16_0::engine::context::{
@@ -108,15 +108,15 @@ use backward_compatibility::parameters::{
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
     ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
-    CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
-    KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
-    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
-    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
-    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    CustodianContextAnchorTest, DestroyMpcEpochSignedPayloadTest, Eip712DomainTest, EpochDataTest,
+    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
+    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
+    PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
+    PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TransferableCustodianRecoveryOutputTest,
     TypedPlaintextTest, UnifiedCipherTest, UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest,
@@ -670,6 +670,14 @@ const STORED_SCHEME_SIGNATURE_TEST: StoredTypedSignatureTest = StoredTypedSignat
     ]),
     signature: Cow::Borrowed(&[9, 8, 7, 6, 5, 4, 3, 2, 1]),
 };
+
+// KMS test — the payload non-ECDSA schemes sign for an epoch destruction.
+const DESTROY_MPC_EPOCH_SIGNED_PAYLOAD_TEST: DestroyMpcEpochSignedPayloadTest =
+    DestroyMpcEpochSignedPayloadTest {
+        test_filename: Cow::Borrowed("destroy_mpc_epoch_signed_payload"),
+        epoch_id: [0x31; 32],
+        extra_data: Cow::Borrowed(&[0x21, 0x22, 0x23]),
+    };
 
 // KMS test — the payload non-ECDSA schemes sign for a preprocessing result.
 const PREP_KEYGEN_SIGNED_PAYLOAD_TEST: PrepKeygenSignedPayloadTest = PrepKeygenSignedPayloadTest {
@@ -1869,6 +1877,25 @@ impl KmsV0_16_0 {
         TestMetadataKMS::StoredTypedSignature(STORED_SCHEME_SIGNATURE_TEST)
     }
 
+    /// `DestroyMpcEpochSignedPayload` was introduced in v0.16.0 as the form
+    /// non-ECDSA schemes sign for an epoch destruction.
+    fn gen_destroy_mpc_epoch_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = DestroyMpcEpochSignedPayload {
+            epoch_id: kms_grpc_0_16_0::EpochId::from_bytes(
+                DESTROY_MPC_EPOCH_SIGNED_PAYLOAD_TEST.epoch_id,
+            ),
+            extra_data: DESTROY_MPC_EPOCH_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &DESTROY_MPC_EPOCH_SIGNED_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::DestroyMpcEpochSignedPayload(DESTROY_MPC_EPOCH_SIGNED_PAYLOAD_TEST)
+    }
+
     /// `PrepKeygenSignedPayload` was introduced in v0.16.0 as the canonical form
     /// non-ECDSA schemes sign for a preprocessing result.
     fn gen_prep_keygen_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
@@ -2279,6 +2306,7 @@ impl KMSCoreVersion for V0_16_0 {
             KmsV0_16_0::gen_crs_signed_payload(&dir),
             KmsV0_16_0::gen_public_dec_signed_payload(&dir),
             KmsV0_16_0::gen_user_dec_signed_payload(&dir),
+            KmsV0_16_0::gen_destroy_mpc_epoch_signed_payload(&dir),
             KmsV0_16_0::gen_composite_envelope(&dir),
             KmsV0_16_0::gen_composite_signcryption_payload(&dir),
             KmsV0_16_0::gen_verf_key_set(&dir),

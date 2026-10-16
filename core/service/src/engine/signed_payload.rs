@@ -17,6 +17,11 @@ pub enum UserDecSignedPayloadVersions {
 }
 
 /// The user decryption result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Clients of other releases verify signatures over it. Align with the
+/// relayer team before changing it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(UserDecSignedPayloadVersions)]
 pub struct UserDecSignedPayload {

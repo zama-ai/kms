@@ -447,15 +447,31 @@ service CoreServiceEndpoint {
   // # Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
-  // Destroys an MPC epoch, by first erasing the PRSS
-  // and if the shares of the secret key.
+  // Destroys an MPC epoch, by first erasing the shares of the secret key
+  // and then the PRSS.
+  //
+  // The request is validated before anything is destroyed, hence an invalid request removes nothing.
+  // If the erasure itself fails, part of the epoch may already have been removed from disk; an error
+  // is returned and the call should be retried until it succeeds.
+  //
+  // The signed confirmation attests that the epoch no longer exists on this party, whether it was destroyed by this call, by
+  // an earlier one, or never existed; it does not prove that the epoch ever existed. The call is therefore idempotent.
   //
   // # Parameters
-  // * `DestroyMpcEpochRequest` - Struct containing all the data of the request
+  // * `epoch_id` - Epoch ID of the MPC epoch to destroy.
+  // * `domain` - The EIP-712 domain used to sign the response.
+  // * `extra_data` - Extra data bound into the signatures and echoed back in the response.
+  // * `signing_schemes` - The signature schemes to sign the response under.
   //
   // # Conditions
   // *  No `KeyGen`, `CrsGen`, `AbortKeyGen`, or `AbortCrsGen` call may be executed concurrently!
-  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
+  //
+  // # Returns
+  // * `payload` - The signed result of the destruction:
+  //   * `epoch_id` - The ID of the epoch that no longer exists.
+  //   * `extra_data` - The `extra_data` of the request.
+  // * `signatures` - One signature per scheme in `signing_schemes`, each covering the fields of `payload`.
+  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.DestroyMpcEpochResponse);
 
   // Constructs a new custodian context.
   //

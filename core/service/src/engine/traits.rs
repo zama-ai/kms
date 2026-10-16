@@ -87,10 +87,14 @@ pub trait EpochManager {
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError>;
 
+    /// Destroy the epoch named in `request` and return the signed confirmation.
+    ///
+    /// The request is validated before anything is erased, so an
+    /// invalid request leaves the epoch untouched.
     async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, MetricedError>;
+    ) -> Result<Response<DestroyMpcEpochResponse>, MetricedError>;
 
     /// Destroy every epoch in `epoch_ids` as part of a context destruction.
     ///
