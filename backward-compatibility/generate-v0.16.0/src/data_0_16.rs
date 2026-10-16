@@ -727,6 +727,16 @@ const COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST: CompositeSigncryptionPayloadTest =
         enc_key_digest: Cow::Borrowed(&[0x33; 32]),
     };
 
+// KMS test — the same payload for a Solana user, whose receiver id is a 32-byte public key
+// rather than a 20-byte EVM address.
+const COMPOSITE_SIGNCRYPTION_PAYLOAD_SOLANA_TEST: CompositeSigncryptionPayloadTest =
+    CompositeSigncryptionPayloadTest {
+        test_filename: Cow::Borrowed("composite_signcryption_payload_solana"),
+        msg: Cow::Borrowed(&[0x31; 40]),
+        receiver_id: Cow::Borrowed(&[0x32; 32]),
+        enc_key_digest: Cow::Borrowed(&[0x33; 32]),
+    };
+
 // KMS test — a key set covering every signing scheme of v0.16.0. The schemes are pinned so
 // that a scheme added later does not change the expected key set.
 const VERF_KEY_SET_TEST: VerfKeySetTest = VerfKeySetTest {
@@ -1987,20 +1997,19 @@ impl KmsV0_16_0 {
     }
 
     /// `CompositeSigncryptionPayload` represent the content that the composite signature signs.
-    fn gen_composite_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
+    fn gen_composite_signcryption_payload(
+        dir: &PathBuf,
+        test: CompositeSigncryptionPayloadTest,
+    ) -> TestMetadataKMS {
         let payload = CompositeSigncryptionPayload {
-            msg: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.msg.to_vec(),
-            receiver_id: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.receiver_id.to_vec(),
-            enc_key_digest: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.enc_key_digest.to_vec(),
+            msg: test.msg.to_vec(),
+            receiver_id: test.receiver_id.to_vec(),
+            enc_key_digest: test.enc_key_digest.to_vec(),
         };
 
-        store_versioned_test!(
-            &payload,
-            dir,
-            &COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.test_filename
-        );
+        store_versioned_test!(&payload, dir, &test.test_filename);
 
-        TestMetadataKMS::CompositeSigncryptionPayload(COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST)
+        TestMetadataKMS::CompositeSigncryptionPayload(test)
     }
 
     /// `VerfKeySet` contains the verification keys a party publishes.
@@ -2280,7 +2289,14 @@ impl KMSCoreVersion for V0_16_0 {
             KmsV0_16_0::gen_public_dec_signed_payload(&dir),
             KmsV0_16_0::gen_user_dec_signed_payload(&dir),
             KmsV0_16_0::gen_composite_envelope(&dir),
-            KmsV0_16_0::gen_composite_signcryption_payload(&dir),
+            KmsV0_16_0::gen_composite_signcryption_payload(
+                &dir,
+                COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST,
+            ),
+            KmsV0_16_0::gen_composite_signcryption_payload(
+                &dir,
+                COMPOSITE_SIGNCRYPTION_PAYLOAD_SOLANA_TEST,
+            ),
             KmsV0_16_0::gen_verf_key_set(&dir),
         ]
     }

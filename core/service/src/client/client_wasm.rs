@@ -1,5 +1,6 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::{SchemeVerfKeys, SigningError, SigningSchemeType};
+use kms_grpc::rpc_types::ClientAddress;
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -42,7 +43,7 @@ pub struct Client {
     pub(crate) rng: Box<AesRng>,
     pub(crate) server_identities: ServerIdentities,
     pub(crate) scheme_verf_keys: SchemeVerfKeys,
-    pub(crate) client_address: alloy_primitives::Address,
+    pub(crate) client_address: ClientAddress,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
     pub(crate) decryption_mode: DecryptionMode,
@@ -64,7 +65,7 @@ impl Client {
     ///   keyed by party id, for verifying the per-scheme `signatures` of a
     ///   response. A client that has no access to the servers' public storage
     ///   passes an empty map, and can then only verify ECDSA.
-    /// * `client_address` - the client wallet address.
+    /// * `client_address` - the client wallet address, see [ClientAddress].
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
     ///   in a secure location, e.g., hardware wallet or web extension.
@@ -75,7 +76,7 @@ impl Client {
     pub fn new(
         server_pks: HashMap<u32, PublicSigKey>,
         scheme_verf_keys: SchemeVerfKeys,
-        client_address: alloy_primitives::Address,
+        client_address: impl Into<ClientAddress>,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
         decryption_mode: Option<DecryptionMode>,
@@ -86,7 +87,7 @@ impl Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
             scheme_verf_keys,
-            client_address,
+            client_address: client_address.into(),
             client_sk,
             params,
             decryption_mode,
@@ -161,7 +162,7 @@ impl Client {
         }
     }
 
-    pub fn get_client_address(&self) -> alloy_primitives::Address {
+    pub fn get_client_address(&self) -> ClientAddress {
         self.client_address
     }
 }

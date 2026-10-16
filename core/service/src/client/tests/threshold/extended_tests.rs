@@ -1,3 +1,4 @@
+use crate::client::tests::common::TestUser;
 use crate::client::tests::threshold::crs_gen_tests::crs_gen;
 use crate::client::tests::threshold::key_gen_tests::{
     preproc_and_keygen, run_threshold_decompression_keygen,
@@ -113,6 +114,7 @@ async fn nightly_default_user_decryption_threshold_sns_precompute(
         None,
         None,
         None,
+        TestUser::Evm,
     )
     .await;
 }
@@ -159,6 +161,7 @@ async fn nightly_default_user_decryption_threshold_with_crash(
         }),
         None,
         None,
+        TestUser::Evm,
     )
     .await;
 }
