@@ -52,10 +52,11 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::mpc_context::tests::{SCHEMES, client_knowing};
+    use crate::client::mpc_context::tests::SCHEMES;
     use crate::cryptography::signatures::{NodeSigningIdentity, test_support::seeded_identity};
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
+    use crate::testing::helpers::client_knowing;
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
@@ -93,7 +94,7 @@ mod tests {
     fn destroy_epoch_response_matches_the_request() {
         let mut rng = AesRng::seed_from_u64(0xDE57);
         let identity = seeded_identity(&mut rng);
-        let client = client_knowing(&identity);
+        let client = client_knowing(&identity, &SCHEMES);
         let epoch_id = EpochId::from_bytes([1u8; 32]);
         let extra_data = vec![7u8; 3];
         let domain = dummy_domain();

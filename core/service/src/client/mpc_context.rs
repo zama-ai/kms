@@ -83,38 +83,21 @@ impl Client {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::consts::TEST_PARAM;
     use crate::cryptography::signatures::{
-        NodeSigningIdentity, SigningSchemeType, VerfKeySet, test_support::seeded_identity,
+        NodeSigningIdentity, SigningSchemeType, test_support::seeded_identity,
     };
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
+    use crate::testing::helpers::client_knowing;
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
-    use std::collections::HashMap;
     use threshold_types::rng::AesRng;
 
     /// The schemes the client requests: ECDSA and a post-quantum scheme, so both kinds of
     /// verification are exercised.
     pub(crate) const SCHEMES: [SigningSchemeType; 2] =
         [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
-
-    /// A client that knows `identity` as party 1, holds its key for every scheme in [`SCHEMES`],
-    /// and requests them all.
-    pub(crate) fn client_knowing(identity: &NodeSigningIdentity) -> Client {
-        let pk = identity.verf_key();
-        let mut client = Client::new(
-            HashMap::from([(1, pk.clone())]),
-            HashMap::from([(1, VerfKeySet::from_identity(identity, &SCHEMES).unwrap())]),
-            pk.address(),
-            None,
-            TEST_PARAM,
-            None,
-        );
-        client.set_signing_schemes(&SCHEMES).unwrap();
-        client
-    }
 
     /// A response confirming `context_id` with `extra_data`, signed by `identity` the way a node
     /// signs it.
@@ -148,7 +131,7 @@ pub(crate) mod tests {
     fn destroy_context_response_matches_the_request() {
         let mut rng = AesRng::seed_from_u64(0xC0DE);
         let identity = seeded_identity(&mut rng);
-        let client = client_knowing(&identity);
+        let client = client_knowing(&identity, &SCHEMES);
         let context_id = ContextId::from_bytes([1u8; 32]);
         let extra_data = vec![7u8; 3];
         let domain = dummy_domain();

@@ -2256,6 +2256,7 @@ impl<
 pub(crate) mod tests {
     use super::*;
     use crate::engine::rng_source::test_rng_source;
+    use crate::testing::helpers::client_knowing;
     use crate::vault::storage::{store_versioned_at_request_and_epoch_id, tests::TestType};
     use crate::{
         client::test_tools::{self},
@@ -3524,7 +3525,10 @@ pub(crate) mod tests {
     async fn test_destroy_mpc_epoch_signs_the_confirmation() {
         let mut rng = AesRng::seed_from_u64(45);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let client = verifying_client(&epoch_manager);
+        let client = client_knowing(
+            &epoch_manager.base_kms.signing_identity().unwrap(),
+            &[SigningSchemeType::Ecdsa256k1],
+        );
         let epoch_id = EpochId::new_random(&mut rng);
         seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
         let extra_data = vec![1, 2, 3];
@@ -3936,29 +3940,6 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-    }
-
-    /// An ECDSA-only client that knows the signing key of `epoch_manager` as party 1.
-    fn verifying_client(
-        epoch_manager: &RealThresholdEpochManager<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >,
-    ) -> crate::client::client_wasm::Client {
-        let pk = epoch_manager.base_kms.signing_identity().unwrap().verf_key();
-        crate::client::client_wasm::Client::new(
-            HashMap::from([(1, pk.clone())]),
-            HashMap::from([(
-                1,
-                crate::cryptography::signing::VerfKeySet::ecdsa_only(pk.clone()),
-            )]),
-            pk.address(),
-            None,
-            crate::consts::TEST_PARAM,
-            None,
-        )
     }
 
     /// A `DestroyMpcEpoch` request for `epoch_id` with `extra_data`, under ECDSA and the dummy

@@ -235,14 +235,9 @@ impl ContextFixture {
         response: &Response<DestroyMpcContextResponse>,
         context_id: &ContextId,
     ) {
-        let pk = self.signing_key.verf_key();
-        let client = crate::client::client_wasm::Client::new(
-            std::collections::HashMap::from([(1, pk.clone())]),
-            std::collections::HashMap::from([(1, VerfKeySet::ecdsa_only(pk.clone()))]),
-            pk.address(),
-            None,
-            crate::consts::TEST_PARAM,
-            None,
+        let client = crate::testing::helpers::client_knowing(
+            &NodeSigningIdentity::ecdsa_only(self.signing_key.clone()),
+            &[SigningSchemeType::Ecdsa256k1],
         );
         client
             .process_destroy_mpc_context_response(
