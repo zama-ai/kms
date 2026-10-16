@@ -1606,6 +1606,8 @@ impl<
                 epoch_id = %epoch_id,
                 "MPC epoch does not exist; confirming its destruction"
             );
+            // Ensure it is removed from the in-memory cache in case this is a repeated call because the initial failed before cache clearing.
+            crypto_storage.purge_epoch_from_cache(epoch_id).await;
             return Ok(());
         }
 
