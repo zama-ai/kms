@@ -3800,104 +3800,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_destroy_mpc_epochs() {
-        let mut rng = AesRng::seed_from_u64(7);
-        // `DEFAULT_EPOCH_ID` stays loaded throughout, so neither target is the last epoch.
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let private_storage = epoch_manager.crypto_storage.get_private_storage();
-
-        let epoch_ids = [EpochId::new_random(&mut rng), EpochId::new_random(&mut rng)];
-        let data_id = derive_request_id("cascade_test_data").unwrap();
-
-        // Seed two epochs, each with its epoch data plus a key share and a CRS entry.
-        for epoch_id in &epoch_ids {
-            seed_epoch(&epoch_manager, *epoch_id, *DEFAULT_MPC_CONTEXT).await;
-            let mut priv_storage = private_storage.lock().await;
-            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
-                store_versioned_at_request_and_epoch_id(
-                    &mut (*priv_storage),
-                    &data_id,
-                    epoch_id,
-                    &TestType { i: 42 },
-                    &data_type.to_string(),
-                )
-                .await
-                .unwrap();
-            }
-        }
-        // The first epoch also holds a lingering legacy combined PRSS, as left behind by a pre-0.16
-        // install, which the migration code would otherwise use to revive the epoch on restart.
-        store_versioned_at_request_id(
-            &mut (*private_storage.lock().await),
-            &epoch_ids[0].into(),
-            &dummy_epoch_data(*DEFAULT_MPC_CONTEXT).prss,
-            #[expect(deprecated)]
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await
-        .unwrap();
-
-        // Destroy both epochs plus one that was never created: the missing epoch must be skipped
-        // (idempotent) while the call still succeeds.
-        let nonexistent = EpochId::new_random(&mut rng);
-        epoch_manager
-            .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
-            .await
-            .unwrap();
-
-        // Each epoch is gone from the session maker and all of its private data — key shares, CRS,
-        // and PRSS, the legacy one included — has been erased from storage.
-        {
-            let priv_storage = private_storage.lock().await;
-            for epoch_id in &epoch_ids {
-                assert!(!epoch_manager.session_maker.epoch_exists(epoch_id).await);
-                for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
-                    let ids = priv_storage
-                        .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
-                        .await
-                        .unwrap();
-                    assert!(
-                        ids.is_empty(),
-                        "{data_type} data should be gone for {epoch_id}"
-                    );
-                }
-                assert!(
-                    !priv_storage
-                        .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
-                        .await
-                        .unwrap(),
-                    "PRSS setup should be gone for {epoch_id}"
-                );
-            }
-            assert!(
-                !priv_storage
-                    .data_exists(
-                        &epoch_ids[0].into(),
-                        #[expect(deprecated)]
-                        &PrivDataType::PrssSetupCombined.to_string(),
-                    )
-                    .await
-                    .unwrap(),
-                "legacy PrssSetupCombined must be deleted so migration cannot resurrect the epoch"
-            );
-        }
-
-        // Re-running the same destruction is a no-op and still succeeds (idempotent retry).
-        epoch_manager
-            .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
-            .await
-            .unwrap();
-
-        // The keeper epoch is untouched throughout.
-        assert!(
-            epoch_manager
-                .session_maker
-                .epoch_exists(&DEFAULT_EPOCH_ID)
-                .await
-        );
-    }
-
     /// Build a dummy [`EpochData`] tied to `context_id`. The PRSS material is empty testing data;
     /// only the `context_id` matters for the tests below.
     pub(crate) fn dummy_epoch_data(context_id: ContextId) -> EpochData {
@@ -3953,32 +3855,106 @@ pub(crate) mod tests {
         }
     }
 
-    /// `destroy_epochs_for_context` must destroy exactly the epochs belonging to the given context,
-    /// and leave epochs of other contexts intact.
+    /// `destroy_epochs_for_context` erases every epoch of the given context, with all of its
+    /// private material, and leaves the epochs of other contexts intact. A repeated call, and a
+    /// call for a context without epochs, succeed without changing anything.
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
+        // `DEFAULT_EPOCH_ID` of the default context stays loaded throughout, so no target is the
+        // last epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
-
         let epoch_a1 = EpochId::new_random(&mut rng);
         let epoch_a2 = EpochId::new_random(&mut rng);
         let epoch_b = EpochId::new_random(&mut rng);
-        seed_epoch(&epoch_manager, epoch_a1, context_a).await;
-        seed_epoch(&epoch_manager, epoch_a2, context_a).await;
-        seed_epoch(&epoch_manager, epoch_b, context_b).await;
+        let data_id = derive_request_id("destroy_epochs_for_context_data").unwrap();
+
+        // Seed every epoch with its epoch data plus a key share and a CRS entry.
+        for (epoch_id, context_id) in [
+            (epoch_a1, context_a),
+            (epoch_a2, context_a),
+            (epoch_b, context_b),
+        ] {
+            seed_epoch(&epoch_manager, epoch_id, context_id).await;
+            let mut priv_storage = private_storage.lock().await;
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                store_versioned_at_request_and_epoch_id(
+                    &mut (*priv_storage),
+                    &data_id,
+                    &epoch_id,
+                    &TestType { i: 42 },
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        // One epoch also holds a lingering legacy combined PRSS, as left behind by a pre-0.16
+        // install, which the migration code would otherwise use to revive the epoch on restart.
+        store_versioned_at_request_id(
+            &mut (*private_storage.lock().await),
+            &epoch_a1.into(),
+            &dummy_epoch_data(context_a).prss,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        .unwrap();
 
         epoch_manager
             .destroy_epochs_for_context(&context_a)
             .await
             .unwrap();
 
-        // Context A's epochs are gone; context B's epoch is untouched.
-        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a1).await);
-        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a2).await);
-        assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
+        // Context A's epochs are gone from the session maker, and all of their private data — key
+        // shares, CRS, and PRSS, the legacy one included — has been erased from storage.
+        {
+            let priv_storage = private_storage.lock().await;
+            for epoch_id in [epoch_a1, epoch_a2] {
+                assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+                for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                    let ids = priv_storage
+                        .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                        .await
+                        .unwrap();
+                    assert!(
+                        ids.is_empty(),
+                        "{data_type} data should be gone for {epoch_id}"
+                    );
+                }
+                assert!(
+                    !priv_storage
+                        .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                        .await
+                        .unwrap(),
+                    "PRSS setup should be gone for {epoch_id}"
+                );
+            }
+            assert!(
+                !priv_storage
+                    .data_exists(
+                        &epoch_a1.into(),
+                        #[expect(deprecated)]
+                        &PrivDataType::PrssSetupCombined.to_string(),
+                    )
+                    .await
+                    .unwrap(),
+                "legacy PrssSetupCombined must be deleted so migration cannot resurrect the epoch"
+            );
+
+            // Context B's epoch and its material are untouched.
+            for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+                let ids = priv_storage
+                    .all_data_ids_at_epoch(&epoch_b, &data_type.to_string())
+                    .await
+                    .unwrap();
+                assert!(ids.contains(&data_id));
+            }
+        }
         assert!(
             epoch_manager
                 .session_maker
@@ -3994,12 +3970,22 @@ pub(crate) mod tests {
             vec![epoch_b]
         );
 
-        // Destroying a context with no epochs is a successful no-op.
-        let empty_context = ContextId::new_random(&mut rng);
+        // A repeated call, and a call for a context without epochs, are successful no-ops.
         epoch_manager
-            .destroy_epochs_for_context(&empty_context)
+            .destroy_epochs_for_context(&context_a)
             .await
             .unwrap();
+        epoch_manager
+            .destroy_epochs_for_context(&ContextId::new_random(&mut rng))
+            .await
+            .unwrap();
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&DEFAULT_EPOCH_ID)
+                .await
+        );
     }
 
     /// Store `bytes` as the `data_type` public material of `data_id` and return their digest,

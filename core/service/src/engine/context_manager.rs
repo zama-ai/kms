@@ -3484,62 +3484,6 @@ mod tests {
         });
         let response = context_manager.new_mpc_context(request).await;
         assert!(response.is_err());
-
-        // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
-        // remaining context, so the target must not be the only one in storage.
-        let keeper_context_id = ContextId::from_bytes([55u8; 32]);
-        let keeper_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
-                mpc_identity: "Node1".to_string(),
-                party_id: 1,
-                external_url: "http://localhost:12345".to_string(),
-                ca_cert: None,
-                public_storage_url: "http://storage".to_string(),
-                public_storage_prefix: None,
-                extra_signer_addresses: vec![],
-                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
-            context_id: keeper_context_id,
-            software_version: SoftwareVersion {
-                major: 0,
-                minor: 1,
-                patch: 0,
-                tag: None,
-            },
-            threshold: 0,
-            pcr_values: vec![],
-        };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
-        context_manager.new_mpc_context(request).await.unwrap();
-
-        // Destroy the context
-        destroy_mpc_context_without_epochs(&context_manager, context_id)
-            .await
-            .unwrap();
-
-        // The keeper context is untouched.
-        assert!(
-            context_manager
-                .mpc_context_exists_in_cache(&keeper_context_id)
-                .await
-        );
-
-        // Cache should no longer have the context
-        assert!(
-            !context_manager
-                .mpc_context_exists_in_cache(&context_id)
-                .await
-        );
-
-        // Storage should no longer have the context
-        {
-            let storage_ref = Arc::clone(&crypto_storage.private_storage);
-            let guarded_priv_storage = storage_ref.lock().await;
-            let result = read_context_at_id(&*guarded_priv_storage, &context_id).await;
-            assert!(result.is_err());
-        }
     }
 
     #[tokio::test]
@@ -3596,55 +3540,6 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(result.unwrap());
-
-        // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
-        // remaining context, so the target must not be the only one in storage.
-        let keeper_context_id = ContextId::from_bytes([56u8; 32]);
-        let keeper_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
-                mpc_identity: "Node1".to_string(),
-                party_id: 1,
-                external_url: "http://localhost:12345".to_string(),
-                ca_cert: None,
-                public_storage_url: "http://storage".to_string(),
-                public_storage_prefix: None,
-                extra_signer_addresses: vec![],
-                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
-            context_id: keeper_context_id,
-            software_version: SoftwareVersion {
-                major: 0,
-                minor: 1,
-                patch: 0,
-                tag: None,
-            },
-            threshold: 0,
-            pcr_values: vec![],
-        };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
-        context_manager.new_mpc_context(request).await.unwrap();
-
-        // Destroy the context
-        destroy_mpc_context_without_epochs(&context_manager, context_id)
-            .await
-            .unwrap();
-
-        // The keeper context remains consistent after the target is destroyed.
-        assert!(
-            context_manager
-                .mpc_context_exists_and_consistent(&keeper_context_id)
-                .await
-                .unwrap()
-        );
-
-        // After destruction, context should not exist
-        let result = context_manager
-            .mpc_context_exists_and_consistent(&context_id)
-            .await;
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
     }
 
     #[tokio::test]
@@ -3707,28 +3602,6 @@ mod tests {
                     .unwrap()
             );
         }
-
-        // Destroy the middle context
-        destroy_mpc_context_without_epochs(&context_manager, context_ids[1])
-            .await
-            .unwrap();
-
-        // First and third should still exist, second should not
-        assert!(
-            context_manager
-                .mpc_context_exists_in_cache(&context_ids[0])
-                .await
-        );
-        assert!(
-            !context_manager
-                .mpc_context_exists_in_cache(&context_ids[1])
-                .await
-        );
-        assert!(
-            context_manager
-                .mpc_context_exists_in_cache(&context_ids[2])
-                .await
-        );
     }
 
     /// Destroy `context_id` the way an endpoint does once the context has no epochs left.
