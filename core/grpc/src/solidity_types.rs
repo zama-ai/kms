@@ -1,5 +1,6 @@
 //! Solidity types used in EIP-712 signing and verification.
-//! WARNING: any changes to these structures is a breaking change.
+//! WARNING: any changes to these structures is a breaking change. Align with the smart contract
+//! team before changing any of them, since the contracts verify signatures over them.
 
 use crate::{ContextId, EpochId, RequestId};
 use alloy_primitives::U256;

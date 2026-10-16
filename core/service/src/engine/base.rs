@@ -261,6 +261,10 @@ pub enum DestroyMpcEpochSignedPayloadVersions {
 }
 
 /// The confirmation that an epoch no longer exists, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(DestroyMpcEpochSignedPayloadVersions)]
 pub struct DestroyMpcEpochSignedPayload {
@@ -304,6 +308,10 @@ pub enum DestroyMpcContextSignedPayloadVersions {
 }
 
 /// The confirmation that a context no longer exists, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(DestroyMpcContextSignedPayloadVersions)]
 pub struct DestroyMpcContextSignedPayload {
@@ -348,6 +356,11 @@ pub enum PrepKeygenSignedPayloadVersions {
 }
 
 /// The preprocessing result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(PrepKeygenSignedPayloadVersions)]
 pub struct PrepKeygenSignedPayload {
@@ -366,6 +379,11 @@ pub enum KeygenSignedPayloadVersions {
 }
 
 /// The keygen result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeygenSignedPayloadVersions)]
 pub struct KeygenSignedPayload {
@@ -387,6 +405,11 @@ pub enum CrsSignedPayloadVersions {
 }
 
 /// The CRS generation result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsSignedPayloadVersions)]
 pub struct CrsSignedPayload {
@@ -429,6 +452,10 @@ pub enum PublicDecSignedPayloadVersions {
 /// The public decryption result, in the form non-ECDSA schemes sign it.
 ///
 /// `response_bytes` are the serialized [`PublicDecryptionResponsePayload`].
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Align with the smart contract team before changing it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(PublicDecSignedPayloadVersions)]
 pub struct PublicDecSignedPayload {

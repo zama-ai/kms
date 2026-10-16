@@ -74,6 +74,11 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // unpacked into InternalCustodianSetupMessage on load).
     // Covered via InternalCustodianSetupMessageTest.
     "CustodianSetupMessagePayload",
+    // Only serialized as the preimage of the non-ECDSA signatures on a DestroyMpcEpoch or
+    // DestroyMpcContext response; never persisted, and verified only by a client of the same
+    // release.
+    "DestroyMpcEpochSignedPayload",
+    "DestroyMpcContextSignedPayload",
     // Variant payload of KeyGenMetadata::Current.
     // Covered via KeyGenMetadataTest.
     "KeyGenMetadataInner",
