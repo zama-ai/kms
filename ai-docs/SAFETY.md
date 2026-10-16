@@ -1,5 +1,5 @@
-# Safety rules
+# Safety
 
-- Never expose secrets or API keys.
-- Avoid destructive commands (e.g. deleting files, dropping data, force-pushing).
-- Ask before running migrations or performing large refactors.
+- Never expose secrets/API keys.
+- Avoid destructive operations: file/data deletion, force-pushes.
+- Ask before migrations or large refactors.
