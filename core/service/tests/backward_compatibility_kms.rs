@@ -9,7 +9,8 @@ use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
     ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
-    CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
+    CustodianContextAnchorTest, DestroyMpcContextSignedPayloadTest,
+    DestroyMpcEpochSignedPayloadTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
     KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
     KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
@@ -27,7 +28,7 @@ use backward_compatibility::{
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use hashing::hash_versioned;
 use kms_grpc::{
-    ContextId, RequestId,
+    ContextId, EpochId, RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{
@@ -68,9 +69,9 @@ use kms_lib::{
     engine::{
         base::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
-            KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-            PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
-            UserDecSignedPayload,
+            DestroyMpcContextSignedPayload, DestroyMpcEpochSignedPayload, KeyGenMetadata,
+            KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
+            PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -1597,6 +1598,56 @@ fn test_stored_scheme_signature(
     }
 }
 
+fn test_destroy_mpc_epoch_signed_payload(
+    dir: &Path,
+    test: &DestroyMpcEpochSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: DestroyMpcEpochSignedPayload =
+        load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = DestroyMpcEpochSignedPayload {
+        epoch_id: EpochId::from_bytes(test.epoch_id),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid DestroyMpcEpochSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_destroy_mpc_context_signed_payload(
+    dir: &Path,
+    test: &DestroyMpcContextSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: DestroyMpcContextSignedPayload =
+        load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = DestroyMpcContextSignedPayload {
+        context_id: ContextId::from_bytes(test.context_id),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid DestroyMpcContextSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_prep_keygen_signed_payload(
     dir: &Path,
     test: &PrepKeygenSignedPayloadTest,
@@ -1954,6 +2005,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::StoredTypedSignature(test) => {
                 test_stored_scheme_signature(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::DestroyMpcEpochSignedPayload(test) => {
+                test_destroy_mpc_epoch_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::DestroyMpcContextSignedPayload(test) => {
+                test_destroy_mpc_context_signed_payload(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::PrepKeygenSignedPayload(test) => {
                 test_prep_keygen_signed_payload(test_dir.as_ref(), test, format).into()
