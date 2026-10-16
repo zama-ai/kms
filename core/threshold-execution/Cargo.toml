@@ -56,6 +56,7 @@ zeroize.workspace = true
 tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
 futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
@@ -78,3 +79,8 @@ non-wasm = [
 testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile"]
 slow_tests = ["testing"]
 malicious_strategies = ["testing"]
+
+[[bench]]
+name = "open_reconstruct"
+harness = false
+required-features = ["testing"]

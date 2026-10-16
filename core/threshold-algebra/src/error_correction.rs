@@ -5,9 +5,10 @@ use super::{
         lagrange_polynomials, vanishing_poly,
     },
     structure_traits::{
-        BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
+        BaseRing, ErrorCorrect, Field, Invert, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
 };
+use crate::sharing::optimistic::OptimisticHints;
 use error_utils::anyhow_error_and_log;
 
 use super::sharing::shamir::ShamirFieldPoly;
@@ -65,7 +66,7 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
 pub struct FieldHints<F: Field> {
     /// Field-level embedded evaluation points: `F::embed_role_to_exceptional_sequence(party_i)`.
     pub embedded_points: Vec<F>,
-    /// Lagrange basis polynomials `L_i(X)` for the embedded points.
+    /// Normalized Lagrange basis polynomials `δ_i(X) = L_i(X) / L_i(x_i)` for the embedded points.
     pub lagrange_polys: Vec<Poly<F>>,
     /// Vanishing polynomial `∏(X - x_i)`.
     pub vanishing_poly: Poly<F>,
@@ -110,6 +111,10 @@ pub struct ReconstructionHints<Z: ErrorCorrect> {
     pub exceptional_powers: Vec<Vec<Z>>,
     /// Field-level hints for Lagrange interpolation / Gao decoding.
     pub field_hints: FieldHints<Z::ReconstructionField>,
+    /// Ring-level Lagrange constants `δ_i(0)`, `δ_i(x_m)` of the first `degree + 1` parties for the optimistic
+    /// reconstruction ([`crate::sharing::optimistic`]); `None` when the ring does not expose unit inversion or
+    /// fewer than `degree + 1` parties contributed.
+    optimistic: Option<OptimisticHints<Z>>,
 }
 
 impl<Z: ErrorCorrect> ReconstructionHints<Z> {
@@ -145,13 +150,21 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
         let exceptional_powers: Vec<Vec<Z>> = compute_powers_list(&embedded_points, degree);
 
         let field_hints = FieldHints::new(&parties)?;
+        let optimistic = OptimisticHints::new(&embedded_points, degree);
         Ok(Self {
             parties,
             degree,
             embedded_points,
             exceptional_powers,
             field_hints,
+            optimistic,
         })
+    }
+
+    /// The constants of the optimistic reconstruction; `None` when the ring does not expose unit inversion or
+    /// fewer than `degree + 1` parties contributed.
+    pub fn optimistic(&self) -> Option<&OptimisticHints<Z>> {
+        self.optimistic.as_ref()
     }
 }
 
@@ -492,6 +505,10 @@ where
         hints: &ReconstructionHints<Self>,
     ) -> anyhow::Result<Poly<Self>> {
         shamir_error_correct_with_hints(sharing, degree, max_errorsors, hints)
+    }
+
+    fn invert_unit(value: Self) -> Option<Self> {
+        <Self as Invert>::invert(value).ok()
     }
 }
 
