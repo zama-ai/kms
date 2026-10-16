@@ -137,7 +137,6 @@ fn build_test_core_config(
             keychain: None,
         }),
         backup_vault: None,
-        rate_limiter_conf: None,
         bandwidth_benchmark: None,
         threshold: Some(ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
@@ -755,7 +754,6 @@ async fn setup_party_resharing_servers(
         pub_storages,
         priv_storages,
         vaults,
-        None, // rate_limiter_conf
         None, // decryption_mode
     )
     .await;
@@ -1363,6 +1361,9 @@ async fn integration_test_commands(
         let get_res_command = match command {
             CCCommand::PreprocKeyGen(_) => CCCommand::PreprocKeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
+                context_id: None,
+                epoch_id: None,
+                no_verify: false,
             }),
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {

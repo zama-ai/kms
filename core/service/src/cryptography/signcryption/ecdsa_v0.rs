@@ -205,9 +205,9 @@ mod tests {
     use crate::cryptography::encryption::PkeSchemeType;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::vault::storage::tests::TestType;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
+    use threshold_types::rng::AesRng;
 
     /// `parse_msg` rejects a plaintext that is not `msg ‖ sig ‖ H(sender key)`, on
     /// both of the things it can check: the length, and the key the tail names.

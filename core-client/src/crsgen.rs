@@ -3,7 +3,6 @@ use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SigVerificationMaterial,
 };
 
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
@@ -17,6 +16,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 use tonic::Code;
 use tonic::transport::Channel;

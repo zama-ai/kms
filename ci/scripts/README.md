@@ -17,6 +17,7 @@ ci/scripts/
 ├── deploy.sh                      # Main deployment entry point
 ├── local_docs_link_check.py       # Check Markdown links to local files
 ├── manage_lifecycle.sh            # Lifecycle management
+├── nightly_slack_summary.py       # Post one Slack summary of a nightly run
 ├── perf_common.py                 # Process helpers for runner-side perf tools
 ├── perf_runner.py                 # GitHub Actions performance orchestration
 ├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties

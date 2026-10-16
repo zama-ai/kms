@@ -659,7 +659,6 @@ path = "/tmp"
 
 #[cfg(test)]
 mod kms_custodian_binary_tests {
-    use aes_prng::AesRng;
     use assert_cmd::Command;
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
@@ -667,8 +666,8 @@ mod kms_custodian_binary_tests {
             BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
             SEED_PHRASE_DESC,
             custodian::{
-                InternalCustodianContext, InternalCustodianRecoveryOutput,
-                InternalCustodianSetupMessage,
+                InternalCustodianContext, InternalCustodianSetupMessage,
+                TransferableCustodianRecoveryOutput,
             },
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
@@ -685,6 +684,7 @@ mod kms_custodian_binary_tests {
     };
     use rand::SeedableRng;
     use std::{collections::BTreeMap, sync::Arc, thread};
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
@@ -954,7 +954,7 @@ mod kms_custodian_binary_tests {
         ephem_dec_key: &UnifiedPrivateEncKey,
         ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Vec<u8> {
-        let outputs: Vec<InternalCustodianRecoveryOutput> = custodian_outputs
+        let outputs: Vec<TransferableCustodianRecoveryOutput> = custodian_outputs
             .iter()
             .map(|cur| base64_deserialize(cur).unwrap())
             .collect();

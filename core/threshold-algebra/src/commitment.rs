@@ -71,8 +71,8 @@ pub fn verify(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn test_commit_verify() {

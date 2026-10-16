@@ -658,12 +658,12 @@ pub(crate) mod tests {
     };
     use threshold_types::network::NetworkMode;
 
-    use aes_prng::AesRng;
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashSet;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     async fn test_lsl_strategies<

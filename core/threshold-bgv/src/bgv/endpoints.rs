@@ -8,7 +8,6 @@ use crate::bgv::runtime::BGVTestRuntime;
 use crate::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
-use aes_prng::AesRng;
 use algebra::sharing::share::Share;
 use hashing::serialize_hash_element;
 use itertools::Itertools;
@@ -21,6 +20,7 @@ use threshold_execution::runtime::sessions::{
     small_session::SmallSession,
 };
 use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use threshold_types::session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES, SessionId};
 
@@ -44,8 +44,10 @@ pub(crate) async fn setup_small_session(mut base_session: BaseSession) -> SmallS
         .await
         .unwrap();
 
-    SmallSession::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
-        .unwrap()
+    let prss_state = prss_setup
+        .new_prss_session_state(session_id, base_session.my_role())
+        .unwrap();
+    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
 }
 /// test the threshold decryption for a given BGV ciphertext
 pub fn threshold_decrypt(

@@ -14,7 +14,6 @@ use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
-use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::StorageExt;
@@ -67,7 +66,6 @@ pub async fn setup_threshold_no_client<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
     init_test_rayon_pool().await;
@@ -156,7 +154,6 @@ pub async fn setup_threshold_no_client<
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
-        core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
             let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
@@ -255,7 +252,6 @@ pub async fn setup_threshold_no_client<
 /// * `pub_storage` - Public storage for each server
 /// * `priv_storage` - Private storage for each server
 /// * `vaults` - Optional backup vaults for each server
-/// * `rate_limiter_conf` - Optional rate limiter configuration
 /// * `decryption_mode` - Optional decryption mode
 ///
 /// # Example
@@ -282,7 +278,6 @@ pub async fn setup_threshold_with_custom_peers<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
     init_test_rayon_pool().await;
@@ -384,7 +379,6 @@ pub async fn setup_threshold_with_custom_peers<
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
-        core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
@@ -637,7 +631,6 @@ impl ServerHandle {
 ///
 /// Used by `setup_threshold_isolated` to configure the threshold test environment.
 pub struct ThresholdTestConfig<'a> {
-    pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
 }
@@ -667,7 +660,6 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        config.rate_limiter_conf,
         config.decryption_mode,
     )
     .await;
@@ -696,7 +688,6 @@ pub async fn setup_threshold<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
     HashMap<u32, ServerHandle>,
@@ -709,7 +700,6 @@ pub async fn setup_threshold<
         pub_storage,
         priv_storage,
         vaults,
-        rate_limiter_conf,
         decryption_mode,
     )
     .await;
@@ -737,7 +727,6 @@ pub async fn setup_centralized_no_client<
     pub_storage: PubS,
     mut priv_storage: PrivS,
     backup_vault: Option<Vault>,
-    rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
     let ip_addr = DEFAULT_URL.parse().unwrap();
     // we use port numbers above 40001 so that it's easy to identify
@@ -754,8 +743,7 @@ pub async fn setup_centralized_no_client<
         .await
         .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
-    let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-    core_config.rate_limiter_conf = rate_limiter_conf;
+    let core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     let (kms, (health, health_service)) = CentralizedKms::new(
         core_config,
         pub_storage,
@@ -804,14 +792,11 @@ pub(crate) async fn setup_centralized<
     pub_storage: PubS,
     priv_storage: PrivS,
     backup_vault: Option<Vault>,
-    rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (
     ServerHandle,
     CoreServiceEndpointClient<tonic::transport::Channel>,
 ) {
-    let server_handle =
-        setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
-            .await;
+    let server_handle = setup_centralized_no_client(pub_storage, priv_storage, backup_vault).await;
     let url = format!(
         "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
         server_handle.service_port

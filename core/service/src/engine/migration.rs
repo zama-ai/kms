@@ -1015,13 +1015,13 @@ mod tests {
         Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, read_text_at_request_id,
         store_context_at_id, store_versioned_at_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
     use std::collections::HashMap;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
+    use threshold_types::rng::AesRng;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
     pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(

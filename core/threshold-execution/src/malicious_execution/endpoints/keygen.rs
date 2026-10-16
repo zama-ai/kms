@@ -1,7 +1,7 @@
-use aes_prng::AesRng;
 use rand::SeedableRng;
 use std::sync::{LazyLock, Mutex};
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_types::rng::AesRng;
 use tokio::sync::oneshot;
 
 use crate::{

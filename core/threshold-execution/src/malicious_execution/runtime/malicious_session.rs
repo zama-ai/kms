@@ -41,7 +41,9 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z>> GenericSmallSessionStruct<Z, Prss> {
     {
         let prss_setup = prss_init.init(&mut base_session).await?;
         let session_id = base_session.session_id();
-        let prss_state: Prss = prss_setup.new_prss_session_state(session_id).into();
+        let prss_state: Prss = prss_setup
+            .new_prss_session_state(session_id, base_session.my_role())?
+            .into();
         Self::new_from_prss_state(base_session, prss_state)
     }
 
@@ -110,7 +112,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
 impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericBaseSessionHandles<Role>
     for GenericSmallSessionStruct<Z, Prss>
 {
-    type RngType = aes_prng::AesRng;
+    type RngType = threshold_types::rng::AesRng;
     fn rng(&mut self) -> &mut Self::RngType {
         self.base_session.rng()
     }

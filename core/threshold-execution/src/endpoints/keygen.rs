@@ -1830,11 +1830,12 @@ pub mod tests {
                 test_feature::{ClientKeyView, gen_uncompressed_key_set},
             },
         };
+        use rand::SeedableRng;
         use test_utils::{read_element, write_element};
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;
-        let mut rng = aes_prng::AesRng::from_random_seed();
+        let mut rng = threshold_types::rng::AesRng::seed_from_u64(42);
         let tag = tfhe::Tag::default();
         let keyset1 = gen_uncompressed_key_set(params, tag.clone(), &mut rng);
         let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);

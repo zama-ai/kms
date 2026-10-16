@@ -172,7 +172,6 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     }
 
     let config = crate::testing::types::ThresholdTestConfig {
-        rate_limiter_conf: None,
         decryption_mode: None,
         test_material_path: Some(material_dir.path()),
     };

@@ -49,7 +49,6 @@ validator.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
-aes-prng.workspace = true
 rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }

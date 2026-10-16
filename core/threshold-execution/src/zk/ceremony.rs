@@ -1066,12 +1066,12 @@ mod tests {
         },
         tfhe_internals::parameters::BC_PARAMS_NO_SNS,
     };
-    use aes_prng::AesRng;
     use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs, proofs::LEGACY_HASH_DS_LEN_BYTES};
+    use threshold_types::rng::AesRng;
     use threshold_types::session_id::SessionId;
 
     use crate::malicious_execution::zk::ceremony::InsecureCeremony;

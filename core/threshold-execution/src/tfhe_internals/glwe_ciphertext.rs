@@ -215,7 +215,6 @@ mod tests {
             utils::reconstruct_glwe_body_vec,
         },
     };
-    use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z64,
         sharing::{
@@ -245,6 +244,7 @@ mod tests {
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     use super::{

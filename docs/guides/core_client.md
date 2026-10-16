@@ -133,7 +133,10 @@ $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> --signing-sch
 Before running the KMS servers it is important to ensure a proper setup of the backup system.
 Currently multiple different modes of backup are available for the KMS. However, only a single mode can be used at any given time.
 Backup modes are set up through the TOML configuration files (or environment variables) which are used by Docker to boot the KMS servers.
-The backups contain _all_ data stored in the private storage (except PRSS setup data) and will be automatically updated as new material is constructed. In fact, operations of the KMS will fail if the backup cannot be computed and stored (when a backup system has been set up).
+The backups contain _all_ data stored in the private storage and will be automatically updated as new material is constructed. A backup update runs after private material is written and at boot. If a backup update fails, the node logs the error and counts it in the `kms_backup_errors_total` metric. The next backup update adds the missing entries. A failed backup does not make key generation, CRS generation, MPC context creation or a reshare fail. Boot, `new-custodian-context` and the PRSS initialization of a new epoch fail if their backup fails.
+
+TODO([kms-internal#3257](https://github.com/zama-ai/kms-internal/issues/3257)): Every operation that triggers a backup will fail if the backup fails. Update this section when the code does so.
+
 Furthermore, the backup system will auto-update at every boot. Thus changing the mode, or the filesystem of the backup, in a configuration file will be reflected at the next reboot. Thus it is easy to update the mode of backup without having to manually move existing backups.
 Backups are only meant to be used in case of an emergency. More specifically when a KMS node loses access to the private storage.
 
@@ -248,7 +251,7 @@ The steps needed are as follows:
 1. Initiate the recovery.
   After [setup](#setup-1), the backups will continuously be kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
   ```{bash}
-  $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-recovery-init [-o <bool>]
+  $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-recovery-init [-o <bool>] [-i <custodian context ID>] [--expected-operator-key <SCHEME>=<0x value> ...]
   ```
   The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
 
@@ -262,7 +265,7 @@ The steps needed are as follows:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument in the next step.
+  As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument of `custodian-backup-recovery` in step 3.
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
   Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.
@@ -293,9 +296,9 @@ The steps needed are as follows:
 Destroying a custodian context permanently removes that context **and all of its backups** — both the recovery material and the `BackupCiphertext`s in the operators' backup vaults — from memory and disk. This is driven through the KMS core's `DestroyCustodianContext` endpoint (`DestroyCustodianContextRequest`, defined in [kms.v1.proto](../../core/grpc/proto/kms.v1.proto)), which takes a single argument:
 - `context_id`: the custodian context ID to destroy (as returned by `new-custodian-context` when the context was created).
 
-Two conditions must hold before destroying a context:
+Three conditions must hold before destroying a context:
 1. The context must be a valid custodian context that was previously created with `new-custodian-context`.
-2. There must be two custodian contexts in the system to be able to remove one. Recovery is only ever possible against a non-destroyed context.
+2. The node must know at least two custodian contexts, so that it never destroys its last one. Recovery is only ever possible against a non-destroyed context.
 3. The context must not be the one the node currently backs up under; the request fails with `FailedPrecondition` otherwise. Create and adopt its replacement first.
 
 WARNING: This operation is irreversible and purges _all backups_ tied to the context. Only destroy a context once its replacement has been created and confirmed to work as intended (see [Rotating the custodian context](#rotating-the-custodian-context) below); otherwise you may be left with no usable backup.
@@ -308,7 +311,7 @@ The `-i`/`--custodian-context-id` argument is the ID of the custodian context to
 
 As a concrete example:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml destroy-custodian-context -i 0700000000000000000000000000000000000000000000000000000000000001
+$ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml destroy-custodian-context -i bca56548a3913ac0067b0b84f1544cd53880eb553a71e3a29444dbf10209aba8
 ```
 
 #### Rotating the custodian context
@@ -344,6 +347,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
+  Here `-i` is the MPC context ID, not the custodian context ID. The command generates a random custodian context ID and prints it as `new custodian context created - "request_id": "<custodian context ID>"`. Take note of this ID: step 5 needs it.
   > **Note:** As described in the [Recovery](#recovery-1) section, these custodian commands operate on a **single core at a time**. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
 
 3. Initiate the recovery.
@@ -351,7 +355,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`). Take note of it, and of the custodian-context ID you used when setting the context up: the next step needs it.
+  This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`). Take note of it: the next step needs it.
 4. Custodians do partial decryption.
   Each custodian decrypts the base64 recovery request from step 3 and prints a base64 recovery output (prefixed with `The custodian recovery output is: `). The recovery request already carries the operator's verification key, so it no longer needs to be supplied separately. Execute the following in the root of the KMS project, replacing the seed phrases with the ones from step 1 and `<recovery request>` with the base64 string from step 3:
   ```{bash}
@@ -360,9 +364,9 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   cargo run --bin kms-custodian decrypt --seed-phrase "hazard you grow arena tail victory pretty rival roast august rifle useless chalk skin actress scan cereal remind super obey client entry relax fiber" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
   ```
 5. KMS node recovers the backup decryption key.
-  Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
+  Execute the following from `core-client`, replacing `<custodian context ID>` with the custodian context ID that step 2 printed and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
   ```{bash}
-  $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
+  $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i <custodian context ID> -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
   ```
   The backup is restored automatically as part of this step.
 
@@ -423,8 +427,13 @@ Note that in the threshold setting an insecure preprocessing entry can only be c
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the signatures and just report the result.
 
 #### Preprocessing for Secure Key-Generation
 
@@ -443,8 +452,13 @@ Note that this will generate large amounts of preprocessing data, which is expen
 
 It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the signatures are bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the signatures and just report the result.
 
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
 
@@ -688,7 +702,7 @@ Public/user-decrypt rate-mode options are:
 > This section is the command reference for `new-custodian-context`. For where it fits in the end-to-end custodian backup flow — custodian setup, recovery, context rotation and destruction — see [Custodian-based backup](#custodian-based-backup) under [Backup and recovery](#backup-and-recovery) above.
 
 In order to be able to do custodian-based backup and recovery, the KMS nodes need to know the public keys of the custodians which will be able to help it recover. This is handled through custodian contexts.
-Multiple custodian contexts may exist at once, but only a single one is *active* at any given time: backups are always constructed under the most recent custodian context. Whenever a new custodian context is made, it becomes the active context and replaces the previous one as the current backup method.
+Multiple custodian contexts may exist at once, but only a single one is *active* at any given time: backups are always constructed under the context recorded in the node's private storage. A successful `new-custodian-context` or recovery makes its context the active one. That context replaces the previous one as the current backup method. A restart of the node does not change the active context.
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended (see [Destroy context](#destroy-context)).
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}

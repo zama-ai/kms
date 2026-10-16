@@ -378,9 +378,9 @@ fn map_hpke_error(subject: &str, error: HpkeError) -> CryptographyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use sha2::Digest;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn round_trip_and_key_sizes() {

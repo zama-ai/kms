@@ -530,9 +530,9 @@ impl SigningScheme for Ecdsa256k1 {
 mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+    use threshold_types::rng::AesRng;
 
     /// The bytes this key is persisted as, in the format storage and the backup
     /// vault hold.

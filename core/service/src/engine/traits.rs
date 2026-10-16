@@ -5,7 +5,6 @@ use tonic::Response;
 
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
-
 #[tonic::async_trait]
 pub trait ContextManager {
     async fn new_mpc_context(

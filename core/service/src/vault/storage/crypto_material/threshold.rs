@@ -9,9 +9,12 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use super::base::CryptoMaterialStorage;
 use crate::{
-    cryptography::signatures::{PrivateSigKey, StoredTypedSignature, compute_eip712_signature},
+    cryptography::signatures::{NodeSigningIdentity, SigningSchemeType},
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata},
+        base::{
+            CrsGenMetadata, CurrentPublicMaterialLayout, KeyGenMetadata,
+            compute_info_keygen_from_digests,
+        },
         material_integrity::verify_public_key_digest_from_bytes,
         threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
     },
@@ -30,7 +33,6 @@ use crate::{
         },
     },
 };
-use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
@@ -236,7 +238,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         new_epoch_id: &EpochId,
         old_key_id: &RequestId,
         old_epoch_id: &EpochId,
-        sk: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
+        schemes: &[SigningSchemeType],
         eip712_domain: &alloy_sol_types::Eip712Domain,
         dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
@@ -299,15 +302,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         );
                     }
                 };
-                let compressed_digest = migrated_inner
+                if !migrated_inner
                     .key_digest_map
-                    .get(&PubDataType::CompressedXofKeySet)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
-                        )
-                    })?
-                    .clone();
+                    .contains_key(&PubDataType::CompressedXofKeySet)
+                {
+                    anyhow::bail!(
+                        "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
+                    );
+                }
                 let public_key_digest = migrated_inner
                     .key_digest_map
                     .get(&PubDataType::PublicKey)
@@ -355,29 +357,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
                 // Re-sign the metadata under old_key_id, preserving the migrated
                 // extra_data bytes when they exist.
+                //
+                // Through the same builder a keygen uses, so the record comes out
+                // signed under every scheme the request asked for.
                 let extra_data = migrated_inner.extra_data.clone().unwrap_or_default();
-                let sol_type = KeygenVerification::new_compressed(
+                let new_metadata = compute_info_keygen_from_digests(
+                    identity,
+                    schemes,
+                    CurrentPublicMaterialLayout::Compressed,
                     &migrated_inner.preprocessing_id,
                     old_key_id,
-                    compressed_digest,
-                    public_key_digest,
-                    extra_data.clone(),
-                );
-                let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
-                // The re-signed metadata carries the same ECDSA signature in
-                // `external_signature` and in the ECDSA entry of `signatures`,
-                // which is what a request naming no scheme asks for. The
-                // migrated entries of the other schemes are deliberately not
-                // carried over.
-                let new_metadata = KeyGenMetadata::new(
-                    *old_key_id,
-                    migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
                     eip712_domain,
-                    new_signature.clone(),
-                    StoredTypedSignature::ecdsa_only(new_signature),
                     extra_data,
-                );
+                )?;
 
                 let updated_fhe_keys = ThresholdFheKeys::new(
                     migrated_fhe_keys.private_keys.clone(),

@@ -631,10 +631,10 @@ mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
-    use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"SCHMTEST";
 

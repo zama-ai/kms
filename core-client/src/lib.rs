@@ -31,7 +31,6 @@ use crate::keygen::{
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
-use aes_prng::AesRng;
 use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use core::str;
@@ -68,6 +67,7 @@ use strum::VariantNames;
 use strum_macros::{Display, EnumString};
 use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
+use threshold_types::rng::AesRng;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -939,8 +939,22 @@ pub struct NewTestingMpcContextFileParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
+    /// The request ID of the original request whose result is being fetched.
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// signatures are bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// signatures are bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Skip verification of the signatures and just report the result.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2461,6 +2475,7 @@ pub async fn execute_cmd(
                 &mut internal_client,
                 &core_endpoints_req,
                 &mut rng,
+                &cc_conf,
                 cmd_config,
                 num_parties,
                 fhe_params,
@@ -2486,6 +2501,7 @@ pub async fn execute_cmd(
                 &mut internal_client,
                 &core_endpoints_req,
                 &mut rng,
+                &cc_conf,
                 cmd_config,
                 num_parties,
                 fhe_params,
@@ -2510,6 +2526,7 @@ pub async fn execute_cmd(
             let req_id = do_partial_preproc(
                 &mut internal_client,
                 &core_endpoints_req,
+                &cc_conf,
                 &mut rng,
                 cmd_config,
                 num_parties,
@@ -2555,15 +2572,47 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ =
+            let responses =
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, false).await?;
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
+            if let Some(verify_material) = verify {
+                keygen::check_preproc_responses(
+                    internal_client
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                    &req_id,
+                    &verify_material,
+                    &responses,
+                )?;
+            }
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecurePreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ =
+            let responses =
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, true).await?;
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
+            if let Some(verify_material) = verify {
+                keygen::check_preproc_responses(
+                    internal_client
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("a preproc result needs a KMS client"))?,
+                    &req_id,
+                    &verify_material,
+                    &responses,
+                )?;
+            }
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -3069,7 +3118,11 @@ fn print_phased_timings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_grpc::kms::v1::KeyGenPreprocResult;
+    use kms_grpc::rpc_types::ecdsa_signatures;
+    use kms_grpc::solidity_types::PrepKeygenVerification;
     use kms_lib::client::local_crypto::load_pk_from_pub_storage;
+    use kms_lib::cryptography::signatures::{compute_eip712_signature, gen_sig_keys};
     use kms_lib::engine::base::derive_request_id;
     use kms_lib::vault::storage::{StorageType, file::FileStorage, store_versioned_at_request_id};
     use std::env;
@@ -3536,6 +3589,93 @@ mod tests {
         // v2 layout: 1 version byte + 32-byte context + 32-byte epoch.
         assert_eq!(from_helper.len(), 1 + 32 + 32);
         assert_eq!(from_helper[0], 2);
+    }
+
+    /// `preproc-key-gen-result` checks the fetched responses against the context and
+    /// epoch given on the command line: a response signed for them verifies, one checked
+    /// against the defaults or for another preprocessing ID does not, and `--no-verify`
+    /// skips the check.
+    #[test]
+    fn test_preproc_result_verify_flags() {
+        // No [default_domain] section, so verification falls back to the dummy domain.
+        let cc_conf: CoreClientConfig =
+            toml::from_str(&build_test_toml("centralized", None, 1, 1, &[1])).unwrap();
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key.clone())]),
+            HashMap::new(),
+            verf_key.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+
+        // context and epoch given: a response signed for them verifies
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "preproc-key-gen-result",
+            "--request-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--context-id",
+            "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--epoch-id",
+            "2102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::PreprocKeyGenResult(args) = conf.command else {
+            panic!("expected a preproc-key-gen-result command");
+        };
+        assert!(!args.no_verify);
+        assert!(args.context_id.is_some());
+        assert!(args.epoch_id.is_some());
+
+        let req_id = args.request_id;
+        let sol_struct = PrepKeygenVerification::new(
+            &req_id,
+            extra_data_from_context_epoch(args.context_id, args.epoch_id).unwrap(),
+        );
+        let sig = compute_eip712_signature(&sig_key, &sol_struct, &dummy_domain()).unwrap();
+        let responses = [KeyGenPreprocResult {
+            preprocessing_id: Some(req_id.into()),
+            external_signature: sig.clone(),
+            signatures: ecdsa_signatures(sig),
+        }];
+
+        let verify =
+            keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
+                .unwrap()
+                .expect("verification is on without --no-verify");
+        keygen::check_preproc_responses(&client, &req_id, &verify, &responses).unwrap();
+
+        // the responses answer `req_id`, so checking them for another ID fails
+        let other_id = derive_request_id("preproc_result_other_id").unwrap();
+        let err = keygen::check_preproc_responses(&client, &other_id, &verify, &responses)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not match"), "unexpected error: {err}");
+
+        // context and epoch omitted: the defaults are used, which the response was not
+        // signed for
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "preproc-key-gen-result",
+            "--request-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::PreprocKeyGenResult(args) = conf.command else {
+            panic!("expected a preproc-key-gen-result command");
+        };
+        assert!(!args.no_verify);
+        assert!(args.context_id.is_none());
+        assert!(args.epoch_id.is_none());
+
+        let verify =
+            keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
+                .unwrap()
+                .expect("verification is on without --no-verify");
+        assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses).is_err());
     }
 
     #[test]

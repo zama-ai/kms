@@ -12,9 +12,9 @@ use crate::{
         },
     },
 };
-use aes_prng::AesRng;
 use kms_grpc::{EpochId, rpc_types::PrivDataType};
 use rand::SeedableRng;
+use threshold_types::rng::AesRng;
 
 /// `purge_backup` on a custodian vault deletes only entries for the requested backup ID.
 ///

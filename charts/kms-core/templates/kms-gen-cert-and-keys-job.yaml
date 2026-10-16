@@ -16,6 +16,11 @@ metadata:
     and CA certificate and adds only missing material (e.g. the root signing
     seed of v0.15). The non-enclave branch replaces the TLS certificates, and
     the statefulset init container already runs kms-gen-keys at each start.
+    This job requests the whole hugepage pool, so it cannot schedule beside
+    the running core. It uses the built-in system-cluster-critical class so
+    the scheduler preempts that pod. The chart does not create a PriorityClass:
+    the deployer cannot get or delete them. On upgrade the job is pinned to
+    the node of this release's core pod, so it does not evict another party.
     */}}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     "helm.sh/hook": pre-install,pre-upgrade
@@ -23,7 +28,7 @@ metadata:
     "helm.sh/hook": pre-install
     {{- end }}
     "helm.sh/hook-weight": "-1"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
   name: {{ $kmsGenCertAndKeysName }}
 spec:
   template:
@@ -41,6 +46,7 @@ spec:
         {{- end }}
       restartPolicy: Never
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
+      priorityClassName: system-cluster-critical
       initContainers:
         - image: {{ .Values.socat.image.name }}:{{ .Values.socat.image.tag }}
           imagePullPolicy: {{ .Values.socat.image.pullPolicy }}
@@ -374,9 +380,23 @@ spec:
       imagePullSecrets:
         - name: registry-credentials
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
-      {{- if .Values.kmsCore.nodeSelector }}
+      {{- /* Pin to this release's core node. Any enclave node can satisfy the job, and preemption would otherwise evict another party's core. */}}
+      {{- $nodeSelector := dict }}
+      {{- with .Values.kmsCore.nodeSelector }}
+      {{- range $key, $value := . }}
+      {{- $_ := set $nodeSelector $key $value }}
+      {{- end }}
+      {{- end }}
+      {{- $corePodName := printf "%s-%d" (include "kmsCoreName" .) (include "kmsPeersStartID" . | int) }}
+      {{- $corePod := lookup "v1" "Pod" .Release.Namespace $corePodName }}
+      {{- with $corePod }}
+      {{- with .spec.nodeName }}
+      {{- $_ := set $nodeSelector "kubernetes.io/hostname" . }}
+      {{- end }}
+      {{- end }}
+      {{- if $nodeSelector }}
       nodeSelector:
-        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+        {{- toYaml $nodeSelector | nindent 8 }}
       {{- end }}
       {{- if .Values.kmsCore.affinity }}
       affinity:

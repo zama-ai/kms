@@ -675,11 +675,11 @@ pub mod tests {
         store_custodian_context_anchor, store_versioned_at_request_id,
         tests::dummy_recovery_material_at_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::{RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::collections::HashMap;
+    use threshold_types::rng::AesRng;
 
     /// An uninitialized secret-sharing vault, an empty private storage and a signing key.
     fn unanchored_fixture() -> (RamStorage, Vault, NodeSigningIdentity) {

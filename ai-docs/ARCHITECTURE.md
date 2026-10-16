@@ -51,6 +51,8 @@ Request IDs work as follows. The gateway contracts assign each ID and bind it to
 
 The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
 
+Decryption meta stores bound admission independently for public and user requests. A full store returns `ResourceExhausted` when no completed entry permits eviction. Clients retry this status with the same request. The bandwidth benchmark also returns `ResourceExhausted` at its separate concurrency limit.
+
 Consequences for agents:
 
 - The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
@@ -189,10 +191,13 @@ The service crate is the main surface area. Key subdirectories under
 ### Task randomness
 
 [`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
-RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. `AesRng`
+([rng.rs](../core/threshold-types/src/rng.rs)) runs AES-128 in counter mode through
+`tfhe-csprng` and wipes its key on drop. A fork never
 carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
 wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
-through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each
+through `Arc`. Each task receives an owned RNG with a separate seed. After a fork, the parent
+discards 256 bytes of output, so the seed does not stay in its buffer. Initialization seeds each
 parent from an independent draw, which combines OS entropy with entropy from the configured
 security module. Refresh also mixes output from the existing parents. Entropy failures return
 errors and leave both parents unchanged. Refresh logs report success or failure without seed
@@ -270,6 +275,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
   the running or succeeded attempt, and redoes a failed one, just like the async
   variants.
+- **Noise-flooded user decryption** — Each party masks its partial decryption
+  to protect its key share before signcrypting the result for the user. The epoch's
+  PRSS setup and each ciphertext's session ID let that party derive the mask locally.
+  This path needs no network session. Public decryption and bit-decomposition user
+  decryption use network sessions.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched via
@@ -595,8 +605,9 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
-| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
-| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload prefixed by the schemes the stored entries name | boot fails |
+| Current private keygen and CRS metadata with a stored domain pass `verify_response_signatures`, the check a client runs on a result, as if the client had requested the schemes the stored entries name and knew only the node's own keys | boot fails |
+| Current private keygen and CRS metadata without a stored domain carry no entry beyond ECDSA, since they predate per-scheme signatures; nothing else of them can be checked | boot fails |
+| Current private keygen and CRS metadata list their per-scheme `signatures` in canonical order without repeats, and carry an `external_signature` when they carry a domain | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
@@ -640,8 +651,9 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
-signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
-entries of the other schemes sign the serialized result payload inside a composite preimage, 
+signing address, and `external_signature` must equal the ECDSA entry, as a client requires.
+Older metadata versions upgrade with no domain and stay unverifiable. The
+entries of the other schemes sign the serialized result payload inside a composite preimage,
 which binds the canonical scheme set and payload type. A node that cannot derive a scheme's key,
 because it holds no root seed, fails boot on such an entry rather than passing it over.
 
@@ -696,10 +708,7 @@ indexed by per-module `.ron` manifests. The loader in
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
 
-Custodian-backup fixtures exist for 0.15.0 only. The feature ships first in 0.15
-and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted
-and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather
-than kept as a compatibility target.
+Custodian-backup fixtures exist for 0.15.0 and later. The feature ships first in 0.15 and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather than kept as a compatibility target.
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).

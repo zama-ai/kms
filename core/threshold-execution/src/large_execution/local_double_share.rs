@@ -526,8 +526,8 @@ pub(crate) mod tests {
         large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
         runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
     };
-    use aes_prng::AesRng;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
 
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},

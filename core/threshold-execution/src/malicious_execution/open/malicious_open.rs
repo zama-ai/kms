@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use aes_prng::AesRng;
+use rand::SeedableRng;
+use threshold_types::rng::AesRng;
 use tonic::async_trait;
 
 use crate::{
@@ -76,7 +77,7 @@ impl RobustOpen for MaliciousRobustOpenLie {
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>> {
         // Replace all the shares with random values
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::seed_from_u64(42);
         let malicious_shares = match shares {
             OpeningKind::ToSome(hash_map) => OpeningKind::ToSome(
                 hash_map
@@ -103,7 +104,7 @@ impl RobustOpen for MaliciousRobustOpenLie {
         external_opening_info: Option<ExternalOpeningInfo>,
     ) -> anyhow::Result<Option<Vec<Z>>> {
         // Replace all the shares with random values
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::seed_from_u64(42);
         if let Some(all_shares) = all_shares {
             let malicious_shares: HashMap<TwoSetsRole, Vec<Z>> = all_shares
                 .into_iter()

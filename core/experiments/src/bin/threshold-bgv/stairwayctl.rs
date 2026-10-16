@@ -3,7 +3,6 @@
 use std::fs::File;
 use tokio::time::{self, Duration};
 
-use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
 use experiments::{
     choreography::{
@@ -26,6 +25,7 @@ use threshold_bgv::{
     bgv::basics::{LevelEllCiphertext, PublicKey, bgv_pk_encrypt},
     constants::PLAINTEXT_MODULUS,
 };
+use threshold_types::rng::AesRng;
 use threshold_types::session_id::SessionId;
 
 #[derive(Args, Debug)]

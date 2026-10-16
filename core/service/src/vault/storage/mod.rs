@@ -865,7 +865,6 @@ pub mod tests {
             signcryption::UnifiedSigncryption,
         },
     };
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
@@ -874,6 +873,7 @@ pub mod tests {
     use std::time::SystemTime;
     use tfhe::safe_serialization::safe_serialize;
     use tfhe_versionable::VersionsDispatch;
+    use threshold_types::rng::AesRng;
     use threshold_types::role::Role;
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]

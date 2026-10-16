@@ -325,11 +325,11 @@ mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signing::{HasSigningScheme, unified_sign, unified_verify};
-    use aes_prng::AesRng;
     use hashing::DomainSep;
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
     use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"SEEDTEST";
 

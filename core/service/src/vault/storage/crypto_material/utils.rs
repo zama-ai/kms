@@ -20,7 +20,6 @@ use crate::{
         store_versioned_at_request_id,
     },
 };
-use aes_prng::AesRng;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -33,6 +32,7 @@ use std::fmt::Display;
 use tfhe::{Unversionize, named::Named};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::max_num_messages;
+use threshold_types::rng::AesRng;
 
 /// Creates a new random number generator instance.
 ///

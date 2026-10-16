@@ -30,7 +30,7 @@ use threshold_execution::{
     tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::party::Identity;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -48,12 +48,9 @@ use crate::{
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store,
-            retrieve_from_meta_store_with_timeout, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store_with_timeout,
+        update_req_in_meta_store,
     },
 };
 
@@ -72,7 +69,6 @@ pub(crate) struct RealPreprocessor<
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _producer_factory: PhantomData<P>,
 }
 
@@ -90,7 +86,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         signing_schemes: Vec<SigningSchemeType>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
-        rate_limiting_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<BucketMetaStore>,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
@@ -149,7 +144,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     keyset_config,
                     extra_data,
                     factory,
-                    rate_limiting_permit,
                     meta_permit,
                     token,
                     #[cfg(feature = "insecure")]
@@ -176,15 +170,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         extra_data: Vec<u8>,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
-        rate_limiting_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<BucketMetaStore>,
         cancel_token: CancellationToken,
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) {
-        // dropped at the end of the function
-        let _rate_limiting_permit = rate_limiting_permit;
         let preprocessing_started_at = Instant::now();
 
         #[cfg(feature = "insecure")]
@@ -384,7 +375,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, MetricedError> {
-        let rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
         let (
@@ -435,7 +425,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 signing_schemes,
                 &eip712_domain,
                 timer,
-                rate_limiting_permit,
                 meta_permit,
             #[cfg(feature = "insecure")] partial_params
         ).await.map_err(|e|
@@ -456,7 +445,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         &self,
         request: KeyGenPreprocRequest,
     ) -> Result<Response<Empty>, MetricedError> {
-        let _rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS
             .time_operation(OP_INSECURE_KEYGEN_PREPROC_REQUEST)
             .start();
@@ -718,7 +706,6 @@ mod tests {
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -731,11 +718,11 @@ mod tests {
         online::preprocessing::create_memory_factory,
         small_execution::prss::PRSSSetup,
     };
+    use threshold_types::rng::AesRng;
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 base_kms,
@@ -745,17 +732,8 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _producer_factory: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -770,13 +748,22 @@ mod tests {
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );
+        let role = threshold_types::role::Role::indexed_from_one(1);
         let prss_setup_z128 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };
         let prss_setup_z64 = if use_prss {
-            Some(PRSSSetup::new_testing_prss(vec![], vec![]))
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
         } else {
             None
         };
@@ -891,35 +878,6 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let mut rng = AesRng::seed_from_u64(22);
-        let mut prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        prep.set_bucket_size(0);
-
-        let mut rng = AesRng::seed_from_u64(22);
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::ResourceExhausted
-        );
     }
 
     #[tokio::test]

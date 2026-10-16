@@ -1,12 +1,12 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::{SchemeVerfKeys, SigningError, SigningSchemeType};
 #[cfg(feature = "non-wasm")]
-use aes_prng::AesRng;
-#[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
 use std::collections::HashMap;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
+#[cfg(feature = "non-wasm")]
+use threshold_types::rng::AesRng;
 use wasm_bindgen::prelude::*;
 
 /// For user decryption, we only use the Addr variant,

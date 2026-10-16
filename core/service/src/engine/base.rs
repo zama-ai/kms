@@ -5,14 +5,15 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::PublicSigKey;
+use crate::cryptography::signatures::eip712_sign_hash;
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::composite::sign_result_entries;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::typed_signature::StoredTypedSignature;
 use crate::engine::rng_source::RngSource;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
-use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
@@ -62,7 +63,12 @@ use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrB
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_types::rng::AesRng;
 use tracing::error;
+
+// Bench helpers
+#[cfg(feature = "testing")]
+pub mod pdec_bench;
 
 // Domain separators for cryptographic operations to ensure domain separation
 
@@ -485,9 +491,7 @@ pub(crate) fn stored_scheme_signatures_to_proto(
     signatures.iter().map(TypedSignature::from).collect()
 }
 
-/// Sign a public result: the deprecated ECDSA/EIP-712 `external_signature`, and —
-/// independently — the per-scheme `signatures` for exactly the schemes the
-/// client requested.
+/// Sign a public result under exactly the requested schemes and populate the deprecated EIP-712 field.
 ///
 /// `external_signature` is produced whether or not ECDSA was requested, because
 /// it is part of the released wire contract until it goes away in 0.16.
@@ -504,15 +508,15 @@ where
     T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let eip712_hash = sol_type.eip712_signing_hash(domain);
-    let external_signature =
-        crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)?;
-    let signatures = crate::cryptography::signing::composite::sign_result_entries(
-        identity,
-        schemes,
-        dsep,
-        eip712_hash.as_slice(),
-        payload,
-    )?;
+    let signatures = sign_result_entries(identity, schemes, dsep, &eip712_hash, payload)?;
+    // The deprecated field is required even when the request does not include ECDSA.
+    let external_signature = match signatures
+        .first()
+        .filter(|entry| entry.scheme == SigningSchemeType::Ecdsa256k1)
+    {
+        Some(entry) => entry.signature.clone(),
+        None => eip712_sign_hash(identity.ecdsa(), &eip712_hash)?,
+    };
     Ok((external_signature, signatures))
 }
 
@@ -1299,10 +1303,10 @@ pub fn compute_public_decryption_message(
         .iter()
         .enumerate()
         .map(|(idx, h)| {
-            if h.as_slice().len() > 32 {
+            if h.len() > 32 {
                 anyhow::bail!(
                     "external_handle at index {idx} too long: {} bytes (max 32)",
-                    h.as_slice().len()
+                    h.len()
                 );
             }
             Ok(FixedBytes::<32>::left_padding_from(h.as_slice()))
@@ -1830,7 +1834,6 @@ pub(crate) mod tests {
         },
         util::key_setup::FhePublicKey,
     };
-    use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
     use kms_grpc::rpc_types::PubDataType;
@@ -1852,6 +1855,7 @@ pub(crate) mod tests {
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn stored_eip712_domain_roundtrip_preserves_all_fields() {

@@ -40,12 +40,10 @@ use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use tokio_util::sync::CancellationToken;
 
-use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_recovery_material,
 };
 use crate::vault::{Vault, adopt_custodian_context, storage::Storage};
-use aes_prng::AesRng;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
@@ -75,6 +73,7 @@ use threshold_execution::{
     tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
     zk::ceremony::public_parameters_by_trusted_setup,
 };
+use threshold_types::rng::AesRng;
 
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -471,8 +470,6 @@ pub struct CentralizedKms<
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CentralizedContextManager<PubS, PrivS>,
     pub(crate) backup_operator: RealBackupOperator<PubS, PrivS>,
-    // Rate limiting
-    pub(crate) rate_limiter: RateLimiter,
     // Liveness and readiness that the gRPC health service reports
     pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
@@ -520,7 +517,7 @@ pub async fn async_user_decrypt<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    identity: &NodeSigningIdentity,
+    identity: &Arc<NodeSigningIdentity>,
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
@@ -553,7 +550,7 @@ pub async fn async_user_decrypt<
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = CentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
-            identity.ecdsa(),
+            Arc::clone(identity),
             rng,
             high_level_ct,
             fhe_type,
@@ -836,7 +833,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        sig_key: &PrivateSigKey,
+        identity: Arc<NodeSigningIdentity>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheTypes,
@@ -845,11 +842,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::from_signing_key(
-            sig_key.clone(),
-            client_enc_key.clone(),
-            client_id.to_vec(),
-        );
+        let signcryption_key =
+            UnifiedSigncryptionKey::new(identity, client_enc_key.clone(), client_id.to_vec());
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         // Keep the cleartext behind a zeroizing guard during signcryption.
@@ -1007,7 +1001,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
         {
             anyhow::bail!("Failed to update backup vault when booting");
         }
-        let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let pub_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let telemetry_conf = config
@@ -1015,7 +1008,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
             .unwrap_or_else(|| TelemetryConfig::builder().build());
         // Start updating system metrics
         update_central_kms_system_metrics(
-            rate_limiter.clone(),
             Arc::clone(&user_dec_meta_store),
             Arc::clone(&pub_dec_meta_store),
             crypto_storage.clone(),
@@ -1039,7 +1031,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
-                rate_limiter,
                 health: health.clone(),
                 tracker: Arc::clone(&tracker),
             },
@@ -1106,7 +1097,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
 }
 
 fn update_central_kms_system_metrics<PubS, PrivS>(
-    rate_limiter: RateLimiter,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -1118,7 +1108,6 @@ where
 {
     tokio::spawn(async move {
         loop {
-            METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             // Skipped when the cache lock is contended: the gauge keeps its
             // previous value rather than stalling the whole metrics loop.
             if let Some(count) = crypto_storage.cached_fhe_key_count() {
@@ -1172,13 +1161,11 @@ pub(crate) mod tests {
     use crate::engine::centralized::central_kms::CentralizedKms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
-    use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
         StorageExt, delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
         store_versioned_at_request_id,
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -1191,6 +1178,7 @@ pub(crate) mod tests {
     use threshold_execution::keyset_config::StandardKeySetConfig;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+    use threshold_types::rng::AesRng;
 
     /// Generate a fresh `CentralizedTestingKeys` bundle for a single test.
     async fn test_keys() -> CentralizedTestingKeys {
@@ -1210,18 +1198,6 @@ pub(crate) mod tests {
             &OTHER_CENTRAL_DEFAULT_ID.to_string(),
         )
         .await
-    }
-
-    impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-        CentralizedKms<PubS, PrivS>
-    {
-        pub(crate) fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
-        }
     }
 
     // Construct a storage for private keys
@@ -1850,7 +1826,7 @@ pub(crate) mod tests {
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            kms.base_kms.signing_identity().unwrap().ecdsa(),
+            kms.base_kms.signing_identity().unwrap(),
             &mut rng,
             &ct,
             fhe_type,

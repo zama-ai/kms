@@ -43,7 +43,6 @@ use crate::vault::storage::read_versioned_at_request_and_epoch_id;
 use crate::vault::storage::read_versioned_at_request_id;
 
 use crate::cryptography::signatures::VerfKeySet;
-use aes_prng::AesRng;
 use alloy_primitives::Address;
 use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
@@ -57,6 +56,7 @@ use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use tfhe::safe_serialization::safe_deserialize;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;

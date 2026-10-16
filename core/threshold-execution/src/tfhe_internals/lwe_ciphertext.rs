@@ -263,7 +263,6 @@ pub fn get_batch_param_lwe_enc(num_encryptions: usize, t_uniform_bound: usize) -
 mod tests {
     use std::{collections::HashMap, num::Wrapping};
 
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
     use tfhe::{
@@ -278,6 +277,7 @@ mod tests {
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
+    use threshold_types::rng::AesRng;
 
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
     use crate::tfhe_internals::parameters::TUniformBound;

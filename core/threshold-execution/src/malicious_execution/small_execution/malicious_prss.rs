@@ -1,7 +1,7 @@
-use aes_prng::AesRng;
 use rand::SeedableRng;
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
+use threshold_types::rng::AesRng;
 use tonic::async_trait;
 
 use crate::{
@@ -53,8 +53,12 @@ impl<Z: Zero + Clone> PRSSInit<Z> for MaliciousPrssDrop {
 
 impl<Z: Zero + Clone> DerivePRSSState<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
-    fn new_prss_session_state(&self, _sid: SessionId) -> Self::OutputType {
-        MaliciousPrssDrop {}
+    fn new_prss_session_state(
+        &self,
+        _sid: SessionId,
+        _role: Role,
+    ) -> anyhow::Result<Self::OutputType> {
+        Ok(MaliciousPrssDrop {})
     }
 }
 
@@ -115,19 +119,37 @@ impl<Z: Zero + Clone> PRSSPrimitives<Z> for MaliciousPrssDrop {
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// such that it does the [`PrssInit`] robust version and check honestly BUT lies in all the Next()
 /// The output of the Next functions is derived from the internal rng of this struct.
-#[derive(Clone)]
 pub struct MaliciousPrssHonestInitRobustThenRandom<
     A,
     V,
     Bcast: Broadcast,
     Z: Default + Clone + Serialize,
 > {
+    // Seed of `rng`.
+    seed: u64,
     rng: AesRng,
     agree_random: A,
     vss: V,
     broadcast: Bcast,
     prss_setup: Option<PRSSSetup<Z>>,
     prss_state: Option<PRSSState<Z, Bcast>>,
+}
+
+// `AesRng` is not `Clone`: a clone starts the stream again from the seed.
+impl<A: Clone, V: Clone, Bcast: Broadcast, Z: Default + Clone + Serialize> Clone
+    for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+{
+    fn clone(&self) -> Self {
+        Self {
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
+            agree_random: self.agree_random.clone(),
+            vss: self.vss.clone(),
+            broadcast: self.broadcast.clone(),
+            prss_setup: self.prss_setup.clone(),
+            prss_state: self.prss_state.clone(),
+        }
+    }
 }
 
 impl<
@@ -153,9 +175,11 @@ impl<A: Default, V: Default, Bcast: Broadcast + Default, Z: Default + Clone + Se
     for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     fn default() -> Self {
+        // Fixed seed to make all tests deterministic
+        let seed = 42;
         Self {
-            // Fixed seed to make all tests deterministic
-            rng: AesRng::seed_from_u64(42),
+            seed,
+            rng: AesRng::seed_from_u64(seed),
             agree_random: A::default(),
             vss: V::default(),
             broadcast: Bcast::default(),
@@ -191,7 +215,8 @@ impl<
 
         // Just clone the strategies, and add the new state
         Ok(Self {
-            rng: self.rng.clone(),
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
@@ -209,14 +234,18 @@ impl<
 > DerivePRSSState<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
-    fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType {
+    fn new_prss_session_state(
+        &self,
+        sid: SessionId,
+        role: Role,
+    ) -> anyhow::Result<Self::OutputType> {
         // Clone the strategies and state
         // and honestly derive the state
         let honest_state = self
             .prss_setup
             .as_ref()
             .unwrap()
-            .new_prss_session_state(sid);
+            .new_prss_session_state(sid, role)?;
         let honest_state_custom_bcast = PRSSState {
             counters: honest_state.counters,
             prss_setup: honest_state.prss_setup,
@@ -224,14 +253,15 @@ impl<
             broadcast: self.broadcast.clone(),
         };
 
-        Self {
-            rng: self.rng.clone(),
+        Ok(Self {
+            seed: self.seed,
+            rng: AesRng::seed_from_u64(self.seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
             prss_setup: self.prss_setup.clone(),
             prss_state: Some(honest_state_custom_bcast),
-        }
+        })
     }
 }
 
@@ -373,7 +403,11 @@ impl<
 > DerivePRSSState<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
-    fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType {
+    fn new_prss_session_state(
+        &self,
+        sid: SessionId,
+        role: Role,
+    ) -> anyhow::Result<Self::OutputType> {
         // Clone the strategies and state
         // but derive the state from a wrong sid
         // so none of the PRSSPrimitives will be correct
@@ -384,7 +418,7 @@ impl<
             .prss_setup
             .as_ref()
             .unwrap()
-            .new_prss_session_state(wrong_sid);
+            .new_prss_session_state(wrong_sid, role)?;
         let honest_state_custom_bcast = PRSSState {
             counters: honest_state.counters,
             prss_setup: honest_state.prss_setup,
@@ -395,15 +429,15 @@ impl<
         // Deterministically derive seed from sid by xoring the MSB to the LSB
         // of the session id
         let seed = ((sid_u128 >> 64) as u64) ^ (sid_u128 as u64);
-        let rng = AesRng::seed_from_u64(seed);
-        MaliciousPrssHonestInitRobustThenRandom {
-            rng,
+        Ok(MaliciousPrssHonestInitRobustThenRandom {
+            seed,
+            rng: AesRng::seed_from_u64(seed),
             agree_random: self.agree_random.clone(),
             vss: self.vss.clone(),
             broadcast: self.broadcast.clone(),
             prss_setup: self.prss_setup.clone(),
             prss_state: Some(honest_state_custom_bcast),
-        }
+        })
     }
 }
 

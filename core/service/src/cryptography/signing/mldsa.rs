@@ -195,9 +195,9 @@ impl_generic_versionize!(<P: MlDsaParams> MlDsaVerfKey<P>);
 mod tests {
     use super::*;
     use crate::cryptography::signing::test_support::{exercise_backend, random_seed};
-    use aes_prng::AesRng;
     use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"MLDSATST";
 

@@ -211,10 +211,10 @@ impl VerfKeySet {
 mod tests {
     use super::*;
     use crate::cryptography::signing::test_support::seeded_identity;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
     use tfhe_versionable::{Unversionize, UnversionizeError, VersionizeOwned};
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn from_identity_covers_every_requested_scheme() {

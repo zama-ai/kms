@@ -2,7 +2,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
-use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use anyhow::anyhow;
 use kms_grpc::{
@@ -23,7 +22,8 @@ use threshold_execution::{
     zk::ceremony::Ceremony,
 };
 use threshold_types::network::NetworkMode;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use threshold_types::rng::AesRng;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -40,12 +40,9 @@ use crate::{
         threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-            update_err_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+        update_err_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -78,7 +75,6 @@ pub(crate) struct RealCrsGenerator<
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing crs generation tasks
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _ceremony: PhantomData<C>,
 }
 
@@ -99,8 +95,6 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        let rate_limiter_permit = self.rate_limiter.start_crsgen(op_tag).await?;
-
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
         let inner = request.into_inner();
@@ -163,7 +157,6 @@ impl<
             &verified.eip712_domain,
             verified.extra_data,
             verified.signing_schemes,
-            rate_limiter_permit,
             meta_permit,
             verified.epoch_id,
             verified.context_id,
@@ -186,7 +179,6 @@ impl<
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        rate_limiter_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
         context_id: ContextId,
@@ -219,7 +211,6 @@ impl<
                 // Capture the timer inside the generation task, such that when the
                 // task exits, the timer is dropped and thus exported.
                 let _inner_timer = timer;
-                let _inner_rate_limiter_permit = rate_limiter_permit;
                 Self::crs_gen_background(
                     meta_permit,
                     token,
@@ -443,11 +434,6 @@ impl<
 
         match outcome {
             Err(msg) => {
-                MetricedError::handle_unreturnable_error(
-                    op_tag,
-                    Some(*req_id),
-                    anyhow::anyhow!(msg.clone()),
-                );
                 // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
             }
@@ -528,7 +514,6 @@ impl<
                 session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
-                rate_limiter: value.rate_limiter.clone(),
                 _ceremony: PhantomData,
             },
         }
@@ -616,7 +601,6 @@ mod tests {
 
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
-            let rate_limiter = RateLimiter::default();
             Self {
                 base_kms,
                 crypto_storage,
@@ -624,17 +608,8 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _ceremony: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -874,33 +849,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(123);
-        let mut crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
-
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        crs_gen.set_bucket_size(1);
-
-        let req_id = RequestId::new_random(&mut rng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-        };
-
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
-
-        assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
-    }
-
-    #[tokio::test]
     async fn internal_failure() {
         // Even if the CRS ceremony fails, we should not return an error
         // because it's happening in the background.
@@ -920,6 +868,7 @@ mod tests {
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
+        let recorded_errors_before = crate::engine::utils::unreturnable_error_call_count();
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
 
@@ -929,6 +878,11 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::Internal
+        );
+        assert_eq!(
+            crate::engine::utils::unreturnable_error_call_count(),
+            recorded_errors_before + 1,
+            "a failed ceremony must be recorded once"
         );
     }
 
@@ -1088,6 +1042,7 @@ mod tests {
             epoch_id: Some(epoch_id.into()),
         };
 
+        let recorded_errors_before = crate::engine::utils::unreturnable_error_call_count();
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
         // We manage to abort successfully first time
         assert!(
@@ -1106,6 +1061,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+        assert_eq!(
+            crate::engine::utils::unreturnable_error_call_count(),
+            recorded_errors_before + 1,
+            "an aborted generation must be recorded once"
+        );
 
         match existing_material {
             ExistingCrsMaterial::Public => {

@@ -649,8 +649,8 @@ impl ResolvesClientCert for CertResolver {
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn valid_threshold_ca_cert_is_accepted() {

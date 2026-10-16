@@ -601,9 +601,9 @@ pub(crate) mod test {
 
     use std::collections::{HashMap, HashSet};
 
-    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use crate::malicious_execution::open::malicious_open::{
         MaliciousRobustOpenDrop, MaliciousRobustOpenLie,

@@ -168,7 +168,6 @@ mod tests {
     use crate::bgv::basics::keygen;
     use crate::bgv::ddec::LevelEll;
     use crate::bgv::ddec::keygen_shares;
-    use aes_prng::AesRng;
     #[cfg(feature = "slow_tests")]
     use algebra::sharing::shamir::RevealOp;
     #[cfg(feature = "slow_tests")]
@@ -185,6 +184,7 @@ mod tests {
     use threshold_execution::runtime::test_runtime::DistributedTestRuntime;
     use threshold_execution::runtime::test_runtime::generate_fixed_roles;
     use threshold_types::network::NetworkMode;
+    use threshold_types::rng::AesRng;
     use threshold_types::session_id::SessionId;
 
     use tokio::task::JoinSet;

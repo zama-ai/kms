@@ -79,7 +79,6 @@ use crate::cryptography::encryption::{
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::SigningSchemeType;
-use aes_prng::AesRng;
 use bc2wrap::deserialize_slice;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
@@ -89,6 +88,7 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
+use threshold_types::rng::AesRng;
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 // Since wasm_bindgen is limited, namely it says

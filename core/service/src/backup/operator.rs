@@ -4,7 +4,7 @@ use super::{
     secretsharing,
 };
 use crate::backup::{
-    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    custodian::{InternalCustodianContext, TransferableCustodianRecoveryOutput},
     error::RecoverySkipReason,
 };
 use crate::{
@@ -152,6 +152,8 @@ pub struct Operator {
     /// The published counterpart of `signing_key`
     verification_key: VerfKeySet,
     threshold: usize,
+    /// The configured number of custodians.
+    amount_custodians: usize,
 }
 
 impl std::fmt::Debug for Operator {
@@ -161,6 +163,7 @@ impl std::fmt::Debug for Operator {
             .field("signing_identity", &"omitted")
             .field("verification_key", &self.verification_key)
             .field("threshold", &self.threshold)
+            .field("amount_custodians", &self.amount_custodians)
             .finish()
     }
 }
@@ -188,7 +191,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            signcryption: UnifiedSigncryption::new(value.signcryption, value.pke_type.try_into()?),
+            signcryption: value.try_into()?,
         })
     }
 }
@@ -493,6 +496,7 @@ impl Operator {
             signing_identity: Some(signing_key),
             verification_key,
             threshold,
+            amount_custodians,
         })
     }
 
@@ -513,6 +517,7 @@ impl Operator {
             signing_identity: None,
             verification_key: verf_key,
             threshold,
+            amount_custodians,
         })
     }
 
@@ -544,7 +549,7 @@ impl Operator {
             }
             Some(identity) => identity,
         };
-        let n = self.custodian_keys.len();
+        let n = self.amount_custodians;
         let t = self.threshold;
 
         // 1. Each player/operator `P_i` selects `n` other custodians `B_j` for `[j=1..n]`
@@ -679,7 +684,7 @@ impl Operator {
     /// Returns decrypted key shares in a [`Zeroizing`] guard.
     pub(crate) fn validate_one_recovery_output(
         &self,
-        output: &InternalCustodianRecoveryOutput,
+        output: &TransferableCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &Arc<UnifiedPrivateEncKey>,
         ephm_enc_key: &UnifiedPublicEncKey,
@@ -791,13 +796,13 @@ impl Operator {
     /// Validate every signcrypted custodian recovery output and reconstruct the operator's secret.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
+        custodian_recovery_output: &[TransferableCustodianRecoveryOutput],
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
+        let mut skip_reasons = Vec::new();
         let mut validated: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
-        let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
         let ephm_dec_key = Arc::new(ephm_dec_key.clone());
         for output in custodian_recovery_output {
             match self.validate_one_recovery_output(
@@ -1008,10 +1013,10 @@ mod tests {
         },
         engine::base::derive_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
+    use threshold_types::rng::AesRng;
 
     /// A wire recovery request naming `operator_verf_key` and carrying one backup ciphertext.
     fn recovery_request_naming(
@@ -1224,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_bad_n_t() {
+    fn custodian_validation_new_fails_with_bad_n_t() {
         // 1 is not less than 2/2
         let result = validate_custodian_messages(vec![], 1, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
@@ -1238,21 +1243,21 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_zero_t() {
+    fn custodian_validation_new_fails_with_zero_t() {
         let result = validate_custodian_messages(vec![], 0, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("t cannot be 0"));
     }
 
     #[test]
-    fn operator_new_fails_with_zero_n() {
+    fn custodian_validation_new_fails_with_zero_n() {
         let result = validate_custodian_messages(vec![], 1, 0, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("n cannot be 0"));
     }
 
     #[test]
-    fn operator_new_fails_with_insufficient_messages() {
+    fn custodian_validation_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1270,7 +1275,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_header() {
+    fn custodian_validation_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1298,7 +1303,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_timestamp_past() {
+    fn custodian_validation_timestamp_in_the_past() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1326,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_timestamp_future() {
+    fn custodian_validation_timestamp_in_the_future() {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1355,7 +1360,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_timestamp_validation() {
+    fn custodian_validation_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1380,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_invalid_role() {
+    fn custodian_validation_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
@@ -1411,7 +1416,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_new_fails_with_duplicate_roles() {
+    fn custodian_validation_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();

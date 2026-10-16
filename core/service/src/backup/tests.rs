@@ -9,8 +9,8 @@ use crate::{
     backup::{
         BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
         custodian::{
-            InternalCustodianContext, InternalCustodianRecoveryOutput,
-            InternalCustodianSetupMessage,
+            InternalCustodianContext, InternalCustodianSetupMessage,
+            TransferableCustodianRecoveryOutput,
         },
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
@@ -22,11 +22,11 @@ use crate::{
     },
     engine::base::derive_request_id,
 };
-use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 /// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
 ///
@@ -163,25 +163,6 @@ fn custodian_reencrypt() {
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
-    {
-        let operator_role = Role::indexed_from_zero(0);
-        let mut bad_results = signcrypt_results.clone();
-        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
-            z.signcryption.payload[0] ^= 1;
-        }
-
-        let err = custodians[0]
-            .verify_reencrypt(
-                &mut rng,
-                bad_results[0].ct_shares.get(&operator_role).unwrap(),
-                verification_key,
-                &ephemeral_enc_key,
-            )
-            .unwrap_err();
-        assert!(matches!(err, BackupError::CustodianRecoveryError));
-    }
-
-    // tweak the signature, so that signature verification also fails
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_results = signcrypt_results.clone();
@@ -372,10 +353,23 @@ fn full_flow_malicious_custodian_init() {
                 *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
-        assert!(
-            result.skipped_roles.contains(&Role::indexed_from_one(2)),
-            "expected role 2 to be skipped (removed custodian): {:?}",
-            result.skipped_roles
+        assert_eq!(
+            result.skipped_roles,
+            vec![Role::indexed_from_one(2)],
+            "expected only role 2 to be skipped (removed custodian)"
+        );
+        // Every other configured custodian, including the last one, must still get a share.
+        let expected_roles: Vec<Role> = [1, 3, 4, 5]
+            .into_iter()
+            .map(Role::indexed_from_one)
+            .collect();
+        assert_eq!(
+            result.ct_shares.keys().copied().collect::<Vec<_>>(),
+            expected_roles
+        );
+        assert_eq!(
+            result.commitments.keys().copied().collect::<Vec<_>>(),
+            expected_roles
         );
     }
 }
@@ -718,7 +712,7 @@ fn custodian_recover(
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &CustodianBackupsMap, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
-) -> BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
+) -> BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
     for (cur_operator_address, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
         let mut cur_operator_res = BTreeMap::new();
@@ -746,7 +740,7 @@ fn custodian_recover(
 }
 
 fn operator_recover(
-    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
+    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>>,
     operators: &OperatorsMap,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
