@@ -28,8 +28,7 @@ use crate::{
         signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
-        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
-        validation::RequestIdParsingErr,
+        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, validation::RequestIdParsingErr,
     },
     vault::{
         Vault, VaultDataType,
@@ -68,7 +67,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 use zeroize::Zeroizing;
 
-pub struct RealBackupOperator<
+pub(crate) struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
@@ -214,7 +213,7 @@ where
             .map_err(fail)
     }
 
-    pub fn new(
+    pub(crate) fn new(
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         security_module: Option<Arc<SecurityModuleProxy>>,
@@ -328,8 +327,7 @@ where
     }
 }
 
-#[tonic::async_trait]
-impl<PubS, PrivS> BackupOperator for RealBackupOperator<PubS, PrivS>
+impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -339,7 +337,7 @@ where
     /// A digest is attested rather than the key because the composite key exceeds the attestation
     /// document's [`crate::cryptography::attestation::NSM_ATTESTATION_FIELD_MAX_BYTES`] `public_key`
     /// field.
-    async fn get_operator_public_key(
+    pub(crate) async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, MetricedError> {
@@ -395,7 +393,7 @@ where
     }
 
     /// Restores the most recent custodian based backup.
-    async fn custodian_recovery_init(
+    pub(crate) async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
     ) -> Result<Response<RecoveryRequest>, MetricedError> {
@@ -493,7 +491,7 @@ where
     ///
     /// Observe that the decryption key is NOT persisted on disc and in fact removed immediately after a call to `restore_from_backup`
     /// in order to minimize the possibility of leakage.
-    async fn custodian_backup_recovery(
+    pub(crate) async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -693,7 +691,7 @@ where
     /// Observe that if secret sharing is used for backup (i.e. with a master key being shared with a set of custodians)
     /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
     /// which is needed to allow decryption of the backup data.
-    async fn restore_from_backup(
+    pub(crate) async fn restore_from_backup(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -728,7 +726,7 @@ where
         }
     }
 
-    async fn get_key_material_availability(
+    pub(crate) async fn get_key_material_availability(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError> {
