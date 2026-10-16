@@ -21,10 +21,7 @@ use crate::{
     cryptography::signatures::PublicSigKey,
     engine::context::SchemeDigests,
     testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
-    util::{
-        key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
-        rate_limiter::RateLimiterConfig,
-    },
+    util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
     vault::storage::{
         StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
         read_versioned_at_request_id, store_versioned_at_request_and_epoch_id, tests::TestType,
@@ -52,16 +49,6 @@ async fn do_context_switch(
     // only an epoch change reshares them into an epoch that the new context owns. This test stops
     // short of that epoch change, because resharing needs a key from a full DKG.
 
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 100,
-        user_decrypt: 1,
-        crsgen: 1,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
-
     // Decrypts a real ciphertext, so needs the full threshold-basic set
     // (client/signing/server-signing/FHE/PRSS).
     let spec = TestMaterialSpec::threshold_basic(amount_parties);
@@ -71,7 +58,6 @@ async fn do_context_switch(
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
-        .with_rate_limiter(rate_limiter_conf)
         .with_prss();
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);

@@ -61,12 +61,9 @@ use crate::{
             validate_public_decrypt_req,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_err_req_in_meta_store, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+        update_err_req_in_meta_store, update_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -133,7 +130,6 @@ pub struct RealPublicDecryptor<
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
     pub(crate) _dec: PhantomData<Dec>,
 }
@@ -266,10 +262,6 @@ impl<
     ) -> Result<Response<Empty>, MetricedError> {
         metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .start();
@@ -556,7 +548,7 @@ impl<
                     .spawn(decrypt_future().instrument(tracing::Span::current())),
             );
         }
-        let dec_sig_future = move |_permit| async move {
+        let dec_sig_future = move || async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
@@ -619,9 +611,7 @@ impl<
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
-            let _ = dec_sig_future(permit)
-                .instrument(tracing::Span::current())
-                .await;
+            let _ = dec_sig_future().instrument(tracing::Span::current()).await;
         });
         Ok(Response::new(Empty {}))
     }
@@ -809,7 +799,6 @@ mod tests {
             );
 
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
 
             Self {
                 base_kms,
@@ -817,18 +806,9 @@ mod tests {
                 pub_dec_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
-                rate_limiter,
                 decryption_mode: DecryptionMode::NoiseFloodSmall,
                 _dec: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -957,15 +937,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+    async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(12);
-
         let (key_id, epoch_id, ct_buf, mut public_decryptor) =
             setup_public_decryptor(&mut rng).await;
-
-        // Set bucket size to zero, so no operations are allowed
-        public_decryptor.set_bucket_size(0);
+        public_decryptor.pub_dec_meta_store = MetaStore::new(1, 0);
+        let _pending = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
 
         let req_id = RequestId::new_random(&mut rng);
         let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
@@ -974,16 +956,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // the sync endpoint is rate-limited the same way
         let err = public_decryptor
             .public_decrypt_sync(Request::new(request))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // finally reset the bucket size to a non-zero value
-        public_decryptor.set_bucket_size(100);
     }
 
     #[tokio::test]
