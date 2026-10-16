@@ -3511,7 +3511,11 @@ pub(crate) mod tests {
             &[SigningSchemeType::Ecdsa256k1],
         );
         let epoch_id = EpochId::new_random(&mut rng);
+        // A "keeper" epoch so the target is not the last remaining one, which `destroy_epoch`
+        // refuses to remove for an unrelated reason.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
         seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, keeper_epoch_id, *DEFAULT_MPC_CONTEXT).await;
         let extra_data = vec![1, 2, 3];
 
         for _round in 0..2 {
@@ -3534,6 +3538,12 @@ pub(crate) mod tests {
             assert_eq!(party_id, 1);
             assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
         }
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
     }
 
     /// `destroy_mpc_epoch` refuses a malformed request, or one naming a scheme the node cannot
