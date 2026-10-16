@@ -675,8 +675,8 @@ message CustodianContext {
   // and public verification key within this context.
   repeated CustodianSetupMessage custodian_nodes = 1;
 
-  // A monotonically increasing counter stored on the Gateway
-  // that is increased by 1 every time a new context of a specific type is generated.
+  // The unique ID of this custodian context, chosen by the caller.
+  // The core client generates it at random.
   RequestId custodian_context_id = 2;
 
   // The corruption threshold for this context.
@@ -717,7 +717,8 @@ message DestroyCustodianContextRequest {
 }
 
 message OperatorPublicKey {
-  // The public key that a custodian can use to encrypt a backup share
+  // The operator's public backup encryption key for the current custodian context.
+  // The operator encrypts its backups under this key.
   bytes public_key = 1;
   // The attestation document that proves the public key is generated within an
   // enclave initialized from a trusted software build

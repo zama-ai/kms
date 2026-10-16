@@ -51,7 +51,6 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
-    let permit = service.rate_limiter.start_crsgen(op_tag).await?;
     let timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -104,7 +103,6 @@ pub async fn crs_gen_impl<
     service.tracker.spawn(
         async move {
             let _timer = timer;
-            let _permit = permit;
             crs_gen_background(
                 meta_permit,
                 token,
@@ -609,31 +607,6 @@ mod tests {
         let get_result =
             get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into()), false).await;
         assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
-        kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
-        let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let request = CrsGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            epoch_id: Some(epoch_id.into()),
-            context_id: None,
-            params: FheParameter::Test.into(),
-            domain: Some(domain),
-            extra_data: vec![],
-            max_num_bits: None,
-        };
-        let err = crs_gen_impl(&kms, Request::new(request), false)
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]
