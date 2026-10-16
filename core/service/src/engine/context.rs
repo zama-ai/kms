@@ -1,10 +1,11 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use alloy_primitives::Address;
 use kms_grpc::{identifiers::ContextId, kms::v1::SchemeDigest};
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_networking::tls::{ReleasePCRValues, extract_subject_from_cert};
@@ -19,7 +20,7 @@ use crate::{
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
-const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses found in context";
+const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses or digests found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 const ERR_CA_SUBJECT_MISMATCH: &str = "CA certificate subject does not match mpc_identity";
@@ -131,17 +132,30 @@ pub enum SchemeDigestErr {
 }
 
 #[derive(Clone, Debug, VersionsDispatch)]
-pub enum SchemeDigestsVersions {
-    V0(SchemeDigests),
+pub enum SchemeDigestsReprVersions {
+    V0(SchemeDigestsRepr),
 }
+
+/// The unvalidated mirror of [`SchemeDigests`] that carries the version dispatch.
+///
+/// The type is used to enfoce validation during deserialization, as is also done
+/// in [`VerfKeySet`].
+/// The versioned layout is exactly the same as the one of a `SchemeDigests` that
+/// is versioned directly.
+#[derive(Clone, Debug, Versionize)]
+#[versionize(SchemeDigestsReprVersions)]
+pub struct SchemeDigestsRepr(BTreeMap<SigningSchemeType, Vec<u8>>);
 
 /// Digests of a node operator's verification keys, one per signature scheme the operator has
 /// published a key for, used to identify the node.
 ///
+/// # Invariants
+///
 /// This explicit type is here to ensure embedded validation of digests.
 /// For now this validation is limited to ensuring the length is as expected.
+/// This is enforced during `insert` and also during deserialization.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SchemeDigestsVersions)]
+#[versionize(try_convert = "SchemeDigestsRepr")]
 // Route serialization through this type, hence doing needed checks upon insertion.
 #[serde(
     try_from = "BTreeMap<SigningSchemeType, Vec<u8>>",
@@ -215,6 +229,25 @@ impl From<SchemeDigests> for BTreeMap<SigningSchemeType, Vec<u8>> {
     fn from(value: SchemeDigests) -> Self {
         value.0
     }
+}
+
+impl From<SchemeDigests> for SchemeDigestsRepr {
+    fn from(value: SchemeDigests) -> Self {
+        Self(value.0)
+    }
+}
+
+/// Reading stored digests back re-establishes the invariants.
+impl TryFrom<SchemeDigestsRepr> for SchemeDigests {
+    type Error = SchemeDigestErr;
+
+    fn try_from(versioned: SchemeDigestsRepr) -> Result<Self, Self::Error> {
+        Self::try_from(versioned.0)
+    }
+}
+
+impl Named for SchemeDigests {
+    const NAME: &'static str = "kms::SchemeDigests";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
@@ -350,21 +383,12 @@ pub struct NodeInfo {
 impl NodeInfo {
     /// Returns the Ethereum address of the node's ECDSA-256k1 verification key, or `None` if
     /// the context does not list one for this node.
-    ///
-    /// Returns an error if the listed digest is not an Ethereum address. [`SchemeDigests::insert`]
-    /// rejects such a digest, but `tfhe-versionable` reads a stored [`SchemeDigests`] back
-    /// without calling it.
-    pub(crate) fn ecdsa_signer_address(&self) -> anyhow::Result<Option<SignerAddress>> {
-        let Some(digest) = self.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) else {
-            return Ok(None);
-        };
-        let address = Address::try_from(digest).map_err(|e| {
-            anyhow::anyhow!(
-                "Invalid ECDSA-256k1 digest for node {}: {e}",
-                self.mpc_identity
-            )
-        })?;
-        Ok(Some(SignerAddress(address)))
+    pub(crate) fn ecdsa_signer_address(&self) -> Option<SignerAddress> {
+        self.scheme_digests
+            .get(&SigningSchemeType::Ecdsa256k1)
+            // `from_slice` panics unless the slice is an Ethereum address long, which the
+            // invariants of `SchemeDigests` guarantee for an ECDSA-256k1 digest.
+            .map(|digest| SignerAddress(Address::from_slice(digest)))
     }
 }
 
@@ -578,21 +602,21 @@ impl ContextInfo {
             ));
         }
 
-        // A signer address identifies one node across contexts, so two nodes must not share it.
-        // A node without a listed signer address is not counted.
-        let mut signers = Vec::new();
-        for node in &self.mpc_nodes {
-            if let Some(signer) = node.ecdsa_signer_address()? {
-                signers.push(signer);
+        // A verification-key digest identifies one node across contexts, so two nodes must not share it.
+        for scheme in SigningSchemeType::iter() {
+            let mut seen: HashMap<&[u8], &str> = HashMap::new();
+            for node in &self.mpc_nodes {
+                let Some(digest) = node.scheme_digests.get(&scheme) else {
+                    continue;
+                };
+                if let Some(other) = seen.insert(digest, &node.mpc_identity) {
+                    anyhow::bail!(
+                        "{ERR_DUPLICATE_SIGNERS} {}: nodes {other} and {} share a {scheme} digest",
+                        self.context_id(),
+                        node.mpc_identity
+                    );
+                }
             }
-        }
-        let unique_signers: std::collections::HashSet<_> = signers.iter().collect();
-        if unique_signers.len() != signers.len() {
-            return Err(anyhow::anyhow!(
-                "{} {}",
-                ERR_DUPLICATE_SIGNERS,
-                self.context_id()
-            ));
         }
 
         // check that each CA certificate subject matches its mpc_identity
@@ -708,8 +732,11 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
 mod tests {
     use kms_grpc::rpc_types::PrivDataType;
     use strum::EnumCount;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+    use tfhe_versionable::{Unversionize, UnversionizeError, VersionizeOwned};
 
     use crate::{
+        consts::SAFE_SER_SIZE_LIMIT,
         cryptography::signatures::{PrivateSigKey, gen_sig_keys},
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
@@ -937,55 +964,10 @@ mod tests {
             SchemeDigests::from_ecdsa_verification_key(&verification_key);
 
         assert_eq!(
-            context.mpc_nodes[0].ecdsa_signer_address().unwrap(),
+            context.mpc_nodes[0].ecdsa_signer_address(),
             Some(SignerAddress(verification_key.address()))
         );
-        assert_eq!(context.mpc_nodes[1].ecdsa_signer_address().unwrap(), None);
-    }
-
-    /// Digests of a node whose ECDSA-256k1 digest is too short to be an Ethereum address.
-    /// [`SchemeDigests::insert`] rejects such a digest, but a stored context can still hold one.
-    fn malformed_ecdsa_digests() -> SchemeDigests {
-        SchemeDigests(BTreeMap::from([(
-            SigningSchemeType::Ecdsa256k1,
-            vec![7u8; 3],
-        )]))
-    }
-
-    #[test]
-    fn ecdsa_signer_address_rejects_malformed_digest() {
-        let context = four_node_context([
-            malformed_ecdsa_digests(),
-            SchemeDigests::new(),
-            SchemeDigests::new(),
-            SchemeDigests::new(),
-        ]);
-
-        let err = context.mpc_nodes[0].ecdsa_signer_address().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Invalid ECDSA-256k1 digest for node Node1"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_context_info_malformed_signer_digest() {
-        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-        let context = four_node_context([
-            SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            malformed_ecdsa_digests(),
-            SchemeDigests::new(),
-            SchemeDigests::new(),
-        ]);
-        let storage = storage_with_signing_key(&sk).await;
-
-        let err = context.verify(&storage).await.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Invalid ECDSA-256k1 digest for node Node2"),
-            "unexpected error: {err}"
-        );
+        assert_eq!(context.mpc_nodes[1].ecdsa_signer_address(), None);
     }
 
     #[tokio::test]
@@ -1019,6 +1001,54 @@ mod tests {
 
         let my_role = context.verify(&storage).await.unwrap();
         assert_eq!(my_role, Some(Role::indexed_from_one(3)));
+    }
+
+    /// A four-node context in which each node has a distinct digest for each scheme.
+    fn four_node_context_with_all_schemes() -> ContextInfo {
+        let mut digests: [SchemeDigests; 4] = Default::default();
+        for (i, node_digests) in digests.iter_mut().enumerate() {
+            let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+            *node_digests = SchemeDigests::from_ecdsa_verification_key(&verification_key);
+            for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1)
+            {
+                node_digests
+                    .insert(scheme, vec![i as u8 + 1; scheme.expected_digest_len()])
+                    .unwrap();
+            }
+        }
+        four_node_context(digests)
+    }
+
+    #[tokio::test]
+    async fn test_context_info_distinct_digests_of_all_schemes() {
+        let context = four_node_context_with_all_schemes();
+        // `verify` reads a signing key from storage, but no node needs to match it.
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+
+        context.verify(&storage).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_context_info_duplicate_non_ecdsa_digest() {
+        let mut context = four_node_context_with_all_schemes();
+        // Only the ML-DSA-65 digest of node 4 repeats the one of node 3.
+        let scheme = SigningSchemeType::MlDsa65;
+        let duplicate = context.mpc_nodes[2]
+            .scheme_digests
+            .get(&scheme)
+            .unwrap()
+            .to_vec();
+        context.mpc_nodes[3]
+            .scheme_digests
+            .insert(scheme, duplicate)
+            .unwrap();
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+
+        let err = context.verify(&storage).await.unwrap_err().to_string();
+        assert!(err.contains(ERR_DUPLICATE_SIGNERS), "{err}");
+        assert!(err.contains(&scheme.to_string()), "{err}");
     }
 
     const ALL_SCHEMES: [SigningSchemeType; 5] = [
@@ -1212,6 +1242,48 @@ mod tests {
         let bytes = bc2wrap::serialize(&valid).unwrap();
         let digests = bc2wrap::deserialize_slice::<SchemeDigests>(&bytes).unwrap();
         assert_eq!(bc2wrap::serialize(&digests).unwrap(), bytes);
+    }
+
+    #[test]
+    fn safe_deserialize_accepts_valid_digests() {
+        let mut digests = SchemeDigests::new();
+        for scheme in SigningSchemeType::iter() {
+            digests
+                .insert(scheme, vec![0xab; scheme.expected_digest_len()])
+                .unwrap();
+        }
+        let mut bytes = Vec::new();
+        safe_serialize(&digests, &mut bytes, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let read: SchemeDigests =
+            safe_deserialize(std::io::Cursor::new(&bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+        assert_eq!(read, digests);
+    }
+
+    /// A stored context is read back through `tfhe-versionable` and not through `serde`, so the
+    /// versioned path must apply the same length rule as [`SchemeDigests::insert`].
+    #[test]
+    fn unversionize_rejects_wrong_length_digest() {
+        let corrupt = SchemeDigestsRepr(BTreeMap::from([(
+            SigningSchemeType::Ecdsa256k1,
+            vec![7u8; 3],
+        )]));
+        // `safe_deserialize` checks the type name in the header before unversioning, so it would
+        // reject bytes written for `SchemeDigestsRepr` on the name alone. `bc2wrap` writes the
+        // same bincode encoding as the payload that follows that header.
+        let bytes = bc2wrap::serialize(&corrupt.versionize()).unwrap();
+        let versioned = bc2wrap::deserialize_slice::<
+            <SchemeDigests as VersionizeOwned>::VersionedOwned,
+        >(&bytes)
+        .unwrap();
+
+        let err = SchemeDigests::unversionize(versioned).unwrap_err();
+        assert!(matches!(err, UnversionizeError::Conversion { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("Ecdsa256k1 verification-key digest has length 3, expected 20"),
+            "{err}"
+        );
     }
 
     fn node_info_v1(signer_address: Option<SignerAddress>) -> NodeInfoV1 {

@@ -101,12 +101,9 @@ use crate::{
             unpack_destroy_req, validate_new_mpc_epoch_request,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
-            update_err_req_in_meta_store, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
+        update_req_in_meta_store,
     },
     vault::storage::{
         Storage, StorageExt,
@@ -441,7 +438,6 @@ pub struct RealThresholdEpochManager<
     pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
     /// Serializes the public and private storage phase of reshares through rollback.
     pub(crate) reshare_storage_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) _init: PhantomData<Init>,
@@ -1944,8 +1940,6 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        let rate_limiter_permit = self.rate_limiter.start_new_epoch().await?;
-
         let inner = request.into_inner();
         let VerifiedNewMpcEpochRequest {
             context_id,
@@ -2056,7 +2050,6 @@ impl<
         self.tracker.spawn(
             async move {
                 let _creation_lease = creation_lease;
-                let _rate_limiter_permit = rate_limiter_permit;
                 let crypto_storage = crypto_storage;
                 let context_id = context_id;
                 let epoch_id = epoch_id;
@@ -2284,12 +2277,9 @@ pub(crate) mod tests {
             threshold::service::session::PRSSSetupCombined,
             utils::make_extra_data,
         },
-        util::{
-            key_setup::{
-                ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
-                ensure_threshold_server_signing_keys_exist,
-            },
-            rate_limiter::RateLimiterConfig,
+        util::key_setup::{
+            ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
+            ensure_threshold_server_signing_keys_exist,
         },
         vault::storage::{
             StorageReader, StorageReaderExt, StorageType,
@@ -2432,18 +2422,9 @@ pub(crate) mod tests {
                 ),
                 reshare_pubinfo_meta_store: MetaStore::new(10, 10),
                 tracker: Arc::new(TaskTracker::new()),
-                rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
                 reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
                 _reshare: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -2526,7 +2507,6 @@ pub(crate) mod tests {
             priv_storage.clone(),
             vaults,
             None,
-            None,
         )
         .await;
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
@@ -2554,7 +2534,6 @@ pub(crate) mod tests {
             pub_storage.clone(),
             priv_storage.clone(),
             vaults2,
-            None,
             None,
         )
         .await;
@@ -2759,31 +2738,6 @@ pub(crate) mod tests {
     }
 
     //TODO(#2882): Make a test for answer unavailable.
-
-    #[tokio::test]
-    async fn test_resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let mut epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        epoch_manager.set_bucket_size(0);
-        let epoch_id = EpochId::new_random(&mut rng);
-
-        assert_eq!(
-            epoch_manager
-                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                    signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-                    epoch_id: Some(epoch_id.into()),
-                    context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                    previous_epoch: None,
-                    domain: None,
-                    extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&epoch_id))
-                        .unwrap(),
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::ResourceExhausted
-        );
-    }
 
     #[tokio::test]
     async fn invalid_argument() {

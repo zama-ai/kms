@@ -42,7 +42,6 @@ use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use tokio_util::sync::CancellationToken;
 
-use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_recovery_material,
 };
@@ -477,8 +476,6 @@ pub struct CentralizedKms<
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
-    // Rate limiting
-    pub(crate) rate_limiter: RateLimiter,
     // Liveness and readiness that the gRPC health service reports
     pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
@@ -1050,7 +1047,6 @@ impl<
         {
             anyhow::bail!("Failed to update backup vault when booting");
         }
-        let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let pub_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let telemetry_conf = config
@@ -1058,7 +1054,6 @@ impl<
             .unwrap_or_else(|| TelemetryConfig::builder().build());
         // Start updating system metrics
         update_central_kms_system_metrics(
-            rate_limiter.clone(),
             Arc::clone(&user_dec_meta_store),
             Arc::clone(&pub_dec_meta_store),
             crypto_storage.clone(),
@@ -1082,7 +1077,6 @@ impl<
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
-                rate_limiter,
                 health: health.clone(),
                 tracker: Arc::clone(&tracker),
             },
@@ -1161,7 +1155,6 @@ impl<
 }
 
 fn update_central_kms_system_metrics<PubS, PrivS>(
-    rate_limiter: RateLimiter,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -1173,7 +1166,6 @@ where
 {
     tokio::spawn(async move {
         loop {
-            METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             // Skipped when the cache lock is contended: the gauge keeps its
             // previous value rather than stalling the whole metrics loop.
             if let Some(count) = crypto_storage.cached_fhe_key_count() {
@@ -1228,7 +1220,6 @@ pub(crate) mod tests {
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
-    use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
         StorageExt, delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
         store_versioned_at_request_id,
@@ -1266,18 +1257,6 @@ pub(crate) mod tests {
             &OTHER_CENTRAL_DEFAULT_ID.to_string(),
         )
         .await
-    }
-
-    impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-        RealCentralizedKms<PubS, PrivS>
-    {
-        pub(crate) fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
-        }
     }
 
     // Construct a storage for private keys
