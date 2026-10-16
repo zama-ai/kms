@@ -1,0 +1,14 @@
+timestamp	pod	workflow_node	node	zone	instance_type	nodepool
+2026-10-13T01:02:22Z	kms-core-1-core-1	-	ip-172-31-2-190.eu-west-1.compute.internal	eu-west-1a	-	-
+2026-10-13T01:02:22Z	kms-core-10-core-10	-	ip-172-31-40-59.eu-west-1.compute.internal	eu-west-1c	-	-
+2026-10-13T01:02:22Z	kms-core-11-core-11	-	ip-172-31-3-132.eu-west-1.compute.internal	eu-west-1a	-	-
+2026-10-13T01:02:22Z	kms-core-12-core-12	-	ip-172-31-1-201.eu-west-1.compute.internal	eu-west-1a	-	-
+2026-10-13T01:02:22Z	kms-core-13-core-13	-	ip-172-31-8-86.eu-west-1.compute.internal	eu-west-1a	-	-
+2026-10-13T01:02:22Z	kms-core-2-core-2	-	ip-172-31-30-53.eu-west-1.compute.internal	eu-west-1b	-	-
+2026-10-13T01:02:22Z	kms-core-3-core-3	-	ip-172-31-30-43.eu-west-1.compute.internal	eu-west-1b	-	-
+2026-10-13T01:02:22Z	kms-core-4-core-4	-	ip-172-31-22-139.eu-west-1.compute.internal	eu-west-1b	-	-
+2026-10-13T01:02:22Z	kms-core-5-core-5	-	ip-172-31-35-168.eu-west-1.compute.internal	eu-west-1c	-	-
+2026-10-13T01:02:22Z	kms-core-6-core-6	-	ip-172-31-30-206.eu-west-1.compute.internal	eu-west-1b	-	-
+2026-10-13T01:02:22Z	kms-core-7-core-7	-	ip-172-31-45-175.eu-west-1.compute.internal	eu-west-1c	-	-
+2026-10-13T01:02:22Z	kms-core-8-core-8	-	ip-172-31-37-5.eu-west-1.compute.internal	eu-west-1c	-	-
+2026-10-13T01:02:22Z	kms-core-9-core-9	-	ip-172-31-21-231.eu-west-1.compute.internal	eu-west-1b	-	-

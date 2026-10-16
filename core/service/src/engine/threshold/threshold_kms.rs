@@ -35,7 +35,7 @@ pub struct ThresholdKms<
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
     pub(crate) session_maker: ImmutableSessionMaker,
-    /// Bounds concurrent `bandwidth_benchmark` runs (the endpoint takes no rate-limiter permit).
+    /// Bounds concurrent `bandwidth_benchmark` runs.
     pub(crate) bandwidth_bench_limiter: Arc<Semaphore>,
     /// Caller-input bounds enforced by the `bandwidth_benchmark` endpoint.
     pub(crate) bandwidth_bench_config: BandwidthBenchmarkConfig,

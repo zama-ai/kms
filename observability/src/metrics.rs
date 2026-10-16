@@ -77,9 +77,7 @@ pub struct CoreMetrics {
     network_sender_tasks_gauge: IntGauge,
 
     // Internal system gauges
-    // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
-    rate_limiter_gauge: IntGauge, // Number tokens used in the rate limiter
-    active_session_gauge: IntGauge, // Number of active sessions
+    active_session_gauge: IntGauge,   // Number of active sessions
     inactive_session_gauge: IntGauge, // Number of inactive sessions
     completed_session_gauge: IntGauge,
     meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
@@ -507,15 +505,6 @@ impl CoreMetrics {
             .register(Box::new(network_sender_tasks_gauge.clone()))
             .expect("failed to register network sender tasks gauge");
 
-        let rate_limiter_gauge = IntGauge::with_opts(opts(
-            format!("{prefix}_rate_limiter_usage"),
-            "Rate limiter usage for the KMS",
-        ))
-        .expect("failed to create rate limiter gauge");
-        registry
-            .register(Box::new(rate_limiter_gauge.clone()))
-            .expect("failed to register rate limiter gauge");
-
         let fhe_key_cache_size_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_fhe_key_cache_size"),
             "Number of FHE key entries currently held in the in-memory crypto-material cache",
@@ -666,7 +655,6 @@ impl CoreMetrics {
             tokio_global_queue_depth_gauge,
             user_decrypt_background_tasks_gauge,
             network_sender_tasks_gauge,
-            rate_limiter_gauge,
             fhe_key_cache_size_gauge,
             active_session_gauge,
             inactive_session_gauge,
@@ -882,11 +870,6 @@ impl CoreMetrics {
     /// Record the current number of socat tasks into the gauge
     pub fn record_socat_tasks(&self, count: u64) {
         self.socat_task_gauge.set(count as i64);
-    }
-
-    /// Record the current rate limiter usage into the gauge
-    pub fn record_rate_limiter_usage(&self, count: u64) {
-        self.rate_limiter_gauge.set(count as i64);
     }
 
     /// Record the number of FHE key entries in the in-memory cache into the gauge
@@ -1234,7 +1217,6 @@ mod tests {
             "kms_payload_size_bytes",
             "kms_process_cpu_usage",
             "kms_process_memory_usage",
-            "kms_rate_limiter_usage",
             "kms_socat_file_descriptors",
             "kms_socat_tasks",
             "kms_tasks",

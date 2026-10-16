@@ -88,8 +88,6 @@ discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocess
 max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 2000
 
-
-
 [telemetry]
 tracing_service_name = "kms-threshold-1"
 tracing_endpoint = "http://jaeger:4317"
@@ -101,13 +99,3 @@ enable_sys_metrics = true
 max_queue_size = 8192
 max_export_batch_size = 2048
 scheduled_delay_ms = 500
-
-
-[rate_limiter_conf]
-bucket_size = 50000
-pub_decrypt = 1
-user_decrypt = 1
-crsgen = 100
-preproc = 25000
-keygen = 1000
-new_epoch = 1

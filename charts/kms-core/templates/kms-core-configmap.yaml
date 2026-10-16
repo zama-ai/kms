@@ -208,15 +208,6 @@ data:
     scheduled_delay_ms = 500
     export_timeout_ms = 5000
 
-    [rate_limiter_conf]
-    bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}
-    pub_decrypt = 1
-    user_decrypt = 1
-    crsgen = 100
-    preproc = 50000
-    keygen = 1000
-    new_epoch = 25
-
     [internal_config]
     num_rayon_threads = {{ .Values.kmsCore.thresholdMode.rayonNumThreads }}
     num_tokio_threads = {{ .Values.kmsCore.thresholdMode.tokioWorkerThreads }}

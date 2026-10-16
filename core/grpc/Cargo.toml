@@ -23,7 +23,6 @@ bc2wrap.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 cfg-if.workspace = true
 hashing.workspace = true
-hex.workspace = true
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive", "rc"] }
@@ -42,8 +41,13 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 tracing = { workspace = true, features = ["log"] }
-wasm-bindgen.workspace = true
 zeroize.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true

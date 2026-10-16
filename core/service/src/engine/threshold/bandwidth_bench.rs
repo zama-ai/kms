@@ -89,8 +89,7 @@ pub(crate) async fn run_bandwidth_benchmark(
     // non-retryable `InvalidArgument` errors take precedence, then held for the rest of the
     // handler so the heavy work below (session creation, per-session payload allocation, and the
     // per-peer send loop) cannot be multiplied by an unbounded number of in-flight requests.
-    // Reject rather than queue once the small pool is exhausted, mirroring how the other expensive
-    // endpoints surface back-pressure via the rate limiter.
+    // Reject requests once the pool is exhausted so callers retry after capacity becomes available.
     let _permit = bandwidth_bench_limiter.try_acquire_owned().map_err(|_| {
         Status::resource_exhausted(
             "too many concurrent bandwidth benchmark requests in flight; retry later",

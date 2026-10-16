@@ -11,7 +11,7 @@ use kms_0_16_0::backup::custodian::{
     Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_16_0::backup::{
-    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
+    custodian::{InternalCustodianSetupMessage, TransferableCustodianRecoveryOutput},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
         RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
@@ -109,20 +109,19 @@ use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
     ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
-    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
-    MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
+    InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
+    KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
+    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
-    UserDecSignedPayloadTest, VerfKeySetTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TransferableCustodianRecoveryOutputTest,
+    TypedPlaintextTest, UnifiedCipherTest, UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionTest, UserDecSignedPayloadTest, VerfKeySetTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_16_0::hash_versioned;
 use kms_0_16_0::cryptography::signcryption::SigncryptionPayload;
@@ -641,8 +640,8 @@ const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
     };
 
 // KMS test
-const INTERNAL_CUS_REC_OUT_TEST: InternalCustodianRecoveryOutputTest =
-    InternalCustodianRecoveryOutputTest {
+const INTERNAL_CUS_REC_OUT_TEST: TransferableCustodianRecoveryOutputTest =
+    TransferableCustodianRecoveryOutputTest {
         test_filename: Cow::Borrowed("internal_custodian_recovery_output"),
         state: 43,
         mpc_context_id: [7u8; 32],
@@ -1786,12 +1785,12 @@ impl KmsV0_16_0 {
             payload: buf.to_vec(),
             pke_type: BACKUP_PKE_SCHEME,
         };
-        let icro = InternalCustodianRecoveryOutput {
+        let icro = TransferableCustodianRecoveryOutput {
             signcryption,
             custodian_role: Role::indexed_from_one(2),
         };
         store_versioned_test!(&icro, dir, &INTERNAL_CUS_REC_OUT_TEST.test_filename);
-        TestMetadataKMS::InternalCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
+        TestMetadataKMS::TransferableCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
     }
 
     fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
