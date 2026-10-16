@@ -1,5 +1,7 @@
 use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use std::{
     collections::HashMap,
     mem,
@@ -23,6 +25,7 @@ use crate::{
 use algebra::{
     error_correction::ReconstructionHints,
     sharing::{
+        optimistic::reconstruct_optimistic,
         shamir::{
             ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
             reconstruct_w_errors_sync,
@@ -435,7 +438,8 @@ impl RobustOpen for SecureRobustOpen {
 }
 
 type JobResultType<R, Z> = (R, anyhow::Result<Vec<Z>>);
-type ReconsFunc<Z> = fn(
+/// A per-sharing reconstruction function: [`reconstruct_w_errors_sync`] or [`reconstruct_w_errors_async`].
+pub type ReconsFunc<Z> = fn(
     num_parties: usize,
     degree: usize,
     threshold: usize,
@@ -443,6 +447,71 @@ type ReconsFunc<Z> = fn(
     sharing: &ShamirSharings<Z>,
     hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
+
+/// Reconstructs a batch of sharings with the owner set of `hints`, on Rayon, in tasks of at least `par_chunk`
+/// sharings (`with_min_len`, the loop the reconstruction had before the optimistic path). Each sharing takes
+/// the optimistic path first — accepted if all its shares agree with the polynomial interpolated from its
+/// first `degree + 1` shares, see [`reconstruct_optimistic`] — and goes to `fallback`, the error-correcting
+/// decoder, otherwise, in the same task. `optimistic_min_shares` is the number of shares a sharing must have
+/// for the optimistic result to be accepted, i.e. the bar the fallback applies.
+///
+/// The result has one entry per sharing, `None` where `fallback` returned `None` (not reconstructible with
+/// the shares at hand).
+///
+/// For sharings that are not at hand but built from the parties' value vectors, as the d-values of triple
+/// generation, [`reconstruct_batch_with`] builds each one right before reconstructing it.
+pub fn reconstruct_batch<Z: ErrorCorrect, F>(
+    sharings: &[ShamirSharings<Z>],
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Vec<Option<Z>>
+where
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    sharings
+        .par_iter()
+        .with_min_len(par_chunk.max(1))
+        .map(|sharing| reconstruct_one(sharing, hints, optimistic_min_shares, &fallback))
+        .collect()
+}
+
+/// [`reconstruct_batch`] for `len` sharings built on demand: sharing `i` is `build(i)`, built by the Rayon
+/// task that reconstructs it and dropped right after, so that at most one built sharing per worker exists at
+/// a time, however large the batch: the d-values of triple generation are reconstructed straight out of the
+/// per-party vectors of the broadcast.
+pub fn reconstruct_batch_with<Z: ErrorCorrect, B, F>(
+    len: usize,
+    build: B,
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Vec<Option<Z>>
+where
+    B: Fn(usize) -> ShamirSharings<Z> + Sync,
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    (0..len)
+        .into_par_iter()
+        .with_min_len(par_chunk.max(1))
+        .map(|i| reconstruct_one(&build(i), hints, optimistic_min_shares, &fallback))
+        .collect()
+}
+
+/// One sharing of [`reconstruct_batch`]: the optimistic path, then `fallback` if it declined.
+fn reconstruct_one<Z: ErrorCorrect, F>(
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    fallback: &F,
+) -> Option<Z>
+where
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    reconstruct_optimistic(sharing, hints, optimistic_min_shares).or_else(|| fallback(sharing))
+}
 
 /// Helper function of robust reconstructions which collects the shares and tries to reconstruct.
 ///
@@ -471,15 +540,16 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     // Instead of processing one party at a time, collect multiple responses
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
 
-    // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode needs degree + 2t.
-    // Same for the robust async mode. The weaker async branch however can reconstruct from as few as degree + t shares.
+    // Select the decoder and the inclusive heard-from minimum. Every optimistic result requires
+    // `degree + t + 1` actual shares, which ensures that at least `degree + 1` shares are honest.
     let t = threshold as usize;
-    let (reconstruct_fn, attempt_bound): (ReconsFunc<Z>, usize) = match network_mode {
-        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t),
+    let min_actual_shares = degree + t + 1;
+    let (reconstruct_fn, min_heard_from): (ReconsFunc<Z>, usize) = match network_mode {
+        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t + 1),
         NetworkMode::Async if degree + 3 * t < num_parties => {
-            (reconstruct_w_errors_async, degree + 2 * t)
+            (reconstruct_w_errors_async, degree + 2 * t + 1)
         }
-        NetworkMode::Async => (reconstruct_w_errors_async, degree + t),
+        NetworkMode::Async => (reconstruct_w_errors_async, degree + t + 1),
     };
 
     let mut collected_shares = 0;
@@ -525,21 +595,29 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         }
 
         // Don't spawn the batched par-iter until `reconstruct_w_errors` could actually succeed: it
-        // returns None for every value while `num_heard_from <= attempt_bound`. `num_heard_from`
+        // returns None for every value while `num_heard_from < min_heard_from`. `num_heard_from`
         // counts everyone we've heard from — own + received good shares + known bots — exactly as the
         // reconstruct functions do, so the bar tracks them through party drops (num_bots grows as
-        // receive jobs time out / return garbage). Once over the bar, attempt the first time, again on
+        // receive jobs time out / return garbage). At the bar, attempt the first time, again on
         // each newly received share (an earlier attempt may not have corrected the errors then
         // present), and a final time once no jobs remain.
         let num_heard_from = initial_shares + collected_shares + num_bots;
-        let should_attempt_reconstruction = num_heard_from > attempt_bound
-            && (!has_attempted  // First time we're over the bar
+        let should_attempt_reconstruction = num_heard_from >= min_heard_from
+            && (!has_attempted  // First time at the minimum
                 || collected_shares > last_reconstruction_attempt  // Each newly received share
                 || jobs.is_empty()); // Final attempt when all responses collected
 
         if should_attempt_reconstruction {
             has_attempted = true;
             last_reconstruction_attempt = collected_shares;
+            // The per-sharing functions decline to decode once more than `threshold` parties are known
+            // bots (their error budget would underflow); the optimistic path then stays out too, so that
+            // both paths accept under exactly the same conditions.
+            let min_actual_shares = if num_bots > t {
+                usize::MAX
+            } else {
+                min_actual_shares
+            };
 
             // Spawn a task on rayon.
             let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
@@ -560,10 +638,12 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
                 // other tasks.
-                let result: Option<Vec<_>> = locked_sharings
-                    .par_iter()
-                    .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
-                    .map(|sharing| {
+                let result: Option<Vec<_>> = reconstruct_batch(
+                    &locked_sharings,
+                    &hints,
+                    min_actual_shares,
+                    *ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
+                    |sharing| {
                         reconstruct_fn(
                             num_parties,
                             degree,
@@ -573,8 +653,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                             &hints,
                         )
                         .unwrap_or_default()
-                    })
-                    .collect();
+                    },
+                )
+                .into_iter()
+                .collect();
                 Ok(result)
             })
             .await??;
@@ -1212,5 +1294,78 @@ pub(crate) mod test {
             MaliciousRobustOpenLie::default(),
         )
         .await;
+    }
+
+    /// The two forms of the batch reconstruction agree with each other and with the secrets, on the calling
+    /// thread and on Rayon, across chunk boundaries and whether a sharing takes the optimistic path, is
+    /// decoded, or cannot be reconstructed.
+    #[test]
+    fn test_reconstruct_batch_with_matches_reconstruct_batch() {
+        use super::{reconstruct_batch, reconstruct_batch_with};
+        use algebra::error_correction::ReconstructionHints;
+        use algebra::sharing::{shamir::RevealOp, share::Share};
+
+        type Z = ResiduePolyF4Z128;
+        let mut rng = AesRng::seed_from_u64(3);
+        let (num_parties, threshold) = (7, 2);
+        for degree in [threshold, 2 * threshold] {
+            let max_errors = (num_parties - (degree + 1)) / 2;
+            for (len, par_chunk) in [(1, 4), (4, 4), (5, 4), (13, 4), (16, 4), (6, 1), (9, 100)] {
+                let secrets: Vec<Z> = (0..len).map(|_| Z::sample(&mut rng)).collect();
+                let mut sharings: Vec<ShamirSharings<Z>> = secrets
+                    .iter()
+                    .map(|secret| {
+                        ShamirSharings::share(&mut rng, *secret, num_parties, degree).unwrap()
+                    })
+                    .collect();
+                // Sharing i has i % 3 wrong shares: none (optimistic path), one (decoded) or two (decoded
+                // at degree t, beyond the decoder's capacity at degree 2t).
+                for (i, sharing) in sharings.iter_mut().enumerate() {
+                    for wrong in 0..i % 3 {
+                        let share = &mut sharing.shares[(i + wrong) % num_parties];
+                        let mut value = Z::sample(&mut rng);
+                        while value == share.value() {
+                            value = Z::sample(&mut rng);
+                        }
+                        *share = Share::new(share.owner(), value);
+                    }
+                }
+                let hints = ReconstructionHints::new(&sharings[0], degree).unwrap();
+                let fallback = |sharing: &ShamirSharings<Z>| {
+                    sharing
+                        .error_reconstruct_with_hints(degree, max_errors, &hints)
+                        .ok()
+                };
+                let expected: Vec<Option<Z>> = secrets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, secret)| (i % 3 <= max_errors).then_some(*secret))
+                    .collect();
+                assert_eq!(
+                    reconstruct_batch(&sharings, &hints, degree + 1, par_chunk, fallback),
+                    expected,
+                    "degree {degree}, {len} sharings in chunks of {par_chunk}"
+                );
+                let party_vectors: Vec<(Role, Vec<Z>)> = (0..num_parties)
+                    .map(|p| {
+                        let role = sharings[0].shares[p].owner();
+                        (role, sharings.iter().map(|s| s.shares[p].value()).collect())
+                    })
+                    .collect();
+                let build = |i: usize| {
+                    ShamirSharings::create(
+                        party_vectors
+                            .iter()
+                            .map(|(role, values)| Share::new(*role, values[i]))
+                            .collect(),
+                    )
+                };
+                assert_eq!(
+                    reconstruct_batch_with(len, build, &hints, degree + 1, par_chunk, fallback),
+                    expected,
+                    "degree {degree}, {len} built sharings in chunks of {par_chunk}"
+                );
+            }
+        }
     }
 }
