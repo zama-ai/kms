@@ -19,12 +19,13 @@ use tracing::Instrument;
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
-use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
+use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
 };
+use crate::util::key_setup::local_material::async_generate_crs;
 use crate::util::meta_store::{
     MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
     update_err_req_in_meta_store,

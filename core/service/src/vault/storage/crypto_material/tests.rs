@@ -5,6 +5,7 @@ use crate::{
     },
     dummy_domain,
     engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
+    util::key_setup::local_material::async_generate_crs,
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
         Vault, VaultDataType,
@@ -39,9 +40,7 @@ use crate::{
     consts::TEST_PARAM,
     engine::{
         base::KmsFheKeyHandles,
-        centralized::central_kms::{
-            async_generate_crs, generate_fhe_keys, generate_uncompressed_fhe_keys,
-        },
+        centralized::central_kms::{generate_fhe_keys, generate_uncompressed_fhe_keys},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,

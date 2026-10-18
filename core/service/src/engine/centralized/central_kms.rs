@@ -30,6 +30,7 @@ use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
+use crate::util::key_setup::local_material::generate_client_fhe_key;
 use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{
     StorageExt, read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
@@ -56,7 +57,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics::METRICS;
-use rand::{CryptoRng, Rng, RngCore};
+use rand::{CryptoRng, RngCore};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,18 +67,15 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::xof_key_set::CompressedXofKeySet;
-use tfhe::zk::CompactPkeCrs;
 use tfhe::{
-    ClientKey, FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint80, FheUint128,
+    FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint80, FheUint128,
     FheUint160, FheUint256, FheUint512, FheUint1024, FheUint2048,
 };
 use tfhe::{FheTypes, ServerKey};
 use threshold_execution::{
     keyset_config::{CompressedKeyConfig, StandardKeySetConfig},
     tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
-    zk::ceremony::public_parameters_by_trusted_setup,
 };
-use threshold_types::rng::AesRng;
 
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -205,38 +203,6 @@ where
             anyhow::bail!("Compression private key is missing");
         }
     }
-}
-
-#[expect(clippy::too_many_arguments)]
-pub(crate) async fn async_generate_crs(
-    sk: &NodeSigningIdentity,
-    signing_schemes: &[SigningSchemeType],
-    params: DKGParams,
-    max_num_bits: Option<u32>,
-    eip712_domain: alloy_sol_types::Eip712Domain,
-    extra_data: Vec<u8>,
-    req_id: &RequestId,
-    rng: AesRng,
-) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
-    let (send, recv) = tokio::sync::oneshot::channel();
-    let sk_copy = sk.to_owned();
-    let req_id_copy = req_id.to_owned();
-    let signing_schemes = signing_schemes.to_vec();
-
-    rayon::spawn_fifo(move || {
-        let out = gen_centralized_crs(
-            &sk_copy,
-            &signing_schemes,
-            &params,
-            max_num_bits,
-            &eip712_domain,
-            extra_data,
-            &req_id_copy,
-            rng,
-        );
-        let _ = send.send(out);
-    });
-    recv.await?
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -370,51 +336,6 @@ pub fn generate_uncompressed_fhe_keys(
             "FHE key generation panicked!".to_string(),
         )),
     }
-}
-
-pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<Seed>) -> ClientKey {
-    use tfhe::prelude::Tagged;
-
-    let config = params.to_tfhe_config();
-    let mut client_key = match seed {
-        Some(seed) => ClientKey::generate_with_seed(config, seed),
-        None => ClientKey::generate(config),
-    };
-    *client_key.tag_mut() = tag;
-    client_key
-}
-
-/// compute the CRS in the centralized KMS.
-#[expect(clippy::too_many_arguments)]
-pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
-    sk: &NodeSigningIdentity,
-    signing_schemes: &[SigningSchemeType],
-    params: &DKGParams,
-    max_num_bits: Option<u32>,
-    eip712_domain: &alloy_sol_types::Eip712Domain,
-    extra_data: Vec<u8>,
-    req_id: &RequestId,
-    mut rng: R,
-) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
-    let sid = req_id.derive_session_id()?;
-    let internal_pp = public_parameters_by_trusted_setup(
-        &params.compact_pk_enc_params(),
-        max_num_bits.map(|x| x as usize),
-        sid,
-        &mut rng,
-    )?;
-    let pke_params = params.compact_pk_enc_params();
-    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
-    let crs_info = crate::engine::base::compute_info_crs(
-        sk,
-        signing_schemes,
-        &crate::engine::base::DSEP_PUBDATA_CRS,
-        req_id,
-        &pp,
-        eip712_domain,
-        extra_data,
-    )?;
-    Ok((pp, crs_info))
 }
 
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
@@ -1936,7 +1857,7 @@ pub(crate) mod tests {
     fn sanity_check_sns_compression_test_params() {
         use tfhe::prelude::{FheDecrypt, FheEncrypt, SquashNoise};
         let params = TEST_PARAM;
-        let cks = crate::engine::centralized::central_kms::generate_client_fhe_key(
+        let cks = crate::util::key_setup::local_material::generate_client_fhe_key(
             params,
             tfhe::Tag::default(),
             None,

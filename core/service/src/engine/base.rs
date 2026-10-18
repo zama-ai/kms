@@ -1849,11 +1849,12 @@ pub(crate) mod tests {
                 compute_preprocessing_signatures, compute_public_decryption_message,
                 hash_versioned,
             },
-            centralized::central_kms::{
-                gen_centralized_crs, generate_client_fhe_key, generate_uncompressed_fhe_keys,
-            },
+            centralized::central_kms::generate_uncompressed_fhe_keys,
         },
-        util::key_setup::FhePublicKey,
+        util::key_setup::{
+            FhePublicKey,
+            local_material::{gen_centralized_crs, generate_client_fhe_key},
+        },
     };
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::PublicDecryptionResponsePayload;

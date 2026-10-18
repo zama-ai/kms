@@ -9,7 +9,8 @@ cfg_if::cfg_if! {
             CrsGenMetadata,
         };
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-        use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
+        use crate::engine::centralized::central_kms::generate_fhe_keys;
+        use crate::util::key_setup::local_material::gen_centralized_crs;
         use crate::engine::threshold::service::epoch_manager::EpochData;
         use crate::engine::threshold::service::session::PRSSSetupCombined;
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
@@ -37,6 +38,8 @@ cfg_if::cfg_if! {
         use kms_grpc::identifiers::ContextId;
     }
 }
+
+pub mod local_material;
 
 use crate::anyhow_error_and_log;
 use crate::client::client_non_wasm::ClientDataType;
@@ -1742,7 +1745,7 @@ mod tests {
         read_versioned_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
     };
     use crate::{
-        consts::DEFAULT_PARAM, dummy_domain, engine::centralized::central_kms::gen_centralized_crs,
+        consts::DEFAULT_PARAM, dummy_domain, util::key_setup::local_material::gen_centralized_crs,
     };
     use hashing::DomainSep;
     use kms_grpc::RequestId;

@@ -53,7 +53,7 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
+        use crate::{engine::threshold::traits::InsecureCrsGenerator, util::key_setup::local_material::async_generate_crs};
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }

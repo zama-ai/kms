@@ -9,13 +9,11 @@ use kms_grpc::kms::v1::CiphertextFormat;
 use kms_lib::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::signatures::SigningSchemeType,
-    engine::{
-        base::{
-            deserialize_to_low_level,
-            pdec_bench::{SignInput, SignStage},
-        },
-        centralized::central_kms::generate_client_fhe_key,
+    engine::base::{
+        deserialize_to_low_level,
+        pdec_bench::{SignInput, SignStage},
     },
+    util::key_setup::local_material::generate_client_fhe_key,
 };
 use std::time::Duration;
 use tfhe::{
