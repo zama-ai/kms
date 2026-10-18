@@ -57,7 +57,7 @@ ci/scripts/
 ./deploy.sh \
   --target [kind-local|kind-ci|aws-ci|aws-perf] \
   --namespace <namespace> \
-  --deployment-type [threshold|centralized|thresholdWithEnclave|centralizedWithEnclave] \
+  --deployment-type [threshold|thresholdWithEnclave] \
   --tag <image-tag> \
   --num-parties <count> \
   --kms-chart-version <version> \
@@ -121,6 +121,7 @@ The build process will:
 **Common utilities and helper functions**
 - `log_info()`, `log_warn()`, `log_error()` - Logging functions
 - `parse_args()` - Command-line argument parsing
+- `validate_deployment_type()` - Rejects deployment types other than `threshold` and `thresholdWithEnclave`
 - `sed_inplace()` - Cross-platform file editing
 - Interactive resource configuration (local dev)
 - Path suffix determination
@@ -146,7 +147,6 @@ The build process will:
 **KMS Core service deployment**
 - `deploy_kms()` - Main KMS deployment orchestrator
 - `deploy_threshold_mode()` - Multi-party threshold deployment
-- `deploy_centralized_mode()` - Single-party centralized deployment
 - `generate_helm_overrides()` - Dynamic Helm values generation
 - `generate_peers_config()` - Threshold peer configuration
 - `deploy_init_job()` - Initialization job deployment

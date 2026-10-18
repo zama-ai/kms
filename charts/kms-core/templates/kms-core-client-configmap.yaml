@@ -26,25 +26,13 @@ data:
     ########################################################################
     # Config for a threshold deployment of n=4 cores with threshold t=1
     # The type of the KMS ("centralized" or "threshold")
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     kms_type = "threshold"
-    {{- else }}
-    kms_type = "centralized"
-    {{- end }}
 
     # The minimum number of matching responses required to have an honest majority
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_majority=${NUM_MAJORITY}
-    {{- else }}
-    num_majority=1
-    {{- end }}
 
     # The minimum number of responses required to reconstruct a value (e.g. in user decryption)
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_reconstruct=${NUM_RECONSTRUCT}
-    {{- else }}
-    num_reconstruct=1
-    {{- end }}
 
     # Decryption mode used in user decryption reconstruction.
     # Options are NoiseFloodSmall and BitDecSmall.
@@ -56,8 +44,7 @@ data:
     fhe_params=${FHE_PARAMETER:=Test} # Large, secure parameters
 
     # List of connection info to each of the cores
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
-      {{- if .Values.kmsCore.thresholdMode.peersList }}
+    {{ if .Values.kmsCore.thresholdMode.peersList }}
         {{ range .Values.kmsCore.thresholdMode.peersList }}
 
     [[cores]]
@@ -83,16 +70,6 @@ data:
     object_folder = "PUB-p{{ int $i }}"
       {{ end }}
       {{- end }}
-
-    {{- else }}
-
-    [[cores]]
-    party_id = 1
-    address = "http://{{- printf "%s" $kmsCoreName }}:{{- $.Values.kmsCore.ports.client -}}"
-    s3_endpoint = "${S3_ENDPOINT}"
-    object_folder = "PUB"
-
-    {{- end }}
     EOF
 
     # Keep the pod running
@@ -117,25 +94,13 @@ data:
     ########################################################################
     # Config for a threshold deployment of n=4 cores with threshold t=1
     # The type of the KMS ("centralized" or "threshold")
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     kms_type = "threshold"
-    {{- else }}
-    kms_type = "centralized"
-    {{- end }}
 
     # The minimum number of matching responses required to have an honest majority
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_majority=${NUM_MAJORITY}
-    {{- else }}
-    num_majority=1
-    {{- end }}
 
     # The minimum number of responses required to reconstruct a value (e.g. in user decryption)
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_reconstruct=${NUM_RECONSTRUCT}
-    {{- else }}
-    num_reconstruct=1
-    {{- end }}
 
     # Decryption mode used in user decryption reconstruction.
     # Options are NoiseFloodSmall and BitDecSmall.
@@ -147,8 +112,7 @@ data:
     fhe_params=${FHE_PARAMETER:=Test} # Large, secure parameters
 
     # List of connection info to each of the cores
-    {{ if .Values.kmsCore.thresholdMode.enabled -}}
-      {{- if .Values.kmsCore.thresholdMode.peersList }}
+    {{ if .Values.kmsCore.thresholdMode.peersList }}
         {{ range .Values.kmsCore.thresholdMode.peersList }}
 
     [[cores]]
@@ -174,16 +138,6 @@ data:
     object_folder = "PUB-p{{ int $i }}"
         {{ end }}
       {{- end }}
-
-    {{- else }}
-
-    [[cores]]
-    party_id = 1
-    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
-    s3_endpoint = "${S3_ENDPOINT}"
-    object_folder = "PUB"
-
-    {{- end }}
     EOF
 
     {{- range .Values.kmsCoreClientTesting.shell_command }}

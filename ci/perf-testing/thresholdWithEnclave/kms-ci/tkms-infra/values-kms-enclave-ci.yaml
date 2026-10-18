@@ -1,6 +1,4 @@
 # Deployment Type Options:
-# - centralized: Deploy only public vault with IRSA.
-# - centralizedWithEnclave: Deploy public vault with IRSA and enclave enabled.
 # - threshold: Deploy public vault without IRSA and KMS parties without enclave.
 # - thresholdWithEnclave: Deploy public vault without IRSA and KMS parties with enclave enabled.
 deploymentType: thresholdWithEnclave

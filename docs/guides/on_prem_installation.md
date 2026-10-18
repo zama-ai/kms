@@ -93,6 +93,7 @@ kmsCore:
     tag: latest
   thresholdMode:
     enabled: true
+    thresholdValue: 1
     initializationScript:
       enabled: true
     peersList:
@@ -153,32 +154,21 @@ helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/helm-charts/kms-servic
 
 ### Threshold Mode
 
-To enable threshold mode, add the following to your values file:
+The chart deploys threshold mode only.
+The number of parties must be `3 * thresholdValue + 1`.
+Rendering fails if you set `kmsCore.thresholdMode.enabled` to `false`.
 
 ```yaml
 kmsCore:
   thresholdMode:
-    enabled: true
-    # Number of peers (must match kmsPeers.count)
-    dec_capacity: 10000
-    min_dec_cache: 6000
-    num_sessions_preproc: 2 # Number of core of vCPU
+    # 1 for 4 parties, 4 for 13 parties
+    thresholdValue: 1
+    decCapacity: 10000
+    minDecCache: 6000
+    numSessionsPreproc: 2 # Number of vCPUs
 
 kmsPeers:
   count: 4  # Number of KMS peers for threshold setup
-```
-
-### Centralized Mode
-
-To enable centralized mode, add the following to your values file:
-
-```yaml
-kmsCore:
-  thresholdMode:
-    enabled: false
-
-kmsPeers:
-  count: 1  # For centralized setup keep 1 peer
 ```
 
 ### Storage Configuration
@@ -259,6 +249,7 @@ kmsCore:
     tag: latest
   thresholdMode:
     enabled: true
+    thresholdValue: 1
     initializationScript:
       enabled: true
     peersList:

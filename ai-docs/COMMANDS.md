@@ -165,25 +165,17 @@ Build compose images:
 ```
 make build-compose-base
 make build-compose-threshold
-make build-compose-centralized
 ```
 
-`make build-compose-threshold` and `make build-compose-centralized` build a
-shared `kms-binaries-insecure:latest-dev` image first. They pass this image to
-the package Dockerfile through `KMS_BINARIES_IMAGE` to reuse the Rust build.
+`make build-compose-threshold` builds a shared
+`kms-binaries-insecure:latest-dev` image first. It passes this image to the
+package Dockerfile through `KMS_BINARIES_IMAGE` to reuse the Rust build.
 
 Start / stop a 4-party threshold cluster (detached, waits for readiness; `stop` removes volumes and orphans):
 
 ```
 make start-compose-threshold
 make stop-compose-threshold
-```
-
-Start / stop the centralized single-node variant:
-
-```
-make start-compose-centralized
-make stop-compose-centralized
 ```
 
 Threshold cluster with telemetry sidecars (Jaeger / Prometheus):

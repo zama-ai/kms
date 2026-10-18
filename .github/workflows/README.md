@@ -286,13 +286,11 @@ Matrix: `check` (lint/format), `threshold` (4-party).
 
 ### `pr-preview-deploy.yml`
 
-Called by `build-and-test.yml` when a PR has both pre-built images and a `pr-preview-*` label.
-
-Deployment types:
+Called by `build-and-test.yml` when a PR has both pre-built images and one of these deployment-type labels:
 - `pr-preview-threshold` — 4-party threshold
-- `pr-preview-centralized` — single-party
 - `pr-preview-thresholdWithEnclave` — threshold + Nitro Enclave
-- `pr-preview-centralizedWithEnclave` — centralized + Nitro Enclave
+
+A `pr-preview-centralized*` label fails the label check. Other `pr-preview-*` labels deploy nothing.
 
 Namespace: `kms-ci-{actor}-{pr_number}`.
 
@@ -368,7 +366,7 @@ graph TD
 
 ## Best Practices
 
-To trigger a PR preview, add a `pr-preview-{type}` label. Choose `threshold` (4-party, fastest, most common) or `centralized` (1-party, fast smoke); `*WithEnclave` variants are slower (Nitro provisioning).
+To trigger a PR preview, add a `pr-preview-{type}` label. Choose `threshold` (4-party, fastest, most common) or `thresholdWithEnclave` (slower, Nitro provisioning).
 
 To ship kind-test metrics to Grafana Cloud, add the `kind-metrics` label and then push a new commit (see "Opt-in kind metrics" above — re-runs replay the pre-label event payload).
 

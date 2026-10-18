@@ -1,3 +1,4 @@
+{{- include "kmsValidateThresholdMode" . }}
 {{- if .Values.kmsCore.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (default 1 .Values.kmsPeers.id | int) (.Values.kmsPeers.count | add1 | int) 1  }}
@@ -70,7 +71,6 @@ spec:
               cat kms-gen-keys.toml
               echo "### END - kms-gen-keys.toml ###"
           env:
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -80,7 +80,6 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
-            {{- end }}
             {{- end }}
             - name: NO_COLOR
               value: "true"
@@ -214,9 +213,7 @@ spec:
         {{- $ingressPorts := list .Values.kmsCore.ports.metrics .Values.kmsCore.ports.client }}
         {{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int }}
         {{- $workerThreads := include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
-        {{- if .Values.kmsCore.thresholdMode.enabled }}
         {{- $ingressPorts = append $ingressPorts .Values.kmsCore.ports.peer }}
-        {{- end }}
         - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" $ingressPorts "queueCount" $queueCount "workerThreads" $workerThreads) | indent 10 | trim }}
           volumeMounts:
             - name: tun-device
@@ -242,7 +239,6 @@ spec:
               echo "generating keys"
               kms-gen-keys --config-file kms-gen-keys.toml
           env:
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -252,7 +248,6 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
-            {{- end }}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"
@@ -410,7 +405,6 @@ spec:
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -420,7 +414,6 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
-            {{- end }}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"
@@ -541,10 +534,8 @@ spec:
           ports:
             - containerPort: {{ .Values.kmsCore.ports.client }}
               protocol: TCP
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
             - containerPort: {{ .Values.kmsCore.ports.peer }}
               protocol: TCP
-            {{- end }}
             - containerPort: {{ .Values.kmsCore.ports.metrics }}
               protocol: TCP
           resources:

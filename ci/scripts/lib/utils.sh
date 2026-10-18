@@ -109,37 +109,22 @@ setup_port_forwarding() {
     #-------------------------------------------------------------------------
     # Forward KMS Core services
     #-------------------------------------------------------------------------
-    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-        # Threshold: Forward each party on separate ports
-        log_info "  Threshold parties:"
-        for i in $(seq 1 "${NUM_PARTIES}"); do
-            local port=$((50000 + i * 100))
-            local svc_name="kms-core-${i}-core-${i}"
+    log_info "  Threshold parties:"
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local port=$((50000 + i * 100))
+        local svc_name="kms-core-${i}-core-${i}"
 
-            log_info "    - Party ${i}: localhost:${port} -> ${svc_name}:50100"
-            if [[ "${DEBUG:-false}" == "true" ]]; then
-                kubectl port-forward -n "${NAMESPACE}" \
-                    "svc/${svc_name}" \
-                    "${port}:50100" > "${log_dir}/kms-core-party-${i}.log" 2>&1 &
-            else
-                kubectl port-forward -n "${NAMESPACE}" \
-                    "svc/${svc_name}" \
-                    "${port}:50100" > /dev/null 2>&1 &
-            fi
-        done
-    else
-        # Centralized: Single service on standard port
-        log_info "  - Centralized: localhost:50100 -> kms-core-core:50100"
+        log_info "    - Party ${i}: localhost:${port} -> ${svc_name}:50100"
         if [[ "${DEBUG:-false}" == "true" ]]; then
             kubectl port-forward -n "${NAMESPACE}" \
-                "svc/kms-core-core" \
-                "50100:50100" > "${log_dir}/kms-core-centralized.log" 2>&1 &
+                "svc/${svc_name}" \
+                "${port}:50100" > "${log_dir}/kms-core-party-${i}.log" 2>&1 &
         else
             kubectl port-forward -n "${NAMESPACE}" \
-                "svc/kms-core-core" \
-                "50100:50100" > /dev/null 2>&1 &
+                "svc/${svc_name}" \
+                "${port}:50100" > /dev/null 2>&1 &
         fi
-    fi
+    done
 
     log_info "Port forwarding established (running in background)"
     if [[ "${DEBUG:-false}" == "true" ]]; then
@@ -188,45 +173,22 @@ collect_logs() {
     log_info "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
     mkdir -p logs
 
-    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-        #---------------------------------------------------------------------
-        # Threshold mode: Collect logs from all parties
-        #---------------------------------------------------------------------
-        log_info "Collecting logs from ${NUM_PARTIES} KMS Core parties..."
-        local release_prefix="${HELM_RELEASE_PREFIX:-kms-core}"
+    log_info "Collecting logs from ${NUM_PARTIES} KMS Core parties..."
+    local release_prefix="${HELM_RELEASE_PREFIX:-kms-core}"
 
-        for i in $(seq 1 "${NUM_PARTIES}"); do
-            # The chart labels pods app.kubernetes.io/name=<release>-core.
-            local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-                -l "app.kubernetes.io/name=${release_prefix}-${i}-core" \
-                -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
-
-            if [[ -n "${POD_NAME}" ]]; then
-                log_info "  Collecting logs from party ${i}: ${POD_NAME}"
-                kms_pod_logs "${POD_NAME}" > "logs/${POD_NAME}.log"
-            else
-                log_warn "  No pod found for party ${i}"
-            fi
-        done
-
-        log_info "Logs saved to ./logs/"
-    else
-        #---------------------------------------------------------------------
-        # Centralized mode: Single pod
-        #---------------------------------------------------------------------
-        log_info "Collecting logs from centralized KMS Core..."
-
-        # The centralized deploy always uses the release name kms-core.
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        # The chart labels pods app.kubernetes.io/name=<release>-core.
         local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-            -l "app.kubernetes.io/name=kms-core-core" \
+            -l "app.kubernetes.io/name=${release_prefix}-${i}-core" \
             -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
         if [[ -n "${POD_NAME}" ]]; then
-             log_info "  Collecting logs: ${POD_NAME}"
-             kms_pod_logs "${POD_NAME}" > "logs/${POD_NAME}.log"
-             log_info "Log saved to ./logs/${POD_NAME}.log"
+            log_info "  Collecting logs from party ${i}: ${POD_NAME}"
+            kms_pod_logs "${POD_NAME}" > "logs/${POD_NAME}.log"
         else
-             log_warn "  No centralized pod found"
+            log_warn "  No pod found for party ${i}"
         fi
-    fi
+    done
+
+    log_info "Logs saved to ./logs/"
 }

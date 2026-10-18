@@ -25,7 +25,7 @@ concurrency:
   group: >-
     build-and-test-${{ github.event.pull_request.head.repo.full_name }}-${{ github.head_ref || github.ref_name }}-${{
       github.event.action != 'labeled' && 'ci' ||
-      github.event.action == 'labeled' && (startsWith(github.event.label.name, 'pr-preview-') || github.event.label.name == 'docker') && 'ci' ||
+      github.event.action == 'labeled' && (github.event.label.name == 'pr-preview-threshold' || github.event.label.name == 'pr-preview-thresholdWithEnclave' || github.event.label.name == 'docker') && 'ci' ||
       'noise'
     }}
   cancel-in-progress: true
@@ -42,7 +42,7 @@ jobs:
         github.event.action == 'opened' ||
         github.event.action == 'synchronize' ||
         github.event.action == 'reopened' ||
-        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-')) ||
+        (github.event.action == 'labeled' && (github.event.label.name == 'pr-preview-threshold' || github.event.label.name == 'pr-preview-thresholdWithEnclave')) ||
         (github.event.action == 'labeled' && github.event.label.name == 'docker')
       )
     permissions:
@@ -107,7 +107,7 @@ jobs:
         github.event.action == 'opened' ||
         github.event.action == 'synchronize' ||
         github.event.action == 'reopened' ||
-        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-'))
+        (github.event.action == 'labeled' && (github.event.label.name == 'pr-preview-threshold' || github.event.label.name == 'pr-preview-thresholdWithEnclave'))
       )
     outputs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
@@ -130,12 +130,19 @@ jobs:
         run: |
           echo "PR labels: $PR_LABELS"
 
+          # KMS deploys in threshold mode only
+          if echo "$PR_LABELS" | jq -e '.[] | select(startswith("pr-preview-centralized"))' > /dev/null; then
+            echo "::error::pr-preview-centralized* labels are not supported: use pr-preview-threshold or pr-preview-thresholdWithEnclave"
+            exit 1
+          fi
+
           # Check if any pr-preview label exists
-          if echo "$PR_LABELS" | jq -e '.[] | select(startswith("pr-preview-"))' > /dev/null; then
+          SUPPORTED='select(. == "pr-preview-threshold" or . == "pr-preview-thresholdWithEnclave")'
+          if echo "$PR_LABELS" | jq -e ".[] | ${SUPPORTED}" > /dev/null; then
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
             # Extract deployment type from label (e.g., pr-preview-threshold -> threshold)
-            DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/pr-preview-//')
+            DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r ".[] | ${SUPPORTED}" | head -n 1 | sed 's/pr-preview-//')
             echo "deployment_type=${DEPLOYMENT_TYPE}" >> "$GITHUB_OUTPUT"
             echo "Found deployment type: ${DEPLOYMENT_TYPE}"
           else

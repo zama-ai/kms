@@ -237,7 +237,7 @@ If you have an issue with this host it’s safe to reboot it and nothing has to 
 ## Build local core docker images
 
 ```bash
-docker compose -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build dev-kms-core
+docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build dev-kms-core-1
 ```
 
 If you were using the docker files directly it would be:

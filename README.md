@@ -105,8 +105,6 @@ Note: The yml files above do NOT use custodian-based backup! If this is needed, 
 KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
 ```
 
-It is possible to run the centralized version with `make build-compose-centralized` followed by `make start-compose-centralized`.
-
 Then navigate to the `core-client` directory.
 This is the client that interacts with the KMS service to perform various key management tasks. For example to securely generate a CRS for the zero knowledge proofs the command would be:
 

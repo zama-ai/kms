@@ -30,7 +30,9 @@ kmsCore:
       bucket: kms-public
       prefix: ""
   thresholdMode:
-    enabled: false
+    enabled: true
+    # 1 corruption for the 4 parties in peersList.
+    thresholdValue: 1
     initializationScript:
       enabled: true
     peersList:

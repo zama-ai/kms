@@ -734,7 +734,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 - **Docker-compose harness** — see [docker-compose.md](../docker-compose.md) and
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
-  `docker-compose-core-centralized.yml`) for a local multi-party network
+  `docker-compose-core-threshold-6.yml`) for a local multi-party network
   plus S3-mock, and telemetry sidecars.
 - **Cargo feature flags** — `testing` exposes test helper APIs across crate boundaries;
   `slow_tests` enables the long-running suite. `kms/insecure` enables development RPCs

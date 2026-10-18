@@ -20,14 +20,10 @@ jobs:
     if: >-
       (github.event_name == 'schedule' || github.event_name == 'pull_request') &&
       (github.event.action == 'unlabeled' && (contains(github.event.label.name, 'pr-preview-threshold') ||
-      contains(github.event.label.name, 'pr-preview-centralized') ||
-      contains(github.event.label.name, 'pr-preview-thresholdWithEnclave') ||
-      contains(github.event.label.name, 'pr-preview-centralizedWithEnclave'))) ||
+      contains(github.event.label.name, 'pr-preview-thresholdWithEnclave'))) ||
       (github.event.action == 'closed' &&
       (contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')))
+      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave')))
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     timeout-minutes: 1800
 

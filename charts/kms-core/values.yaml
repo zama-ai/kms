@@ -55,9 +55,10 @@ kmsCore:
     #    epochIds:
     #      - "0x0800000000000000000000000000000000000000000000000000000000000001" # Default Epoch ID
     #      - "0x0800000000000000000000000000000000000000000000000000000000000002" # ID of the first new epoch created
-  # Add the following to enable threshold mode:
+  # The chart deploys threshold mode only. `enabled` accepts only `true`;
+  # rendering fails if it is set to `false`.
   thresholdMode:
-    enabled: false
+    enabled: true
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
     peersList: []
     #  - id: 1

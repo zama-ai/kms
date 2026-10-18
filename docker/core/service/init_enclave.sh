@@ -111,10 +111,10 @@ has_value "aws.sts_endpoint" && {
 # included in the peer list and voted on before all parties can start.
 
 # Ensure that signing keys exist when this invocation received a keygen config.
-# FHE keys and CRS are generated at runtime by kms-server (in centralized mode)
-# or by the threshold protocol (in threshold mode), so this script only handles
-# signing keys. kms-gen-keys parses the config file itself so values from the
-# parent-provided config are never reinterpreted as shell syntax.
+# FHE keys and CRS are generated at runtime by the threshold protocol, so this
+# script only handles signing keys. kms-gen-keys parses the config file itself
+# so values from the parent-provided config are never reinterpreted as shell
+# syntax.
 log "attempting signing key generation"
 if kms-gen-keys --config-file "$KMS_SERVER_CONFIG_FILE" |& logger; then
     KEYGEN_STATUS=0

@@ -57,7 +57,7 @@ The repository ships sample configurations in `core/service/config/`:
 
 - `default_centralized.toml` — centralized mode with local file storage
 - `default_1.toml` … `default_4.toml` — threshold parties 1–4 with local file storage
-- `compose_centralized.toml`, `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
+- `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
 - `default_centralized_enclave.toml` — centralized mode inside an AWS Nitro Enclave
 
 **Development Environment**:

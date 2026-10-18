@@ -70,10 +70,10 @@ jobs:
 
           jq empty charts/kms-core/values.schema.json
           helm lint charts/kms-core
-          helm template test charts/kms-core >/dev/null
+          helm template test charts/kms-core \
+            --set kmsPeers.count=4 \
+            --set kmsCore.thresholdMode.thresholdValue=1 >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
-          helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
-          helm template test charts/kms-core -f ci/pr-preview/centralizedWithEnclave/kms-service/values-kms-ci.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/threshold/kms-service/values-kms-ci.yaml \
             --set kmsPeers.count=4 \
             --set kmsCore.thresholdMode.thresholdValue=1 >/dev/null
@@ -136,3 +136,12 @@ jobs:
             exit 1
           fi
           grep -Fq "threshold mode requires 3*t+1 parties" <<<"$output"
+
+          if output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=false \
+            --set kmsPeers.count=4 \
+            --set kmsCore.thresholdMode.thresholdValue=1 2>&1); then
+            echo "expected thresholdMode.enabled=false to fail" >&2
+            exit 1
+          fi
+          grep -Fq "centralized mode is removed" <<<"$output"

@@ -103,18 +103,14 @@ deploy_kms() {
     #=========================================================================
     # For threshold deployments (with or without enclave), enable TLS by default
     # TLS can be explicitly disabled with --disable-tls if needed
-    # For centralized deployments, TLS is disabled by default
     # Also respect TLS env var from GitHub workflow (for backward compatibility)
     log_info "DEBUG: TLS env var='${TLS:-<unset>}', ENABLE_TLS='${ENABLE_TLS:-<unset>}', DEPLOYMENT_TYPE='${DEPLOYMENT_TYPE}'"
     if [[ -n "${TLS:-}" ]]; then
         export ENABLE_TLS="${TLS}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (from TLS env var)"
-    elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+    else
         export ENABLE_TLS="${ENABLE_TLS:-true}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: enabled)"
-    else
-        export ENABLE_TLS="${ENABLE_TLS:-false}"
-        log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: disabled)"
     fi
     log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}'"
 
@@ -122,16 +118,11 @@ deploy_kms() {
     # STEP 4: Generate Peers Configuration
     #=========================================================================
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
-    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-        generate_peers_config "${PEERS_VALUES}"
-        # Generate and upload TLS certificates for Kind deployments with TLS enabled
-        # For AWS deployments, the kms-gen-cert-and-keys Helm job handles this automatically
-        if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
-            generate_and_upload_tls_certs
-        fi
-    else
-        # Centralized mode: single party
-        echo "kmsPeers: { count: 1 }" > "${PEERS_VALUES}"
+    generate_peers_config "${PEERS_VALUES}"
+    # Generate and upload TLS certificates for Kind deployments with TLS enabled
+    # For AWS deployments, the kms-gen-cert-and-keys Helm job handles this automatically
+    if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
+        generate_and_upload_tls_certs
     fi
 
     #=========================================================================
@@ -144,15 +135,9 @@ deploy_kms() {
     #=========================================================================
     # STEP 6: Deploy KMS Core Services
     #=========================================================================
-    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-        deploy_threshold_mode "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}" \
-            "${helm_chart_location}" "${LOCAL_VALUES_USED}" "${is_performance_testing}" \
-            "${performance_values_dir}" "${USE_BASE_VALUES}"
-    else
-        deploy_centralized_mode "${BASE_VALUES}" "${OVERRIDE_VALUES}" \
-            "${helm_chart_location}" "${is_performance_testing}" "${performance_values_dir}" \
-            "${USE_BASE_VALUES}"
-    fi
+    deploy_threshold_mode "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}" \
+        "${helm_chart_location}" "${LOCAL_VALUES_USED}" "${is_performance_testing}" \
+        "${performance_values_dir}" "${USE_BASE_VALUES}"
 }
 
 #=============================================================================
@@ -370,93 +355,6 @@ deploy_threshold_mode() {
 }
 
 #=============================================================================
-# Deploy Centralized Mode
-#=============================================================================
-deploy_centralized_mode() {
-    local BASE_VALUES="$1"
-    local OVERRIDE_VALUES="$2"
-    local helm_chart_location="$3"
-    local is_performance_testing="$4"
-    local performance_values_dir="$5"
-    local USE_BASE_VALUES="${6:-true}"
-
-    log_info "Deploying KMS Core in centralized mode..."
-
-    # Configure wait behavior based on target
-    local wait_args=()
-    if [[ "${TARGET}" != "aws-ci" ]]; then
-        wait_args=(--wait)
-    fi
-
-    local HELM_ARGS=(
-        --namespace "${NAMESPACE}"
-    )
-
-    # Add BASE_VALUES if it should be used
-    if [[ "${USE_BASE_VALUES}" == "true" ]]; then
-        HELM_ARGS+=(--values "${BASE_VALUES}")
-    fi
-
-    HELM_ARGS+=(
-        --values "${OVERRIDE_VALUES}"
-        --set kmsPeers.id="1"
-        --set kmsCore.thresholdMode.enabled=false
-        --set-string kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
-        --set kmsCoreClient.nameOverride="kms-core-client"
-    )
-
-    # Same ServiceMonitor enablement as threshold mode (ci_ prefix on kind only).
-    if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
-        HELM_ARGS+=(
-            --set kmsCore.serviceMonitor.enabled=true
-        )
-        if [[ "${TARGET}" == *"kind"* ]]; then
-            HELM_ARGS+=(
-                --set kmsCore.serviceMonitor.metricNamePrefix=ci_
-            )
-        fi
-    fi
-
-    # Enable OTLP tracing export when an endpoint is provided.
-    if [[ -n "${TRACING_ENDPOINT:-}" ]]; then
-        HELM_ARGS+=(
-            --set tracing.enabled=true
-            --set-string tracing.endpoint="${TRACING_ENDPOINT}"
-        )
-    fi
-
-    # Performance testing specific overrides
-    if [[ "${is_performance_testing}" == "true" ]]; then
-        HELM_ARGS+=(
-            --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
-            --set kmsCore.serviceAccountName="${PATH_SUFFIX}-1"
-            --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-1"
-            --set-string kmsCore.image.tag="${KMS_CORE_TAG}"
-        )
-    fi
-
-    # AWS-specific: Configure service account and configmap references
-    if [[ "${TARGET}" == "aws-ci" ]]; then
-        HELM_ARGS+=(
-            --set kmsCore.serviceAccountName="${NAMESPACE}-1"
-            --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1"
-        )
-    fi
-
-    helm_upgrade_with_version kms-core "${helm_chart_location}" \
-        "${HELM_ARGS[@]}" \
-        "${wait_args[@]}"
-
-    # Wait for centralized pod readiness (AWS only)
-    if [[ "${TARGET}" == "aws-ci" ]]; then
-        log_info "Waiting for KMS Core pod to be ready..."
-        sleep 60
-        kubectl wait --for=condition=ready pod kms-core-core-1 \
-            -n "${NAMESPACE}" --timeout=600s
-    fi
-}
-
-#=============================================================================
 # Generate Helm Overrides
 #=============================================================================
 generate_helm_overrides() {
@@ -502,11 +400,6 @@ generate_helm_overrides() {
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" && "${TARGET}" != *"kind"* ]]; then
         GEN_KEYS="true"
         TLS_ENABLED="true"
-    fi
-
-    # centralizedWithEnclave needs signing key generation as part of deployment.
-    if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-        GEN_KEYS="true"
     fi
 
     #=========================================================================
