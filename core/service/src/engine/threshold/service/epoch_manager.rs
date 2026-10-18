@@ -1837,18 +1837,7 @@ impl<
                 .boxed(),
         })
     }
-}
 
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
-        + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
-        + Default
-        + 'static,
-    Reshare: ReshareSecretKeys + Default + 'static,
-> ThresholdEpochManager<PubS, PrivS, Init, Reshare>
-{
     pub(crate) async fn new_mpc_epoch(
         &self,
         request: Request<NewMpcEpochRequest>,

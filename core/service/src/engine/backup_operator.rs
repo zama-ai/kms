@@ -325,13 +325,7 @@ where
         .await?;
         Ok((validated_rec, operator))
     }
-}
 
-impl<PubS, PrivS> BackupOperator<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-{
     /// Return the operator's backup encryption key, with an attestation document over its digest.
     ///
     /// A digest is attested rather than the key because the composite key exceeds the attestation

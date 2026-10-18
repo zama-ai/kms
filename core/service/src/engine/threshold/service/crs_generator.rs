@@ -459,14 +459,7 @@ impl<
             }
         }
     }
-}
 
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> CrsGenerator<PubS, PrivS, C>
-{
     pub(crate) async fn crs_gen(
         &self,
         request: Request<CrsGenRequest>,
@@ -518,15 +511,7 @@ impl<
             },
         }
     }
-}
 
-#[cfg(feature = "insecure")]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> InsecureCrsGenerator<PubS, PrivS, C>
-{
     pub(crate) async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,

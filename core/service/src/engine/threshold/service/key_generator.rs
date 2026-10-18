@@ -158,7 +158,7 @@ pub(crate) struct InsecureKeyGenerator<
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > InsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub async fn from_real_keygen(value: &KeyGenerator<PubS, PrivS, KG>) -> Self {
@@ -176,14 +176,7 @@ impl<
             },
         }
     }
-}
-#[cfg(feature = "insecure")]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> InsecureKeyGenerator<PubS, PrivS, KG>
-{
+
     pub(crate) async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
@@ -1825,14 +1818,7 @@ impl<
             )
         })
     }
-}
 
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> KeyGenerator<PubS, PrivS, KG>
-{
     pub(crate) async fn key_gen(
         &self,
         request: Request<KeyGenRequest>,

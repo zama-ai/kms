@@ -227,19 +227,7 @@ impl<
         };
         Ok(raw_decryption)
     }
-}
 
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodDecryptor<
-            Prep = SmallOfflineNoiseFloodSession<
-                { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                SmallSession<ResiduePolyF4Z128>,
-            >,
-        > + 'static,
-> PublicDecryptor<PubS, PrivS, Dec>
-{
     // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
     // recorded below. Every event and error in this request — including the ones emitted by the
     // spawned decryption task, which inherits this span — then carries both without extra log lines.

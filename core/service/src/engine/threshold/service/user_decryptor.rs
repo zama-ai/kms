@@ -426,14 +426,7 @@ impl<
             _dec: std::marker::PhantomData,
         }
     }
-}
 
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodPartialDecryptor + 'static,
-> UserDecryptor<PubS, PrivS, Dec>
-{
     // Mirrors the public decryption span: `context_id`/`epoch_id` are only known after request
     // validation, so they start empty and are recorded below. The spawned decryption task inherits
     // this span, so its events carry both without extra log lines.

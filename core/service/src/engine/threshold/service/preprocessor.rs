@@ -594,15 +594,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Pre
             signatures: stored_scheme_signatures_to_proto(&preproc_data.signatures),
         }))
     }
-}
 
-impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Send + Sync>
-    Preprocessor<P>
-{
     pub(crate) async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_key_gen_preproc(
             request.into_inner(),
             #[cfg(feature = "insecure")]
@@ -615,7 +614,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     pub(crate) async fn partial_key_gen_preproc(
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         let inner = request.into_inner();
         let base_request = inner.base_request.ok_or_else(|| {
             MetricedError::new(
@@ -635,7 +637,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     pub(crate) async fn insecure_key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_insecure_key_gen_preproc(request.into_inner())
             .await
     }
@@ -643,7 +648,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_get_result(request, OP_KEYGEN_PREPROC_RESULT)
             .await
     }
@@ -654,7 +662,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     pub(crate) async fn get_insecure_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_get_result(request, OP_INSECURE_KEYGEN_PREPROC_RESULT)
             .await
     }
@@ -663,7 +674,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         &self,
         preproc_id: RequestId,
         key_gen_cancel_res: Status,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         // Step 1: If preprocessing is still running — cancel it
         let mut ongoing = self.ongoing.lock().await;
         if let Some(token) = ongoing.remove(&preproc_id) {
@@ -689,7 +703,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         }
     }
 
-    pub(crate) async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
+    pub(crate) async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         let guarded_meta_store = self.preproc_buckets.read().await;
         Ok(guarded_meta_store
             .get_successful_completed_request_ids()

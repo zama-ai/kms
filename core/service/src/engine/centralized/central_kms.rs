@@ -861,11 +861,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
         // LEGACY: for legacy reasons we return the inner payload
         Ok(enc_res.payload)
     }
-}
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static>
-    CentralizedKms<PubS, PrivS>
-{
     pub async fn new(
         config: CoreConfig,
         public_storage: PubS,
@@ -1037,11 +1033,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
             (health, health_service),
         ))
     }
-}
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static>
-    CentralizedKms<PubS, PrivS>
-{
     /// Get a reference to the key generation MetaStore
     pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenMetadata>>> {
         &self.key_meta_map
