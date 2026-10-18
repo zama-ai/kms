@@ -14,7 +14,7 @@ use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::Shutdown;
-use crate::engine::backup_operator::RealBackupOperator;
+use crate::engine::backup_operator::BackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
@@ -469,7 +469,7 @@ pub struct CentralizedKms<
     pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CentralizedContextManager<PubS, PrivS>,
-    pub(crate) backup_operator: RealBackupOperator<PubS, PrivS>,
+    pub(crate) backup_operator: BackupOperator<PubS, PrivS>,
     // Liveness and readiness that the gRPC health service reports
     pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
@@ -984,7 +984,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
             );
         // Load existing MPC contexts from storage into the cache
         context_manager.load_mpc_context_from_storage().await?;
-        let backup_operator = RealBackupOperator::new(
+        let backup_operator = BackupOperator::new(
             base_kms.new_instance(),
             crypto_storage.inner.clone(),
             security_module,

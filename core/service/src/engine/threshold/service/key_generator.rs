@@ -121,7 +121,7 @@ use threshold_execution::tfhe_internals::{
     },
 };
 
-pub(crate) struct RealKeyGenerator<
+pub(crate) struct KeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -146,12 +146,12 @@ pub(crate) struct RealKeyGenerator<
 }
 
 #[cfg(feature = "insecure")]
-pub(crate) struct RealInsecureKeyGenerator<
+pub(crate) struct InsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
+    pub real_key_generator: KeyGenerator<PubS, PrivS, KG>,
 }
 
 #[cfg(feature = "insecure")]
@@ -159,11 +159,11 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-> RealInsecureKeyGenerator<PubS, PrivS, KG>
+> InsecureKeyGenerator<PubS, PrivS, KG>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
+    pub async fn from_real_keygen(value: &KeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
-            real_key_generator: RealKeyGenerator {
+            real_key_generator: KeyGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
@@ -182,7 +182,7 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> RealInsecureKeyGenerator<PubS, PrivS, KG>
+> InsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub(crate) async fn insecure_key_gen(
         &self,
@@ -253,7 +253,7 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> RealKeyGenerator<PubS, PrivS, KG>
+> KeyGenerator<PubS, PrivS, KG>
 {
     #[expect(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -1831,7 +1831,7 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> RealKeyGenerator<PubS, PrivS, KG>
+> KeyGenerator<PubS, PrivS, KG>
 {
     pub(crate) async fn key_gen(
         &self,
@@ -1892,7 +1892,7 @@ mod tests {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > RealKeyGenerator<PubS, PrivS, KG>
+    > KeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1924,7 +1924,7 @@ mod tests {
     }
 
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
+        KeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         async fn init_ram_keygen(
             base_kms: BaseKmsStruct,
@@ -1940,7 +1940,7 @@ mod tests {
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
@@ -1968,7 +1968,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
+        let kg = KeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),
         )
@@ -2152,7 +2152,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(3);
 
         let recorded_errors_before = crate::engine::utils::handle_error_call_count();
-        let err = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
+        let err = KeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
             &kg.preproc_buckets,
             RequestId::new_random(&mut rng),
             Some(RequestId::new_random(&mut rng)),
@@ -2385,7 +2385,7 @@ mod tests {
     async fn insert_insecure_bucket<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >(
-        kg: &RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        kg: &KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
         prep_id: &RequestId,
     ) {
         let bucket = BucketMetaStore {
@@ -2428,7 +2428,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(9);
         let key_id = RequestId::new_random(&mut rng);
 
@@ -2473,7 +2473,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(11);
         let key_id = RequestId::new_random(&mut rng);
         let bad_prep_id = RequestId::new_random(&mut rng);
@@ -2528,7 +2528,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(12);
         let insecure_prep_id = RequestId::new_random(&mut rng);
         insert_insecure_bucket(&kg, &insecure_prep_id).await;
@@ -2565,7 +2565,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(13);
         let key_id = RequestId::new_random(&mut rng);
 

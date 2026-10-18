@@ -67,7 +67,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 use zeroize::Zeroizing;
 
-pub(crate) struct RealBackupOperator<
+pub(crate) struct BackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
@@ -121,7 +121,7 @@ impl Drop for RecoveredKeys {
     }
 }
 
-impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
+impl<PubS, PrivS> BackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -327,7 +327,7 @@ where
     }
 }
 
-impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
+impl<PubS, PrivS> BackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -1981,10 +1981,7 @@ mod tests {
     /// together with the identity they form.
     async fn operator_after_restore(
         anchored: Option<RequestId>,
-    ) -> (
-        RealBackupOperator<RamStorage, RamStorage>,
-        NodeSigningIdentity,
-    ) {
+    ) -> (BackupOperator<RamStorage, RamStorage>, NodeSigningIdentity) {
         let mut rng = AesRng::seed_from_u64(9);
         let (_vk, sig_key) = gen_sig_keys(&mut rng);
         let seed = RootSigningSeed::random(&mut rng);
@@ -2011,7 +2008,7 @@ mod tests {
                 .unwrap();
         }
         let identity = NodeSigningIdentity::new(sig_key, seed);
-        let operator = RealBackupOperator::new(
+        let operator = BackupOperator::new(
             BaseKmsStruct::new(
                 kms_grpc::rpc_types::KMSType::Centralized,
                 identity.clone(),

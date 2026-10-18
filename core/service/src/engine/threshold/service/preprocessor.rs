@@ -57,7 +57,7 @@ use crate::{
 // === Current Module Imports ===
 use super::{BucketMetaStore, PreprocMaterial};
 
-pub(crate) struct RealPreprocessor<
+pub(crate) struct Preprocessor<
     P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
 > {
     // TODO eventually add mode to allow for nlarge as well.
@@ -72,7 +72,7 @@ pub(crate) struct RealPreprocessor<
     pub(crate) _producer_factory: PhantomData<P>,
 }
 
-impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
+impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
     #[expect(clippy::too_many_arguments)]
     async fn launch_dkg_preproc(
         &self,
@@ -597,7 +597,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 }
 
 impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Send + Sync>
-    RealPreprocessor<P>
+    Preprocessor<P>
 {
     pub(crate) async fn key_gen_preproc(
         &self,
@@ -720,7 +720,7 @@ mod tests {
     };
     use threshold_types::rng::AesRng;
 
-    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
+    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
@@ -740,7 +740,7 @@ mod tests {
     async fn setup_prep<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>(
         rng: &mut AesRng,
         use_prss: bool,
-    ) -> RealPreprocessor<P> {
+    ) -> Preprocessor<P> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
@@ -774,7 +774,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
+        Preprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }
 
     #[tokio::test]

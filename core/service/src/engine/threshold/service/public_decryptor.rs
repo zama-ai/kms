@@ -112,7 +112,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     }
 }
 
-pub(crate) struct RealPublicDecryptor<
+pub(crate) struct PublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodDecryptor<
@@ -140,7 +140,7 @@ impl<
                 SmallSession<ResiduePolyF4Z128>,
             >,
         > + 'static,
-> RealPublicDecryptor<PubS, PrivS, Dec>
+> PublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -238,7 +238,7 @@ impl<
                 SmallSession<ResiduePolyF4Z128>,
             >,
         > + 'static,
-> RealPublicDecryptor<PubS, PrivS, Dec>
+> PublicDecryptor<PubS, PrivS, Dec>
 {
     // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
     // recorded below. Every event and error in this request — including the ones emitted by the
@@ -400,7 +400,7 @@ impl<
                 let ciphertext = typed_ciphertext.ciphertext;
 
                 let res_plaintext = match fhe_type {
-                    FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint2048 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U2048,
                     >(
                         internal_sid,
@@ -415,7 +415,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u2048),
-                    FheTypes::Uint1024 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint1024 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U1024,
                     >(
                         internal_sid,
@@ -430,7 +430,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u1024),
-                    FheTypes::Uint512 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint512 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U512,
                     >(
                         internal_sid,
@@ -445,38 +445,38 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u512),
-                    FheTypes::Uint256 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
-                        tfhe::integer::U256,
-                    >(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock_clone,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u256),
-                    FheTypes::Uint160 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
-                        tfhe::integer::U256,
-                    >(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock_clone,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u160),
+                    FheTypes::Uint256 => {
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                            internal_sid,
+                            context_id,
+                            epoch_id,
+                            session_maker,
+                            ciphertext,
+                            fhe_type,
+                            ct_format,
+                            fhe_keys_rlock_clone,
+                            dec_mode,
+                        )
+                        .await
+                        .map(TypedPlaintext::from_u256)
+                    }
+                    FheTypes::Uint160 => {
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                            internal_sid,
+                            context_id,
+                            epoch_id,
+                            session_maker,
+                            ciphertext,
+                            fhe_type,
+                            ct_format,
+                            fhe_keys_rlock_clone,
+                            dec_mode,
+                        )
+                        .await
+                        .map(TypedPlaintext::from_u160)
+                    }
                     FheTypes::Uint128 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
                             internal_sid,
                             context_id,
                             epoch_id,
@@ -490,28 +490,26 @@ impl<
                         .await
                         .map(|x| TypedPlaintext::new(x, fhe_type))
                     }
-                    FheTypes::Uint80 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
-                            internal_sid,
-                            context_id,
-                            epoch_id,
-                            session_maker,
-                            ciphertext,
-                            fhe_type,
-                            ct_format,
-                            fhe_keys_rlock_clone,
-                            dec_mode,
-                        )
-                        .await
-                        .map(TypedPlaintext::from_u80)
-                    }
+                    FheTypes::Uint80 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock_clone,
+                        dec_mode,
+                    )
+                    .await
+                    .map(TypedPlaintext::from_u80),
                     FheTypes::Bool
                     | FheTypes::Uint4
                     | FheTypes::Uint8
                     | FheTypes::Uint16
                     | FheTypes::Uint32
                     | FheTypes::Uint64 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u64>(
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u64>(
                             internal_sid,
                             context_id,
                             epoch_id,
@@ -779,7 +777,7 @@ mod tests {
                     SmallSession<ResiduePolyF4Z128>,
                 >,
             > + 'static,
-    > RealPublicDecryptor<PubS, PrivS, Dec>
+    > PublicDecryptor<PubS, PrivS, Dec>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -808,7 +806,7 @@ mod tests {
         }
     }
 
-    impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
+    impl PublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
         async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
@@ -850,7 +848,7 @@ mod tests {
         RequestId,
         EpochId,
         Vec<u8>,
-        RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
+        PublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
@@ -899,11 +897,9 @@ mod tests {
         let key_meta_store = MetaStore::new_unlimited();
         let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
-        let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_maker.make_immutable(),
-        )
-        .await;
+        let public_decryptor =
+            PublicDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         public_decryptor
             .crypto_storage

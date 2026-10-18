@@ -1,22 +1,22 @@
 use crate::conf::BandwidthBenchmarkConfig;
 use crate::engine::Shutdown;
-use crate::engine::backup_operator::RealBackupOperator;
+use crate::engine::backup_operator::BackupOperator;
 use crate::engine::context_manager::ThresholdContextManager;
 use crate::engine::threshold::bandwidth_bench::new_bandwidth_bench_limiter;
-use crate::engine::threshold::service::crs_generator::RealCrsGenerator;
+use crate::engine::threshold::service::crs_generator::CrsGenerator;
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::service::crs_generator::RealInsecureCrsGenerator;
-use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::threshold::service::crs_generator::InsecureCrsGenerator;
+use crate::engine::threshold::service::epoch_manager::ThresholdEpochManager;
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::service::key_generator::RealInsecureKeyGenerator;
-use crate::engine::threshold::service::key_generator::RealKeyGenerator;
-use crate::engine::threshold::service::preprocessor::RealPreprocessor;
+use crate::engine::threshold::service::key_generator::InsecureKeyGenerator;
+use crate::engine::threshold::service::key_generator::KeyGenerator;
+use crate::engine::threshold::service::preprocessor::Preprocessor;
 use crate::engine::threshold::service::public_decryptor::{
-    RealPublicDecryptor, SecureNoiseFloodDecryptor,
+    PublicDecryptor, SecureNoiseFloodDecryptor,
 };
 use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::engine::threshold::service::user_decryptor::{
-    RealUserDecryptor, SecureNoiseFloodPartialDecryptor,
+    SecureNoiseFloodPartialDecryptor, UserDecryptor,
 };
 use crate::retry_loop;
 use crate::vault::storage::{Storage, StorageExt};
@@ -42,18 +42,18 @@ pub struct ThresholdKms<
     PrivS: StorageExt + Send + Sync + 'static,
 > {
     pub(crate) epoch_manager:
-        RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    pub(crate) user_decryptor: RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    pub(crate) decryptor: RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    pub(crate) key_generator: RealKeyGenerator<PubS, PrivS, KeyGen>,
+        ThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
+    pub(crate) user_decryptor: UserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
+    pub(crate) decryptor: PublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
+    pub(crate) key_generator: KeyGenerator<PubS, PrivS, KeyGen>,
     #[cfg(feature = "insecure")]
-    pub(crate) insecure_key_generator: RealInsecureKeyGenerator<PubS, PrivS, KeyGen>,
-    pub(crate) keygen_preprocessor: RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    pub(crate) crs_generator: RealCrsGenerator<PubS, PrivS, SecureCeremony>,
+    pub(crate) insecure_key_generator: InsecureKeyGenerator<PubS, PrivS, KeyGen>,
+    pub(crate) keygen_preprocessor: Preprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
+    pub(crate) crs_generator: CrsGenerator<PubS, PrivS, SecureCeremony>,
     #[cfg(feature = "insecure")]
-    pub(crate) insecure_crs_generator: RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
+    pub(crate) insecure_crs_generator: InsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     pub(crate) context_manager: ThresholdContextManager<PubS, PrivS>,
-    pub(crate) backup_operator: RealBackupOperator<PubS, PrivS>,
+    pub(crate) backup_operator: BackupOperator<PubS, PrivS>,
     pub(crate) session_maker: ImmutableSessionMaker,
     /// Bounds concurrent `bandwidth_benchmark` runs.
     pub(crate) bandwidth_bench_limiter: Arc<Semaphore>,
@@ -71,29 +71,29 @@ where
 {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        epoch_manager: RealThresholdEpochManager<
+        epoch_manager: ThresholdEpochManager<
             PubS,
             PrivS,
             RobustSecurePrssInit,
             SecureReshareSecretKeys,
         >,
-        user_decryptor: RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-        decryptor: RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-        key_generator: RealKeyGenerator<PubS, PrivS, KeyGen>,
-        #[cfg(feature = "insecure")] insecure_key_generator: RealInsecureKeyGenerator<
+        user_decryptor: UserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
+        decryptor: PublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
+        key_generator: KeyGenerator<PubS, PrivS, KeyGen>,
+        #[cfg(feature = "insecure")] insecure_key_generator: InsecureKeyGenerator<
             PubS,
             PrivS,
             KeyGen,
         >,
-        keygen_preprocessor: RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-        crs_generator: RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-        #[cfg(feature = "insecure")] insecure_crs_generator: RealInsecureCrsGenerator<
+        keygen_preprocessor: Preprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
+        crs_generator: CrsGenerator<PubS, PrivS, SecureCeremony>,
+        #[cfg(feature = "insecure")] insecure_crs_generator: InsecureCrsGenerator<
             PubS,
             PrivS,
             SecureCeremony,
         >,
         context_manager: ThresholdContextManager<PubS, PrivS>,
-        backup_operator: RealBackupOperator<PubS, PrivS>,
+        backup_operator: BackupOperator<PubS, PrivS>,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         bandwidth_bench_config: BandwidthBenchmarkConfig,

@@ -62,7 +62,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub(crate) struct RealCrsGenerator<
+pub(crate) struct CrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
@@ -82,7 +82,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealCrsGenerator<PubS, PrivS, C>
+> CrsGenerator<PubS, PrivS, C>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -465,7 +465,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealCrsGenerator<PubS, PrivS, C>
+> CrsGenerator<PubS, PrivS, C>
 {
     pub(crate) async fn crs_gen(
         &self,
@@ -490,12 +490,12 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-pub(crate) struct RealInsecureCrsGenerator<
+pub(crate) struct InsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, C>,
+    pub real_crs_generator: CrsGenerator<PubS, PrivS, C>,
 }
 
 #[cfg(feature = "insecure")]
@@ -503,11 +503,11 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealInsecureCrsGenerator<PubS, PrivS, C>
+> InsecureCrsGenerator<PubS, PrivS, C>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
+    pub async fn from_real_crsgen(value: &CrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
-            real_crs_generator: RealCrsGenerator {
+            real_crs_generator: CrsGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
@@ -525,7 +525,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealInsecureCrsGenerator<PubS, PrivS, C>
+> InsecureCrsGenerator<PubS, PrivS, C>
 {
     pub(crate) async fn insecure_crs_gen(
         &self,
@@ -584,7 +584,7 @@ mod tests {
         PubS: Storage + Send + Sync + 'static,
         PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
-    > RealCrsGenerator<PubS, PrivS, C>
+    > CrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -666,7 +666,7 @@ mod tests {
 
     async fn make_crs_gen<C: Ceremony + 'static>(
         rng: &mut AesRng,
-    ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
+    ) -> CrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
             KMSType::Threshold,
@@ -685,7 +685,7 @@ mod tests {
 
         let pub_storage = ram::RamStorage::new();
         let priv_storage = ram::RamStorage::new();
-        RealCrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
+        CrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
             base_kms,
             pub_storage,
             priv_storage,
