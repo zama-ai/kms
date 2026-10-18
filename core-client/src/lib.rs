@@ -102,8 +102,6 @@ pub(crate) use retry;
 #[derive(Serialize, Clone, Validate, Debug)]
 #[validate(schema(function = validate_core_client_conf))]
 pub struct CoreClientConfig {
-    // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
-    pub kms_type: KmsType,
     // List of configurations for the cores
     #[validate(length(min = 1))]
     pub cores: Vec<CoreConf>,
@@ -286,56 +284,6 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
         return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be greater than or equal to the number of majority votes ({}).", conf.num_reconstruct, conf.num_majority).into()));
     }
 
-    if num_parties > 1 {
-        // Should be a threshold config
-        if conf.kms_type != KmsType::Threshold {
-            return Err(ValidationError::new("KMS Type Error").with_message(
-                format!(
-                    "KMS mode must be 'threshold' when num_parties > 1 (num_parties = {}).",
-                    num_parties
-                )
-                .into(),
-            ));
-        }
-    } else {
-        // We may be in the centralized or threshold mode (communicating with a single server)
-        if conf.kms_type == KmsType::Centralized {
-            if conf.num_majority != 1 {
-                return Err(
-                    ValidationError::new("Centralized Majority Vote Count Error").with_message(
-                        format!(
-                    "Number for majority votes ({}) must be equal to 1 for a centralized config.",
-                    conf.num_majority,
-                )
-                        .into(),
-                    ),
-                );
-            }
-            if conf.num_reconstruct != 1 {
-                return Err(
-                    ValidationError::new("Centralized Reconstruction Count Error").with_message(
-                        format!(
-                    "Number for reconstruction ({}) must be equal to 1 for a centralized config.",
-                    conf.num_reconstruct,
-                )
-                        .into(),
-                    ),
-                );
-            }
-            if conf.cores.first().expect("no party IDs found").party_id != 1 {
-                return Err(
-                    ValidationError::new("Centralized Party ID Error").with_message(
-                        format!(
-                    "Party ID of the single core in a centralized config must be 1, but was {}.",
-                    conf.cores.first().unwrap().party_id
-                )
-                        .into(),
-                    ),
-                );
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -395,8 +343,9 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     {
         #[derive(Deserialize, Clone, Debug)]
         pub struct CoreClientConfigBuffer {
-            // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
-            pub kms_type: KmsType,
+            // Optional: the client supports threshold mode only. See [LegacyKmsType].
+            #[serde(default, rename = "kms_type")]
+            pub _kms_type: Option<LegacyKmsType>,
             // List of configurations for the cores
             pub cores: Vec<CoreConf>,
             pub decryption_mode: Option<DecryptionMode>,
@@ -413,7 +362,6 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
         let num_parties = temp.num_parties.unwrap_or(temp.cores.len());
 
         let conf = CoreClientConfig {
-            kms_type: temp.kms_type,
             cores: temp.cores,
             decryption_mode: temp.decryption_mode,
             num_parties,
@@ -848,8 +796,7 @@ pub struct KeyGenParameters {
 pub struct InsecureKeyGenParameters {
     /// ID of an existing preprocessing to consume.
     ///
-    /// In threshold mode this must come from `insecure-preproc-key-gen`.
-    /// In centralized mode any key-generation preprocessing entry can be used.
+    /// It must come from `insecure-preproc-key-gen`.
     #[clap(long, short = 'i')]
     pub preproc_id: RequestId,
     #[command(flatten)]
@@ -1273,14 +1220,30 @@ pub struct CmdConfig {
     pub signing_schemes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
-pub enum KmsType {
-    #[strum(serialize = "centralized")]
-    #[serde(rename = "centralized")]
-    Centralized,
-    #[strum(serialize = "threshold")]
-    #[serde(rename = "threshold")]
-    Threshold,
+/// The optional `kms_type` key of a client config.
+///
+/// The client supports threshold KMS deployments only, so `"threshold"` is the only accepted
+/// value. `"centralized"` and unknown values fail with an error that names the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LegacyKmsType;
+
+impl<'de> Deserialize<'de> for LegacyKmsType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "threshold" => Ok(LegacyKmsType),
+            "centralized" => Err(serde::de::Error::custom(
+                "kms_type = \"centralized\" is not supported: the KMS runs in threshold mode only. \
+                 Remove the key or set it to \"threshold\".",
+            )),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown kms_type \"{other}\": the only accepted value is \"threshold\""
+            ))),
+        }
+    }
 }
 /// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
@@ -1968,111 +1931,72 @@ pub async fn execute_cmd(
                     .await?;
         }
 
-        match cc_conf.kms_type {
-            KmsType::Centralized => {
-                let core = cc_conf.cores.first().expect("No core config provided");
-                let address = core.address.clone();
+        // threshold cores
+        tracing::info!(
+            "Threshold Core Client - connecting to n={:?} KMS servers",
+            cc_conf.cores.len()
+        );
 
-                tracing::info!("Centralized Core Client - connecting to: {}", address);
-
-                // make sure address starts with http://
-                let url = if address.starts_with("http://") {
-                    address
-                } else {
-                    "http://".to_string() + &address
-                };
-
-                let core_endpoint_req = retry!(
-                    CoreServiceEndpointClient::connect(url.clone()).await,
-                    5,
-                    100
-                )?;
-                // Centralized is always party 1
-                core_endpoints_req.insert(core.clone(), core_endpoint_req);
-
-                let core_endpoint_resp = retry!(
-                    CoreServiceEndpointClient::connect(url.clone()).await,
-                    5,
-                    100
-                )?;
-                core_endpoints_resp.insert(core.clone(), core_endpoint_resp);
-
-                // there's only 1 party, so use index 1
-                pub_storage.insert(
-                    1,
-                    FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
-                );
-                tracing::info!("Centralized Client setup done.");
-            }
-            KmsType::Threshold => {
-                // threshold cores
-                tracing::info!(
-                    "Threshold Core Client - connecting to n={:?} KMS servers",
-                    cc_conf.cores.len()
-                );
-
-                // A config that spans two contexts lists a server under the party id it holds in
-                // its own context, so two servers can share one party id. The client needs one
-                // identity per server, so such a config keys the identities by position. Only
-                // the context and epoch commands run with such a config. They attribute a
-                // result to a server by its signature and never look up a party id. The
-                // positions are counted from 1, like party ids, because the validation
-                // contexts reject the key 0.
-                //
-                // In any case, we need a cleaner fix for this, tracked by the issue below.
-                // TODO(https://github.com/zama-ai/kms-internal/issues/3207)
-                let party_ids_unique = {
-                    let mut seen = HashSet::new();
-                    cc_conf.cores.iter().all(|core| seen.insert(core.party_id))
-                };
-                for (position, cur_core) in cc_conf.cores.iter().enumerate() {
-                    // make sure address starts with http://
-                    let url = if cur_core.address.starts_with("http://") {
-                        cur_core.address.clone()
-                    } else {
-                        "http://".to_string() + cur_core.address.as_str()
-                    };
-
-                    tracing::info!(
-                        "Connecting to party {:?} via URL {:?}",
-                        cur_core.party_id,
-                        url
-                    );
-
-                    let core_endpoint_req = retry!(
-                        CoreServiceEndpointClient::connect(url.clone()).await,
-                        5,
-                        100
-                    )?;
-                    // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
-                    // WHEN HAVING MULTIPLE CONTEXTS
-                    core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
-
-                    let core_endpoint_resp = retry!(
-                        CoreServiceEndpointClient::connect(url.clone()).await,
-                        5,
-                        100
-                    )?;
-                    core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
-
-                    let identity_key = if party_ids_unique {
-                        cur_core.party_id as u32
-                    } else {
-                        position as u32 + 1
-                    };
-                    pub_storage.insert(
-                        identity_key,
-                        FileStorage::new(
-                            Some(destination_prefix),
-                            StorageType::PUB,
-                            Some(cur_core.object_folder.as_str()),
-                        )
-                        .unwrap(),
-                    );
-                }
-                tracing::info!("Threshold Client setup done.");
-            }
+        // A config that spans two contexts lists a server under the party id it holds in
+        // its own context, so two servers can share one party id. The client needs one
+        // identity per server, so such a config keys the identities by position. Only
+        // the context and epoch commands run with such a config. They attribute a
+        // result to a server by its signature and never look up a party id. The
+        // positions are counted from 1, like party ids, because the validation
+        // contexts reject the key 0.
+        //
+        // In any case, we need a cleaner fix for this, tracked by the issue below.
+        // TODO(https://github.com/zama-ai/kms-internal/issues/3207)
+        let party_ids_unique = {
+            let mut seen = HashSet::new();
+            cc_conf.cores.iter().all(|core| seen.insert(core.party_id))
         };
+        for (position, cur_core) in cc_conf.cores.iter().enumerate() {
+            // make sure address starts with http://
+            let url = if cur_core.address.starts_with("http://") {
+                cur_core.address.clone()
+            } else {
+                "http://".to_string() + cur_core.address.as_str()
+            };
+
+            tracing::info!(
+                "Connecting to party {:?} via URL {:?}",
+                cur_core.party_id,
+                url
+            );
+
+            let core_endpoint_req = retry!(
+                CoreServiceEndpointClient::connect(url.clone()).await,
+                5,
+                100
+            )?;
+            // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
+            // WHEN HAVING MULTIPLE CONTEXTS
+            core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
+
+            let core_endpoint_resp = retry!(
+                CoreServiceEndpointClient::connect(url.clone()).await,
+                5,
+                100
+            )?;
+            core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
+
+            let identity_key = if party_ids_unique {
+                cur_core.party_id as u32
+            } else {
+                position as u32 + 1
+            };
+            pub_storage.insert(
+                identity_key,
+                FileStorage::new(
+                    Some(destination_prefix),
+                    StorageType::PUB,
+                    Some(cur_core.object_folder.as_str()),
+                )
+                .unwrap(),
+            );
+        }
+        tracing::info!("Threshold Client setup done.");
         if needs_verf_keys {
             internal_client = Some(
                 Client::new_client(
@@ -3413,10 +3337,10 @@ mod tests {
         assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
     }
 
-    /// Build a `CoreClientConfig` TOML string. Pass `None` for `num_parties` to omit
-    /// the line (exercises the backward-compat fallback).
+    /// Build a `CoreClientConfig` TOML string. Pass `None` for `kms_type` or `num_parties` to
+    /// omit the line (exercises the backward-compat fallbacks).
     fn build_test_toml(
-        kms_type: &str,
+        kms_type: Option<&str>,
         num_parties: Option<usize>,
         num_majority: usize,
         num_reconstruct: usize,
@@ -3426,7 +3350,9 @@ mod tests {
         if let Some(n) = num_parties {
             s.push_str(&format!("num_parties = {n}\n"));
         }
-        s.push_str(&format!("kms_type = \"{kms_type}\"\n"));
+        if let Some(kms_type) = kms_type {
+            s.push_str(&format!("kms_type = \"{kms_type}\"\n"));
+        }
         s.push_str(&format!("num_majority = {num_majority}\n"));
         s.push_str(&format!("num_reconstruct = {num_reconstruct}\n"));
         for &pid in core_party_ids {
@@ -3445,7 +3371,7 @@ mod tests {
     // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, ...trailing per-test fields
     type ValidCase = (
         &'static str,
-        &'static str,
+        Option<&'static str>,
         Option<usize>,
         usize,
         usize,
@@ -3455,7 +3381,7 @@ mod tests {
     );
     type InvalidCase = (
         &'static str,
-        &'static str,
+        Option<&'static str>,
         Option<usize>,
         usize,
         usize,
@@ -3469,12 +3395,14 @@ mod tests {
         // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, expected num_parties, expected num_parties, expected cores.len()
         let cases: &[ValidCase] = &[
             // backward-compat: omitted num_parties defaults to cores.len()
-            ("centralized default", "centralized", None,    1, 1, &[1],          1, 1),
-            ("threshold default",   "threshold",   None,    2, 3, &[1, 2, 3, 4], 4, 4),
+            ("threshold default",   Some("threshold"), None,    2, 3, &[1, 2, 3, 4], 4, 4),
+            ("single server",       Some("threshold"), None,    1, 1, &[1],          1, 1),
+            // kms_type is optional
+            ("kms_type omitted",    None,              None,    2, 3, &[1, 2, 3, 4], 4, 4),
             // subset communication: explicit num_parties > cores.len()
-            ("subset comm",         "threshold",   Some(4), 2, 3, &[1, 2],       4, 2),
+            ("subset comm",         Some("threshold"), Some(4), 2, 3, &[1, 2],       4, 2),
             // explicit num_parties matches cores.len()
-            ("explicit matches",    "threshold",   Some(4), 2, 3, &[1, 2, 3, 4], 4, 4),
+            ("explicit matches",    Some("threshold"), Some(4), 2, 3, &[1, 2, 3, 4], 4, 4),
         ];
         for &(desc, kt, np, maj, rec, ids, exp_np, exp_cores) in cases {
             let toml_str = build_test_toml(kt, np, maj, rec, ids);
@@ -3490,12 +3418,14 @@ mod tests {
         #[rustfmt::skip]
         // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, expected num_parties, expected error substring
         let cases: &[InvalidCase] = &[
-            ("num_parties = 0",              "threshold",   Some(0), 2, 3, &[1, 2, 3, 4], "num_parties"),
-            ("cores > num_parties",          "threshold",   Some(2), 2, 2, &[1, 2, 3],    "must not exceed num_parties"),
-            ("party_id > num_parties",       "threshold",   Some(2), 2, 2, &[1, 5],       "Party ID must be between"),
-            ("num_majority > num_parties",   "threshold",   Some(4), 5, 5, &[1],          "Number for majority votes"),
-            ("num_reconstruct > num_parties","threshold",   Some(4), 2, 5, &[1],          "Number for reconstruction shares"),
-            ("centralized with n>1",         "centralized", Some(4), 1, 1, &[1],          "KMS mode must be 'threshold'"),
+            ("num_parties = 0",              Some("threshold"),   Some(0), 2, 3, &[1, 2, 3, 4], "num_parties"),
+            ("cores > num_parties",          Some("threshold"),   Some(2), 2, 2, &[1, 2, 3],    "must not exceed num_parties"),
+            ("party_id > num_parties",       Some("threshold"),   Some(2), 2, 2, &[1, 5],       "Party ID must be between"),
+            ("num_majority > num_parties",   Some("threshold"),   Some(4), 5, 5, &[1],          "Number for majority votes"),
+            ("num_reconstruct > num_parties",Some("threshold"),   Some(4), 2, 5, &[1],          "Number for reconstruction shares"),
+            ("centralized",                  Some("centralized"), Some(4), 2, 3, &[1, 2, 3, 4], "threshold mode only"),
+            ("centralized single server",    Some("centralized"), None,    1, 1, &[1],          "threshold mode only"),
+            ("unknown kms_type",             Some("thresholdish"), Some(4), 2, 3, &[1, 2, 3, 4], "unknown kms_type"),
         ];
         for &(desc, kt, np, maj, rec, ids, expected_substr) in cases {
             let toml_str = build_test_toml(kt, np, maj, rec, ids);
@@ -3524,7 +3454,7 @@ mod tests {
 
     #[test]
     fn default_domain_omitted_falls_back_to_dummy() {
-        let toml_str = build_test_toml("threshold", None, 1, 1, &[1]);
+        let toml_str = build_test_toml(Some("threshold"), None, 1, 1, &[1]);
         let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
         assert!(conf.default_domain.is_none());
         // The fallback must equal the built-in dummy domain so config files without a
@@ -3537,7 +3467,7 @@ mod tests {
         // All shipped client TOMLs embed these literals and document them as matching the
         // built-in default. This guards that the two stay in lockstep: if `dummy_domain()`
         // changes, either this test or the shipped [default_domain] sections must change.
-        let mut toml_str = build_test_toml("threshold", None, 1, 1, &[1]);
+        let mut toml_str = build_test_toml(Some("threshold"), None, 1, 1, &[1]);
         toml_str.push_str(
             "\n[default_domain]\n\
              name = \"Authorization token\"\n\
@@ -3599,7 +3529,7 @@ mod tests {
     fn test_preproc_result_verify_flags() {
         // No [default_domain] section, so verification falls back to the dummy domain.
         let cc_conf: CoreClientConfig =
-            toml::from_str(&build_test_toml("threshold", None, 1, 1, &[1])).unwrap();
+            toml::from_str(&build_test_toml(Some("threshold"), None, 1, 1, &[1])).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let client = Client::new(
@@ -3853,7 +3783,6 @@ mod tests {
         .unwrap();
 
         let cc_conf = CoreClientConfig {
-            kms_type: KmsType::Threshold,
             cores: vec![CoreConf {
                 party_id: 1,
                 address: "127.0.0.1:0".to_string(),

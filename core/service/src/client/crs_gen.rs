@@ -4,8 +4,6 @@ use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::{DSEP_PUBDATA_CRS, crs_payload};
 use crate::engine::utils::make_extra_data;
-use crate::engine::validation::RequestIdParsingErr;
-use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 
@@ -187,67 +185,6 @@ impl Client {
                 "No public parameter found in the result map".to_string(),
             )?)
         }
-    }
-
-    /// Retrieve and validate a CRS based on the result from a server.
-    /// The method will return the CRS if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual CRS
-    /// handle.
-    // NOTE: we're not checking it against the request
-    // since this part of the client is only used for testing
-    // see https://github.com/zama-ai/kms-core/issues/911
-    pub async fn process_get_crs_resp<R: StorageReader>(
-        &self,
-        crs_gen_result: &CrsGenResult,
-        domain: &Eip712Domain,
-        extra_data: Vec<u8>,
-        storage: &R,
-    ) -> anyhow::Result<Option<CompactPkeCrs>> {
-        let request_id = parse_optional_grpc_request_id(
-            &crs_gen_result.request_id,
-            RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
-        )
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-        let pp = self.get_crs(&request_id, storage).await?;
-        let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)?;
-        if actual_digest != crs_gen_result.crs_digest {
-            tracing::warn!(
-                "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
-                hex::encode(&actual_digest),
-                hex::encode(&crs_gen_result.crs_digest),
-            );
-            return Ok(None);
-        }
-
-        let max_num_bits = max_num_bits_from_crs(&pp);
-        let sol_type = CrsgenVerification::new(
-            &request_id,
-            max_num_bits,
-            actual_digest.clone(),
-            extra_data.clone(),
-        );
-        let payload = crs_payload(
-            &request_id,
-            max_num_bits as u32,
-            &actual_digest,
-            &extra_data,
-        );
-        if let Err(e) = self.verify_result_signatures(
-            &crs_gen_result.signatures,
-            &crs_gen_result.external_signature,
-            &sol_type,
-            domain,
-            &DSEP_PUBDATA_CRS,
-            &payload,
-        ) {
-            tracing::warn!(
-                "Could not verify the signatures for crs handle {}: {e}",
-                hex::encode(&actual_digest),
-            );
-            return Ok(None);
-        }
-        Ok(Some(pp))
     }
 
     /// Get a CRS from a public storage

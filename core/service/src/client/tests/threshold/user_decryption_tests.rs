@@ -9,10 +9,16 @@ use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, internal_sign};
+use crate::cryptography::signcryption::{
+    SigncryptFHEPlaintext, UnifiedSigncryptionKey, insecure_decrypt_ignoring_signature,
+};
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::dummy_domain;
-use crate::engine::base::derive_request_id;
+use crate::engine::base::{derive_request_id, sign_user_decryption_result};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
-use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{
+    ServerHandle, TestMaterialGuard, TestMaterialSpec, ThresholdTestEnv,
+};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -20,15 +26,18 @@ use crate::util::key_setup::test_tools::{
 use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use kms_grpc::RequestId;
-#[cfg(feature = "wasm_tests")]
-use kms_grpc::kms::v1::TypedPlaintext;
-use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
+use kms_grpc::kms::v1::{
+    TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
+};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use rand::SeedableRng;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::sync::Arc;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "wasm_tests")]
 use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 
@@ -314,6 +323,109 @@ async fn test_user_decryption_threshold_largecipher() {
         get_server_private_keys(amount_parties, &material_path).await,
     )
     .await;
+}
+
+/// Checks that a single valid response does not decrypt for a client that knows all four
+/// parties, on both the secure and the insecure path.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_single_response_fails() {
+    let msg = TestingPlaintext::U8(42);
+    let fx = UserDecryptionResponses::collect("user_decryption_single_response", msg).await;
+    assert_eq!(fx.client.server_identities.len(), 4);
+    for plaintext in fx.process(None, &fx.responses).unwrap() {
+        crate::client::tests::common::assert_plaintext(&msg, &plaintext);
+    }
+
+    for resp in &fx.responses {
+        let party_id = resp.payload.as_ref().unwrap().party_id;
+        let single = std::slice::from_ref(resp);
+        assert!(
+            fx.process(None, single).is_err(),
+            "a single response from party {party_id} must not decrypt"
+        );
+        assert!(
+            fx.client
+                .insecure_process_user_decryption_resp(&fx.enc_sk, single)
+                .is_err(),
+            "a single response from party {party_id} must not decrypt on the insecure path"
+        );
+    }
+}
+
+/// Checks that a client with one server identity and one response uses threshold decoding.
+///
+/// The response comes from party 1 of a 4-party cluster, so it carries a degree-1 share. The
+/// secure path expects degree 0 from one server identity and rejects the response. The
+/// insecure path cannot reconstruct a degree-1 sharing from one share.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_one_identity_one_response_fails() {
+    let msg = TestingPlaintext::U8(42);
+    let mut fx =
+        UserDecryptionResponses::collect("user_decryption_one_identity_one_response", msg).await;
+    match &mut fx.client.server_identities {
+        ServerIdentities::Pks(pks) => pks.retain(|id, _| *id == 1),
+        ServerIdentities::Addrs(addrs) => addrs.retain(|id, _| *id == 1),
+    }
+    assert_eq!(fx.client.server_identities.len(), 1);
+    let party_1 = std::slice::from_ref(&fx.responses[0]);
+    assert_eq!(party_1[0].payload.as_ref().unwrap().party_id, 1);
+
+    for threshold in [None, Some(0)] {
+        assert!(
+            fx.process(threshold, party_1).is_err(),
+            "one response must not decrypt for a one-identity client (threshold {threshold:?})"
+        );
+    }
+    assert!(
+        fx.client
+            .insecure_process_user_decryption_resp(&fx.enc_sk, party_1)
+            .is_err(),
+        "one response must not decrypt on the insecure path for a one-identity client"
+    );
+}
+
+/// Checks that a response which signcrypts the plaintext itself is not a valid threshold share.
+///
+/// Party 3's response is sealed and signed again with party 3's own signing identity, so only
+/// the encoding inside the signcryption differs from an honest response. Three accepted
+/// responses out of four are the minimum for reconstruction with `t = 1`. Responses from
+/// parties 1 and 2 plus the forged response from party 3 therefore decrypt only if the
+/// client accepts the forged response.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_rejects_plaintext_encoding() {
+    let msg = TestingPlaintext::U8(42);
+    let fx = UserDecryptionResponses::collect("user_decryption_plaintext_encoding", msg).await;
+    let identities = get_server_signing_identities(4, &fx.material_path).await;
+    let party_3 = &fx.responses[2];
+    assert_eq!(party_3.payload.as_ref().unwrap().party_id, 3);
+
+    // Control: sealing the original share again gives a response that the client accepts.
+    let resealed_share = fx.reseal(party_3, &identities[&3], |share| share.bytes.clone());
+    let control = [
+        fx.responses[0].clone(),
+        fx.responses[1].clone(),
+        resealed_share,
+    ];
+    for plaintext in fx.process(None, &control).unwrap() {
+        crate::client::tests::common::assert_plaintext(&msg, &plaintext);
+    }
+
+    // The plaintext encoding: the signcryption carries the plaintext bytes instead of a
+    // serialized share vector.
+    let plaintext_bytes = TypedPlaintext::from(msg).bytes.clone();
+    let resealed_plaintext = fx.reseal(party_3, &identities[&3], |_| plaintext_bytes.clone());
+    let forged = [
+        fx.responses[0].clone(),
+        fx.responses[1].clone(),
+        resealed_plaintext,
+    ];
+    // Two accepted responses leave two faulty ones, which is more than `t = 1`.
+    let err = fx.process(None, &forged).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Too many faulty user decryption responses: 2 > t=1"),
+        "a response that encodes the plaintext directly must not count as a threshold share: {err}"
+    );
 }
 
 #[cfg(feature = "wasm_tests")]
@@ -800,7 +912,6 @@ async fn process_batch_threshold_user_decryption(
             final_result
         } else {
             // insecure processing
-            internal_client.server_identities = ServerIdentities::Addrs(HashMap::new());
             // test with one fewer response if we haven't crashed too many parties already
             let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
                 Some(
@@ -831,19 +942,198 @@ async fn get_server_private_keys(
     amount_parties: usize,
     material_path: &std::path::Path,
 ) -> HashMap<u32, PrivateSigKey> {
+    get_server_signing_identities(amount_parties, material_path)
+        .await
+        .into_iter()
+        .map(|(party_id, identity)| (party_id, identity.ecdsa().clone()))
+        .collect()
+}
+
+/// Returns the signing identity of each party, keyed by the one-based party ID.
+async fn get_server_signing_identities(
+    amount_parties: usize,
+    material_path: &std::path::Path,
+) -> HashMap<u32, NodeSigningIdentity> {
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let mut server_private_keys = HashMap::new();
+    let mut identities = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
         // Read from the per-test isolated material path populated by the builder.
         let priv_storage =
             FileStorage::new(Some(material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
-        let sk = get_core_signing_identity(&priv_storage)
+        let identity = get_core_signing_identity(&priv_storage)
             .await
             .inspect_err(|e| {
                 tracing::error!("signing key hashmap is not exactly 1, {}", e);
             })
             .unwrap();
-        server_private_keys.insert(i as u32 + 1, sk.ecdsa().clone());
+        identities.insert(i as u32 + 1, identity);
     }
-    server_private_keys
+    identities
+}
+
+/// One user decryption request of a `u8` ciphertext, answered by every party of the default
+/// 4-party cluster.
+struct UserDecryptionResponses {
+    client: Client,
+    request: UserDecryptionRequest,
+    enc_pk: UnifiedPublicEncKey,
+    enc_sk: UnifiedPrivateEncKey,
+    /// One response per party, sorted by party ID.
+    responses: Vec<UserDecryptionResponse>,
+    material_path: std::path::PathBuf,
+    // The servers and the material directory must outlive the test body.
+    _servers: HashMap<u32, ServerHandle>,
+    _guards: TestMaterialGuard,
+}
+
+impl UserDecryptionResponses {
+    /// Starts the cluster, encrypts `msg` and collects the user decryption response of every party.
+    async fn collect(test_name: &str, msg: TestingPlaintext) -> Self {
+        let amount_parties = 4;
+        let env = ThresholdTestEnv::builder()
+            .with_test_name(test_name)
+            .with_party_count(amount_parties)
+            .with_threshold(max_threshold(amount_parties) as u8)
+            .with_material_spec(TestMaterialSpec::threshold_basic(amount_parties))
+            .with_prss()
+            .build()
+            .await
+            .unwrap();
+        let mut client = env.create_internal_client(&TEST_PARAM, None).await.unwrap();
+        let (kms_clients, servers, material_path, guards) = env.into_parts();
+
+        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+            Some(&material_path),
+            msg,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: true,
+            },
+        )
+        .await;
+        let typed_ct = TypedCiphertext {
+            ciphertext: ct.into(),
+            fhe_type: fhe_type as i32,
+            ciphertext_format: ct_format.into(),
+            external_handle: vec![42],
+        };
+        let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_{test_name}")).unwrap();
+        let (request, enc_pk, enc_sk) = client
+            .user_decryption_request(
+                &dummy_domain(),
+                vec![typed_ct],
+                &request_id,
+                &TEST_THRESHOLD_KEY_ID_4P,
+                None,
+                None,
+                &[],
+            )
+            .unwrap();
+
+        let mut responses = Vec::with_capacity(amount_parties);
+        for kms_client in kms_clients.values() {
+            let mut kms_client = kms_client.clone();
+            kms_client
+                .user_decrypt(tonic::Request::new(request.clone()))
+                .await
+                .unwrap();
+            let resp = retrying_poll(
+                kms_client,
+                request.request_id.clone().unwrap(),
+                "user decryption result",
+                PollConfig::default(),
+                |c, r| Box::pin(async move { c.get_user_decryption_result(r).await }),
+            )
+            .await
+            .unwrap()
+            .into_inner();
+            responses.push(resp);
+        }
+        responses.sort_by_key(|resp| resp.payload.as_ref().unwrap().party_id);
+
+        Self {
+            client,
+            request,
+            enc_pk,
+            enc_sk,
+            responses,
+            material_path,
+            _servers: servers,
+            _guards: guards,
+        }
+    }
+
+    /// Runs the secure response processing of the client on `responses`.
+    fn process(
+        &self,
+        threshold: Option<usize>,
+        responses: &[UserDecryptionResponse],
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let domain = protobuf_to_alloy_domain(self.request.domain.as_ref().unwrap()).unwrap();
+        let client_req = ParsedUserDecryptionRequest::try_from(&self.request).unwrap();
+        self.client.process_user_decryption_resp(
+            &client_req,
+            &domain,
+            &self.enc_pk,
+            &self.enc_sk,
+            threshold,
+            responses,
+        )
+    }
+
+    /// Returns `resp` with each signcryption replaced by a signcryption of `encode(share)`, where
+    /// `share` is the original inner plaintext of that signcryption.
+    ///
+    /// `identity` seals and signs the result the same way a party seals and signs its own
+    /// response, so the result is authentic for the party that owns `identity`.
+    fn reseal(
+        &self,
+        resp: &UserDecryptionResponse,
+        identity: &NodeSigningIdentity,
+        encode: impl Fn(&TypedPlaintext) -> Vec<u8>,
+    ) -> UserDecryptionResponse {
+        let mut rng = AesRng::seed_from_u64(42);
+        let sealer = UnifiedSigncryptionKey::new(
+            Arc::new(identity.clone()),
+            self.enc_pk.clone(),
+            self.client.client_address.to_vec(),
+        );
+        let mut payload = resp.payload.clone().unwrap();
+        for ct in payload.signcrypted_ciphertexts.iter_mut() {
+            let share =
+                insecure_decrypt_ignoring_signature(&ct.signcrypted_ciphertext, &self.enc_sk)
+                    .unwrap();
+            ct.signcrypted_ciphertext = sealer
+                .signcrypt_plaintext(
+                    &mut rng,
+                    &DSEP_USER_DECRYPTION,
+                    &encode(&share),
+                    ct.fhe_type().unwrap(),
+                    &payload.digest,
+                )
+                .unwrap()
+                .payload;
+        }
+
+        let domain = protobuf_to_alloy_domain(self.request.domain.as_ref().unwrap()).unwrap();
+        let client_req = ParsedUserDecryptionRequest::try_from(&self.request).unwrap();
+        let signed = sign_user_decryption_result(
+            identity,
+            client_req.signing_schemes(),
+            payload,
+            &self.request.enc_key,
+            resp.extra_data.clone(),
+            &domain,
+        )
+        .unwrap();
+        UserDecryptionResponse {
+            signature: signed.signature,
+            signatures: signed.signatures,
+            external_signature: signed.external_signature,
+            payload: Some(signed.payload),
+            extra_data: signed.extra_data,
+        }
+    }
 }

@@ -1,6 +1,6 @@
 # Config for a threshold deployment of n=4 cores with threshold t=1
 
-# The type of the KMS ("centralized" or "threshold")
+# The type of the KMS. Optional; "threshold" is the only accepted value.
 kms_type = "threshold"
 
 # The number of parties (cores) that are deployed in total

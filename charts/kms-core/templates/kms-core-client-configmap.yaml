@@ -25,7 +25,7 @@ data:
     cat <<EOF >>config.toml
     ########################################################################
     # Config for a threshold deployment of n=4 cores with threshold t=1
-    # The type of the KMS ("centralized" or "threshold")
+    # The type of the KMS. Optional; "threshold" is the only accepted value.
     kms_type = "threshold"
 
     # The minimum number of matching responses required to have an honest majority
@@ -93,7 +93,7 @@ data:
     cat <<EOF >>config.toml
     ########################################################################
     # Config for a threshold deployment of n=4 cores with threshold t=1
-    # The type of the KMS ("centralized" or "threshold")
+    # The type of the KMS. Optional; "threshold" is the only accepted value.
     kms_type = "threshold"
 
     # The minimum number of matching responses required to have an honest majority

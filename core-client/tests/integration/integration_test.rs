@@ -407,7 +407,6 @@ fn generate_threshold_cli_config(
     }
 
     let cfg = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores,
         decryption_mode: None,
         num_parties: party_count,
@@ -774,7 +773,6 @@ async fn setup_party_resharing_servers(
         })
         .collect();
     let cfg_1234 = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores: cores_1234,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
         num_parties: 4,
@@ -813,7 +811,6 @@ async fn setup_party_resharing_servers(
         })
         .collect();
     let cfg_5634 = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores: cores_5634,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
         num_parties: 4,
@@ -2111,7 +2108,6 @@ fn config_conformance_client_local_threshold() {
         .build()
         .init_conf()
         .expect("Settings::init_conf for client_local_threshold.toml");
-    assert_eq!(loaded.kms_type, KmsType::Threshold);
     assert_eq!(loaded.cores.len(), 4);
     assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
 }

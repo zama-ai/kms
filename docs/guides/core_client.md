@@ -31,15 +31,14 @@ The core client library is also used for running tests.
 ## Configuration File
 
 To run the core client you need a configuration file.
-The file to be used must be specified with the `-f` flag, e.g. `-f core-client/config/client_local_centralized.toml`.
+The file to be used must be specified with the `-f` flag, e.g. `-f core-client/config/client_local_threshold.toml`.
 
 The core client currently ships with the following pre-defined configurations:
-- `./config/client_local_centralized.toml` for the centralized version run via docker-compose.
 - `./config/client_local_threshold.toml` for the threshold version with n=4 parties and threshold t=1 run via docker-compose.
 - `./config/client_local_threshold_custodian_backup.toml` for the threshold version when executing custodian backup instructions towards a *single* KMS core from the CLI.
 
 Values inside the TOML configs are:
-- `kms_type` - The kind of KMS to interact with; "centralized" or "threshold".
+- `kms_type` - Optional. The only accepted value is "threshold"; any other value fails to load.
 - `num_majority` - The minimum number of matching responses required to have an honest majority.
 - `num_reconstruct` - The minimum number of responses required to reconstruct a value (e.g. in user decryption).
 - `decryption_mode` - For a threshold deployment this must match to what is deployed on the threshold servers. Valid values are `NoiseFloodSmall` (default), `NoiseFloodLarge`, `BitDecSmall`, and `BitDecLarge`.
@@ -385,7 +384,7 @@ $ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> i
 ```
 
 Required arguments:
- - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing preprocessing entry to consume (see [below](#insecure-dummy-preprocessing)). In threshold mode this must come from `insecure-preproc-key-gen`; in centralized mode either preprocessing endpoint can be used.
+ - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing preprocessing entry to consume (see [below](#insecure-dummy-preprocessing)). It must come from `insecure-preproc-key-gen`.
 
 Optional arguments:
  - `-u`/`--uncompressed`: Generate legacy uncompressed public key material (`PublicKey` + `ServerKey`). By default key generation stores compressed key material.
@@ -421,7 +420,7 @@ Optional arguments:
 
 The resulting `REQUEST_ID` must then be passed to `insecure-key-gen` via `--preproc-id`. Each entry is consumed by the key generation, so a fresh preprocessing is needed for each insecure key-generation call.
 
-Note that in the threshold setting an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`; in the centralized setting both preprocessing variants are dummy entries and are interchangeable.
+Note that an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`.
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
