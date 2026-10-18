@@ -259,7 +259,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     purge_backup(env.test_path(), env.backup_prefixes()).await;
     // Check that the backup is still there after reboot
     let (_kms_servers, _kms_clients) = env.spawn_server_on_existing_material().await;
-    let _reread_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
+    let reread_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
         &SIGNING_KEY_ID,
@@ -267,6 +267,87 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         env.backup_prefixes(),
     )
     .await;
+    // `read_custodian_backup_files` skips missing files, so only the count shows that every
+    // party rewrote its purged backup.
+    assert_eq!(
+        reread_backup.len(),
+        n,
+        "every party must rewrite its purged backup under the anchored context on boot"
+    );
+}
+
+/// Recovery material planted in public storage must not decide which custodian context a party
+/// adopts on restart. Regression test for the advisory behind issue #3139.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_planted_public_recovery_material_ignored_threshold() {
+    use crate::vault::storage::tests::store_dummy_recovery_material;
+    use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
+
+    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let mut env = ThresholdBackupTestEnv::new("planted_public_recovery_threshold", 5, 2).await;
+    env.shutdown().await;
+
+    // Signed by each party, as a replayed retired context is, so a refused foreign signature
+    // cannot pass the test on its own. Its id sorts above the genuine one, so it wins the
+    // latest-id selection wherever it is read.
+    let rogue_id = RequestId::from_bytes([0xff; 32]);
+    assert!(rogue_id > env.req_new_cus, "the decoy must sort last");
+    let mut storages = Vec::with_capacity(n);
+    for (pub_prefix, priv_prefix) in env.pub_prefixes().iter().zip(env.priv_prefixes()) {
+        let priv_storage =
+            FileStorage::new(env.test_path(), StorageType::PRIV, priv_prefix.as_deref()).unwrap();
+        let node_identity = get_core_signing_identity(&priv_storage).await.unwrap();
+        let mut pub_storage =
+            FileStorage::new(env.test_path(), StorageType::PUB, pub_prefix.as_deref()).unwrap();
+        store_dummy_recovery_material(&mut pub_storage, &rogue_id, &node_identity).await;
+        storages.push((pub_storage, priv_storage));
+    }
+
+    let (_kms_servers, _kms_clients) = env.spawn_server_on_existing_material().await;
+
+    // Backups still land under the genuine context on every party.
+    let backups = read_custodian_backup_files(
+        env.test_path(),
+        &env.req_new_cus,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+        env.backup_prefixes(),
+    )
+    .await;
+    assert_eq!(backups.len(), n);
+
+    for (party, ((pub_storage, priv_storage), backup_prefix)) in
+        storages.iter().zip(env.backup_prefixes()).enumerate()
+    {
+        let party = party + 1;
+        // The decoy is readable, so a reinstated public-storage lookup fails this test, not
+        // skips it.
+        assert!(
+            read_recovery_material_at_id(pub_storage, &rogue_id)
+                .await
+                .is_ok(),
+            "party {party}: the planted material must still be readable in public storage"
+        );
+        let backup_storage = FileStorage::new(
+            env.test_path(),
+            StorageType::BACKUP,
+            backup_prefix.as_deref(),
+        )
+        .unwrap();
+        assert!(
+            !backup_storage
+                .root_dir()
+                .join(rogue_id.to_string())
+                .exists(),
+            "party {party}: the planted context must never become the active backup id"
+        );
+        // Boot only reads the anchor; it must still name the genuine context.
+        assert_eq!(
+            read_custodian_context_anchor(priv_storage).await.unwrap(),
+            Some(env.req_new_cus),
+            "party {party}: the node must stay anchored to the context it installed"
+        );
+    }
 }
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]

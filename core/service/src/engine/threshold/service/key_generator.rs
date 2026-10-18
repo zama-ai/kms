@@ -1894,7 +1894,8 @@ mod tests {
         engine::threshold::service::session::SessionMaker,
         util::meta_store::{EntryState, update_ok_req_in_meta_store},
         vault::storage::{
-            ram, read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            ram::{self, FailingRamStorage},
+            read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
             tests::TestType,
         },
@@ -1937,25 +1938,23 @@ mod tests {
         }
     }
 
-    impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
-    {
-        async fn init_ram_keygen(
-            base_kms: BaseKmsStruct,
-            session_maker: ImmutableSessionMaker,
-        ) -> Self {
-            let pub_storage = ram::RamStorage::new();
-            let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
-        }
-    }
-
     async fn setup_key_generator<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
+        setup_key_generator_with_storage(ram::RamStorage::new(), ram::RamStorage::new()).await
+    }
+
+    async fn setup_key_generator_with_storage<
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    >(
+        pub_storage: PubS,
+        priv_storage: PrivS,
+    ) -> ([RequestId; 4], RealKeyGenerator<PubS, PrivS, KG>) {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
@@ -1982,8 +1981,10 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
+        let kg = RealKeyGenerator::<PubS, PrivS, KG>::init_test(
             base_kms,
+            pub_storage,
+            priv_storage,
             session_maker.make_immutable(),
         )
         .await;
@@ -2056,6 +2057,99 @@ mod tests {
                     .await
                     .unwrap_err()
                     .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing request ID
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: None,
+                params: Some(FheParameter::Test as i32),
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
+                extra_data: vec![],
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad preprocessing ID format
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(44));
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(key_id.into()),
+                params: Some(FheParameter::Test as i32),
+                preproc_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
+                extra_data: vec![],
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad context ID format
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(45));
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(key_id.into()),
+                params: Some(FheParameter::Test as i32),
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+                epoch_id: None,
+                extra_data: vec![],
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad epoch ID format
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(46));
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(key_id.into()),
+                params: Some(FheParameter::Test as i32),
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+                extra_data: vec![],
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
                 tonic::Code::InvalidArgument
             );
         }
@@ -2393,6 +2487,19 @@ mod tests {
         assert_eq!(status.code(), tonic::Code::NotFound);
     }
 
+    /// Preprocessing alone does not register an ongoing key generation, so an abort
+    /// targeting only a preproc ID must return NotFound.
+    #[tokio::test]
+    async fn abort_with_existing_preproc() {
+        let (prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+
+        let status = kg.abort_key_gen(prep_ids[0]).await;
+        assert_eq!(status.code(), tonic::Code::NotFound);
+    }
+
     /// Insert an insecure (dummy) preprocessing bucket, as stored by the
     /// insecure preprocessing endpoint, into the key generator's bucket store.
     #[cfg(feature = "insecure")]
@@ -2593,7 +2700,6 @@ mod tests {
     }
 
     /// The secure keygen must reject a request without a preprocessing ID.
-    #[cfg(feature = "insecure")]
     #[tokio::test]
     async fn secure_keygen_missing_preproc_id() {
         let (_prep_ids, kg) = setup_key_generator::<
@@ -2627,9 +2733,11 @@ mod tests {
     #[case::private(ExistingKeyMaterial::Private)]
     #[tokio::test]
     async fn abort_during_key_gen(#[case] existing_material: ExistingKeyMaterial) {
-        let (prep_ids, kg) = setup_key_generator::<
+        let (prep_ids, kg) = setup_key_generator_with_storage::<
             SlowOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        >()
+            _,
+            _,
+        >(FailingRamStorage::new(), FailingRamStorage::new())
         .await;
         let prep_id = prep_ids[0];
         let mut rng = AesRng::seed_from_u64(8);
@@ -2667,6 +2775,18 @@ mod tests {
                 .unwrap();
             }
         }
+        kg.crypto_storage
+            .inner
+            .public_storage
+            .lock()
+            .await
+            .clear_events();
+        kg.crypto_storage
+            .inner
+            .private_storage
+            .lock()
+            .await
+            .clear_events();
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -2696,6 +2816,25 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+        // A cancelled keygen writes and deletes nothing.
+        assert!(
+            kg.crypto_storage
+                .inner
+                .public_storage
+                .lock()
+                .await
+                .events()
+                .is_empty()
+        );
+        assert!(
+            kg.crypto_storage
+                .inner
+                .private_storage
+                .lock()
+                .await
+                .events()
+                .is_empty()
+        );
 
         match existing_material {
             ExistingKeyMaterial::Public => {

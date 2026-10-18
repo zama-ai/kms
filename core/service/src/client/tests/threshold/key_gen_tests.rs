@@ -134,6 +134,7 @@ impl TestKeyGenResult {
         };
 
         crate::client::key_gen::tests::check_oprf_correctness(&server_key, client_key);
+        crate::client::key_gen::tests::check_transciphering_correctness(&server_key, client_key);
         check_conformance(server_key.clone(), client_key.clone());
 
         let pt1 = 27u8;
@@ -1349,6 +1350,21 @@ pub(crate) async fn verify_keygen_responses(
             TestKeyGenResult::Uncompressed((client_key, public_key, server_key))
         }
         RetrievedKeysForVerification::Compressed(keyset, pk) => {
+            use crate::engine::base::DSEP_PUBDATA_KEY;
+            use hashing::hash_versioned;
+
+            // All parties hold byte-identical keys (checked above), so the first party's keys
+            // stand for all of them. Fresh keygen and resharing both derive the stored public
+            // key from the compressed keyset. CompactPublicKey does not implement PartialEq, so
+            // compare domain-separated digests.
+            let (derived_pk, server_key) = keyset.decompress().into_raw_parts();
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), pk.tag());
+            assert_eq!(
+                hash_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap(),
+                hash_versioned(&DSEP_PUBDATA_KEY, &derived_pk).unwrap(),
+                "stored CompactPublicKey must equal the one derived from the compressed keyset"
+            );
             TestKeyGenResult::Compressed((client_key, keyset, pk))
         }
     };

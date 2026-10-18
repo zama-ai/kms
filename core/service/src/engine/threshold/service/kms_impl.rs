@@ -1396,4 +1396,41 @@ mod tests {
         assert!(!Arc::ptr_eq(key_gen, crs_gen));
         assert!(!Arc::ptr_eq(preproc, crs_gen));
     }
+
+    /// A node that lost its signing key boots in recovery mode, skipping the storage checks, so
+    /// that it can still recover its keys from the custodians.
+    #[tokio::test]
+    async fn boots_in_recovery_mode_without_a_signing_key() {
+        use crate::{
+            conf::init_conf, cryptography::signatures::gen_sig_keys,
+            engine::rng_source::test_rng_source, vault::storage::ram::RamStorage,
+        };
+
+        let mut config: CoreConfig =
+            init_conf(&format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let threshold_config = config.threshold.as_mut().unwrap();
+        threshold_config.my_id = Some(1);
+        // No peers, so no default context to seed.
+        threshold_config.peers = None;
+        let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+        let base_kms = BaseKmsStruct::new_no_signing_key(
+            kms_grpc::rpc_types::KMSType::Threshold,
+            verf_key,
+            test_rng_source(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _booted = new_real_threshold_kms(
+            config,
+            RamStorage::new(),
+            RamStorage::new(),
+            None,
+            None,
+            listener,
+            base_kms,
+            None,
+            std::future::pending(),
+        )
+        .await
+        .expect("a node without its signing key must boot in recovery mode");
+    }
 }

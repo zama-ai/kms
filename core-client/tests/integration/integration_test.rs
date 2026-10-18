@@ -2775,23 +2775,28 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     )
     .await;
 
-    // Initialize custodian backup
-    let operator_recovery_resps =
-        custodian_backup_init(&single_core_config_path, temp_path, None).await;
+    // Recover twice: once from the installed context, and once naming the context
+    // as an operator does after a rotation. A successful recovery clears the
+    // ephemeral key, so the second initialization does not need to overwrite it.
+    for custodian_context_id in [None, Some(RequestId::from_str(&cus_backup_id)?)] {
+        // Initialize custodian backup
+        let operator_recovery_resps =
+            custodian_backup_init(&single_core_config_path, temp_path, custodian_context_id).await;
 
-    // Re-encrypt with custodian keys (single operator)
-    let custodian_recovery_output =
-        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
+        // Re-encrypt with custodian keys (single operator)
+        let custodian_recovery_output =
+            custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
 
-    // Recover backup using custodian outputs
-    let recovery_backup_id = custodian_backup_recovery(
-        &single_core_config_path,
-        temp_path,
-        custodian_recovery_output,
-        RequestId::from_str(&cus_backup_id)?,
-    )
-    .await;
-    assert_eq!(cus_backup_id, recovery_backup_id);
+        // Recover backup using custodian outputs
+        let recovery_backup_id = custodian_backup_recovery(
+            &single_core_config_path,
+            temp_path,
+            custodian_recovery_output,
+            RequestId::from_str(&cus_backup_id)?,
+        )
+        .await;
+        assert_eq!(cus_backup_id, recovery_backup_id);
+    }
 
     Ok(())
 }

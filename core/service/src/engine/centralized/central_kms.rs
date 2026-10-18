@@ -1853,31 +1853,6 @@ pub(crate) mod tests {
         assert_eq!(decrypted.plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
-    #[test]
-    fn sanity_check_sns_compression_test_params() {
-        use tfhe::prelude::{FheDecrypt, FheEncrypt, SquashNoise};
-        let params = TEST_PARAM;
-        let cks = crate::util::key_setup::local_material::generate_client_fhe_key(
-            params,
-            tfhe::Tag::default(),
-            None,
-        );
-        let sks = cks.generate_server_key();
-
-        tfhe::set_server_key(sks);
-        let pt = 12u32;
-        let ct = tfhe::FheUint32::encrypt(pt, &cks);
-        let large_ct = ct.squash_noise().unwrap();
-
-        let compressed_large_ct = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
-            .push(large_ct)
-            .build()
-            .unwrap();
-        let new_large_ct: tfhe::SquashedNoiseFheUint = compressed_large_ct.get(0).unwrap().unwrap();
-        let actual_pt: u32 = new_large_ct.decrypt(&cks);
-        assert_eq!(actual_pt, pt);
-    }
-
     /// A node that lost its signing key boots in recovery mode, skipping the storage checks, so
     /// that it can still recover its keys from the custodians.
     #[tokio::test]

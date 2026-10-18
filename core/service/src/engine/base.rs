@@ -1843,13 +1843,9 @@ pub(crate) mod tests {
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
         dummy_domain,
-        engine::{
-            base::{
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_info_uncompressed_keygen,
-                compute_preprocessing_signatures, compute_public_decryption_message,
-                hash_versioned,
-            },
-            centralized::central_kms::generate_uncompressed_fhe_keys,
+        engine::base::{
+            DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_info_uncompressed_keygen,
+            compute_preprocessing_signatures, compute_public_decryption_message, hash_versioned,
         },
         util::key_setup::{
             FhePublicKey,
@@ -1873,9 +1869,8 @@ pub(crate) mod tests {
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
     use tfhe_versionable::{Unversionize, Upgrade, VersionizeOwned};
-    use threshold_execution::{
-        keyset_config::StandardKeySetConfig,
-        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
+    use threshold_execution::tfhe_internals::{
+        public_keysets::FhePubKeySet, utils::expanded_encrypt,
     };
     use threshold_types::rng::AesRng;
 
@@ -2427,22 +2422,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_wrong_type() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let msg = 32u32;
         tfhe::set_server_key(pubkeyset.server_key);
@@ -2477,22 +2461,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_wrong_ct_format() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let msg = 32u32;
         tfhe::set_server_key(pubkeyset.server_key);
@@ -2554,22 +2527,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_missing_decompression_key() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let (
             _raw_server_key,

@@ -877,6 +877,30 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
+        {
+            // Invalid argument because the context ID has a bad format
+            let mut rng = AesRng::seed_from_u64(23);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }),
+                domain: Some(domain.clone()),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]

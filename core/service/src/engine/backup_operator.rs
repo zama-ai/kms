@@ -1817,7 +1817,7 @@ mod tests {
         .await
         .unwrap();
         let base_kms = boot_base_kms(
-            KMSType::Centralized,
+            KMSType::Threshold,
             &private_storage,
             &lost,
             Some(&vault),
@@ -2015,7 +2015,7 @@ mod tests {
         let identity = NodeSigningIdentity::new(sig_key, seed);
         let operator = RealBackupOperator::new(
             BaseKmsStruct::new(
-                kms_grpc::rpc_types::KMSType::Centralized,
+                kms_grpc::rpc_types::KMSType::Threshold,
                 identity.clone(),
                 test_rng_source(),
             ),

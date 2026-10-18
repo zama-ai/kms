@@ -79,11 +79,12 @@ where
         .await
         .unwrap();
 
-    // The CRS migration is independent of the KMS mode. Centralized mode avoids unrelated PRSS setup.
+    // The CRS migration is independent of the KMS mode. Without legacy PRSS data, the PRSS
+    // migration is a no-op, so the test needs no PRSS setup.
     migrate_to_0_15_x(
         &mut public_storage,
         &mut private_storage,
-        KMSType::Centralized,
+        KMSType::Threshold,
         None,
     )
     .await
@@ -105,7 +106,7 @@ where
     migrate_to_0_15_x(
         &mut public_storage,
         &mut private_storage,
-        KMSType::Centralized,
+        KMSType::Threshold,
         None,
     )
     .await

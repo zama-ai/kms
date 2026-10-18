@@ -3384,7 +3384,7 @@ mod tests {
 
     #[test]
     fn test_core_client_config() {
-        let path_to_config = "config/client_local_centralized.toml".to_string();
+        let path_to_config = "config/client_local_threshold.toml".to_string();
         tracing::info!("Path to config: {:?}", &path_to_config);
         let cc_conf_test: CoreClientConfig = Settings::builder()
             .path(&path_to_config)
@@ -3524,7 +3524,7 @@ mod tests {
 
     #[test]
     fn default_domain_omitted_falls_back_to_dummy() {
-        let toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        let toml_str = build_test_toml("threshold", None, 1, 1, &[1]);
         let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
         assert!(conf.default_domain.is_none());
         // The fallback must equal the built-in dummy domain so config files without a
@@ -3537,7 +3537,7 @@ mod tests {
         // All shipped client TOMLs embed these literals and document them as matching the
         // built-in default. This guards that the two stay in lockstep: if `dummy_domain()`
         // changes, either this test or the shipped [default_domain] sections must change.
-        let mut toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        let mut toml_str = build_test_toml("threshold", None, 1, 1, &[1]);
         toml_str.push_str(
             "\n[default_domain]\n\
              name = \"Authorization token\"\n\
@@ -3599,7 +3599,7 @@ mod tests {
     fn test_preproc_result_verify_flags() {
         // No [default_domain] section, so verification falls back to the dummy domain.
         let cc_conf: CoreClientConfig =
-            toml::from_str(&build_test_toml("centralized", None, 1, 1, &[1])).unwrap();
+            toml::from_str(&build_test_toml("threshold", None, 1, 1, &[1])).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let client = Client::new(

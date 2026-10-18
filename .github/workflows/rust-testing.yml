@@ -43,12 +43,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Core client - threshold tests. Built with `slow_tests` so the heavy
-          # threshold tests (insecure, default preproc-keygen, 6-party context
-          # switch) run per-PR.
+          # Core client - threshold tests. Built with `slow_tests` and `insecure`
+          # so the heavy threshold tests (insecure keygen/CRS, default
+          # preproc-keygen, 6-party context switch) run per-PR.
           - job_name: core-client-threshold
             crate_names: '-p kms-core-client'
-            args_tests: '--features slow_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker'
+            args_tests: '--features slow_tests,insecure -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker'
             skip_test_material: false
             lfs: false
             runs_on: '64cpu-linux-x64'

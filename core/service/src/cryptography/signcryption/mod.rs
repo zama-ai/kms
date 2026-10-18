@@ -611,11 +611,11 @@ mod tests {
         {
             let mut cipher = correct_cipher.clone();
             cipher.payload[0] ^= 1;
-            assert!(
-                f.unsigncryption_key
-                    .unsigncrypt::<TestType>(DSEP, &cipher)
-                    .is_err()
-            );
+            let err = f
+                .unsigncryption_key
+                .unsigncrypt::<TestType>(DSEP, &cipher)
+                .unwrap_err();
+            assert!(matches!(err, CryptographyError::AesGcmError(_)), "{err}");
         }
 
         // use the wrong receiver decryption key, leaving the rest of the reader
@@ -626,28 +626,33 @@ mod tests {
                 decryption_key: other.unsigncryption_key.decryption_key,
                 ..f.unsigncryption_key.clone()
             };
-            assert!(
-                wrong_reader
-                    .unsigncrypt::<TestType>(DSEP, &correct_cipher)
-                    .is_err()
-            );
+            let err = wrong_reader
+                .unsigncrypt::<TestType>(DSEP, &correct_cipher)
+                .unwrap_err();
+            assert!(matches!(err, CryptographyError::AesGcmError(_)), "{err}");
         }
 
         // use the wrong sender verification key
         {
             let (wrong_verf_key, _) = gen_sig_keys(&mut f.rng);
+            let err = f
+                .reader_for(VerfKeySet::ecdsa_only(wrong_verf_key))
+                .unsigncrypt::<TestType>(DSEP, &correct_cipher)
+                .unwrap_err();
             assert!(
-                f.reader_for(VerfKeySet::ecdsa_only(wrong_verf_key))
-                    .unsigncrypt::<TestType>(DSEP, &correct_cipher)
-                    .is_err()
+                matches!(err, CryptographyError::VerificationError(_)),
+                "{err}"
             );
         }
 
         // use bad domain separator
+        let err = f
+            .unsigncryption_key
+            .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
+            .unwrap_err();
         assert!(
-            f.unsigncryption_key
-                .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
-                .is_err()
+            matches!(err, CryptographyError::VerificationError(_)),
+            "{err}"
         );
 
         // happy path should still work at the end

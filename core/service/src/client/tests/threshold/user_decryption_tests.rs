@@ -181,6 +181,141 @@ async fn test_user_decryption_threshold_precompute_sns(
     .await;
 }
 
+#[rstest::rstest]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_no_compression(#[values(true, false)] secure: bool) {
+    user_decryption_threshold(
+        TEST_PARAM,
+        &TEST_THRESHOLD_KEY_ID_4P,
+        false,
+        TestingPlaintext::U8(u8::MAX),
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        secure,
+        4,
+        None,
+        None,
+        None,
+    )
+    .await;
+}
+
+/// Checks that every party fails a user decryption of an oversized garbage ciphertext with an
+/// error instead of a crash, and that the parties still serve user decryptions afterward.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_threshold_largecipher() {
+    let amount_parties = 4;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("user_decryption_threshold_largecipher")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(TestMaterialSpec::threshold_basic(amount_parties))
+        .with_prss()
+        .build()
+        .await
+        .unwrap();
+    let mut internal_client = env.create_internal_client(&TEST_PARAM, None).await.unwrap();
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
+    let decrypt = async |req: &UserDecryptionRequest| {
+        let mut out = Vec::new();
+        for (party, client) in &kms_clients {
+            let mut client = client.clone();
+            let result = match client.user_decrypt(tonic::Request::new(req.clone())).await {
+                Ok(_) => retrying_poll(
+                    client,
+                    req.request_id.clone().unwrap(),
+                    "user decryption result",
+                    PollConfig::long_poll_config(),
+                    |c, r| Box::pin(async move { c.get_user_decryption_result(r).await }),
+                )
+                .await
+                .map(|resp| resp.into_inner()),
+                Err(status) => Err(status),
+            };
+            out.push((*party, result));
+        }
+        out
+    };
+
+    let garbage_ct = TypedCiphertext {
+        ciphertext: vec![1_u8; 100000].into(),
+        fhe_type: tfhe::FheTypes::Uint32 as i32,
+        ciphertext_format: kms_grpc::kms::v1::CiphertextFormat::default().into(),
+        external_handle: vec![123],
+    };
+    let (garbage_req, _, _) = internal_client
+        .user_decryption_request(
+            &dummy_domain(),
+            vec![garbage_ct],
+            &derive_request_id("TEST_USER_DECRYPT_LARGECIPHER").unwrap(),
+            &TEST_THRESHOLD_KEY_ID_4P,
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
+    for (party, result) in decrypt(&garbage_req).await {
+        let status = result.unwrap_err();
+        assert_eq!(
+            status.code(),
+            tonic::Code::Internal,
+            "party {party}: unexpected status for an oversized ciphertext: {status:?}"
+        );
+    }
+
+    let msg = TestingPlaintext::U8(42);
+    let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+        Some(&material_path),
+        msg,
+        &TEST_THRESHOLD_KEY_ID_4P,
+        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+    )
+    .await;
+    let valid_ct = TypedCiphertext {
+        ciphertext: ct.into(),
+        fhe_type: fhe_type as i32,
+        ciphertext_format: ct_format.into(),
+        external_handle: vec![124],
+    };
+    let valid_req_id = derive_request_id("TEST_USER_DECRYPT_AFTER_LARGECIPHER").unwrap();
+    let valid_req = internal_client
+        .user_decryption_request(
+            &dummy_domain(),
+            vec![valid_ct],
+            &valid_req_id,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
+    let responses = decrypt(&valid_req.0)
+        .await
+        .into_iter()
+        .map(|(_, result)| result.unwrap())
+        .collect();
+    process_batch_threshold_user_decryption(
+        &mut internal_client,
+        msg,
+        true,
+        amount_parties,
+        None,
+        HashSet::new(),
+        vec![valid_req],
+        HashMap::from([(valid_req_id, responses)]),
+        get_server_private_keys(amount_parties, &material_path).await,
+    )
+    .await;
+}
+
 #[cfg(feature = "wasm_tests")]
 #[rstest::rstest]
 #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
@@ -577,6 +712,31 @@ async fn process_batch_threshold_user_decryption(
         let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
         // NOTE: throw away one response and it should still work.
         let plaintexts = if secure {
+            // Every response must echo the request's extra data. Validation rejects each
+            // tampered response on its own and reports only that too few responses remain, so
+            // the batch error does not name the extra-data mismatch.
+            let bad_extra_data_resps: Vec<_> = responses
+                .iter()
+                .cloned()
+                .map(|mut resp| {
+                    resp.extra_data = vec![42];
+                    resp
+                })
+                .collect();
+            assert!(
+                internal_client
+                    .process_user_decryption_resp(
+                        &client_req,
+                        &domain,
+                        enc_pk,
+                        enc_sk,
+                        None,
+                        &bad_extra_data_resps,
+                    )
+                    .is_err(),
+                "responses with tampered extra data must be rejected"
+            );
+
             // test with one fewer response if we haven't crashed too many parties already
             let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
                 Some(

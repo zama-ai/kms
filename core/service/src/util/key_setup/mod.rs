@@ -1720,8 +1720,7 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 mod tests {
     use super::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
-        delete_non_legacy_verf_material, ensure_all_verf_material,
-        ensure_central_server_signing_keys_exist, ensure_no_verf_material,
+        delete_non_legacy_verf_material, ensure_all_verf_material, ensure_no_verf_material,
         ensure_threshold_server_signing_key_exists,
     };
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
@@ -1757,6 +1756,23 @@ mod tests {
     use threshold_types::rng::AesRng;
 
     const DSEP: &DomainSep = b"SEEDKGEN";
+
+    /// Runs [ensure_threshold_server_signing_key_exists] for party 1.
+    async fn ensure_party_signing_key_exists(
+        pub_storage: &mut RamStorage,
+        priv_storage: &mut RamStorage,
+        deterministic: bool,
+    ) -> anyhow::Result<bool> {
+        ensure_threshold_server_signing_key_exists(
+            pub_storage,
+            priv_storage,
+            deterministic,
+            std::num::NonZeroUsize::MIN,
+            "p1".to_string(),
+            false,
+        )
+        .await
+    }
 
     #[tokio::test]
     async fn default_epoch_fixture_is_written_once_per_party() {
@@ -1982,7 +1998,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
 
@@ -2188,7 +2204,7 @@ mod tests {
         let mut priv_storage = RamStorage::new();
 
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .unwrap()
         );
@@ -2220,7 +2236,7 @@ mod tests {
         let mut priv_storage = RamStorage::new();
 
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .unwrap()
         );
@@ -2249,7 +2265,7 @@ mod tests {
         // Rerunning is a no-op: no new key, no new seed.
         let key_before = persisted_signing_key_bytes(&priv_storage).await;
         assert!(
-            !ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            !ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .unwrap()
         );
@@ -2268,7 +2284,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
         let key_before = persisted_signing_key_bytes(&priv_storage).await;
@@ -2285,13 +2301,9 @@ mod tests {
                 assert!(!pub_storage.data_exists(&req_id, &data_type).await.unwrap());
 
                 assert!(
-                    !ensure_central_server_signing_keys_exist(
-                        &mut pub_storage,
-                        &mut priv_storage,
-                        true
-                    )
-                    .await
-                    .unwrap(),
+                    !ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
+                        .await
+                        .unwrap(),
                     "backfilling must not count as generating a new identity"
                 );
 
@@ -2329,7 +2341,7 @@ mod tests {
         assert!(!seed_exists(&priv_storage).await);
 
         assert!(
-            !ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            !ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .unwrap(),
             "an existing signing key must not count as newly generated"
@@ -2390,7 +2402,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
 
@@ -2404,7 +2416,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .is_err(),
             "a missing seed behind published material must be an error, not a regeneration"
@@ -2421,7 +2433,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
         // The ECDSA key stays untouched throughout, so it is the seed alone that
@@ -2470,7 +2482,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
                 .await
                 .is_err()
         );
@@ -2490,7 +2502,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
         let first_key = persisted_signing_key_bytes(&priv_storage).await;
@@ -2510,7 +2522,7 @@ mod tests {
 
         // Regenerate non-deterministically.
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, false)
+            ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, false)
                 .await
                 .unwrap(),
             "a wiped storage must generate a fresh identity"
@@ -2626,7 +2638,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+        ensure_party_signing_key_exists(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
 

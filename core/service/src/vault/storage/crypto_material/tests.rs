@@ -4,7 +4,10 @@ use crate::{
         NodeSigningIdentity, PrivateSigKey, SigningSchemeType, gen_sig_keys,
     },
     dummy_domain,
-    engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
+    engine::base::{
+        CrsGenMetadata, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
+        derive_request_id,
+    },
     util::key_setup::local_material::async_generate_crs,
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
@@ -29,8 +32,11 @@ use tfhe::{
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
+    private_keysets::PrivateKeySet,
     public_keysets::FhePubKeySet,
-    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
+    test_feature::{
+        gen_key_set, gen_uncompressed_key_set, keygen_all_party_shares_from_client_key,
+    },
 };
 use threshold_types::rng::AesRng;
 use tokio::sync::{Mutex, RwLock};
@@ -145,6 +151,96 @@ fn generate_uncompressed_keys(
         vec![],
     )
     .unwrap()
+}
+
+/// Returns a signing key, the test domain, a compressed keyset tagged with `key_id`, its compact
+/// public key and its client key. The `seed` determines both the signing key and the keyset.
+fn generate_compressed_keyset(
+    key_id: &RequestId,
+    seed: u64,
+) -> (
+    PrivateSigKey,
+    alloy_sol_types::Eip712Domain,
+    CompressedXofKeySet,
+    CompactPublicKey,
+    tfhe::ClientKey,
+) {
+    let mut rng = AesRng::seed_from_u64(seed);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+    let (keyset, compressed_keyset) = gen_key_set(TEST_PARAM, key_id.into(), &mut rng).unwrap();
+    (
+        sk,
+        dummy_domain(),
+        compressed_keyset,
+        keyset.public_keys.public_key,
+        keyset.client_key,
+    )
+}
+
+/// Builds [ThresholdFheKeys] for a compressed keyset with metadata signed by `sk`.
+///
+/// The caller passes `compact_pk` so that a test can reproduce the production invariant: a
+/// migration preserves the old `CompactPublicKey` bytes at the new key ID.
+#[expect(clippy::too_many_arguments)]
+fn threshold_fhe_keys_for_compressed_keyset(
+    req_id: &RequestId,
+    prep_id: &RequestId,
+    private_keys: Arc<PrivateKeySet<4>>,
+    compact_pk: &CompactPublicKey,
+    sk: &PrivateSigKey,
+    domain: &alloy_sol_types::Eip712Domain,
+    compressed_keyset: &CompressedXofKeySet,
+    extra_data: Vec<u8>,
+) -> ThresholdFheKeys {
+    let info = compute_info_compressed_keygen(
+        &NodeSigningIdentity::ecdsa_only(sk.clone()),
+        &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
+        &DSEP_PUBDATA_KEY,
+        prep_id,
+        req_id,
+        compressed_keyset,
+        compact_pk,
+        domain,
+        extra_data,
+    )
+    .unwrap();
+
+    ThresholdFheKeys::new(
+        private_keys,
+        PublicKeyMaterial::new(compressed_keyset.clone()),
+        info,
+    )
+}
+
+/// Returns a compressed keyset, its compact public key and the first party's [ThresholdFheKeys]
+/// for it. The `seed` determines the key material.
+fn generate_threshold_compressed_keys(
+    key_id: &RequestId,
+    prep_id: &RequestId,
+    seed: u64,
+) -> (CompressedXofKeySet, CompactPublicKey, ThresholdFheKeys) {
+    let (sk, domain, compressed_keyset, compact_pk, client_key) =
+        generate_compressed_keyset(key_id, seed);
+    let mut rng = AesRng::seed_from_u64(seed);
+    let key_shares = keygen_all_party_shares_from_client_key(
+        &client_key,
+        TEST_PARAM.classic_pbs(),
+        &mut rng,
+        4,
+        1,
+    )
+    .unwrap();
+    let threshold_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
+        key_id,
+        prep_id,
+        Arc::new(key_shares[0].to_owned()),
+        &compact_pk,
+        &sk,
+        &domain,
+        &compressed_keyset,
+        vec![],
+    );
+    (compressed_keyset, compact_pk, threshold_fhe_keys)
 }
 
 const TEST_METRIC: &str = "test";
@@ -286,6 +382,30 @@ async fn read_public_key() {
 }
 
 #[tokio::test]
+async fn read_public_key_from_threshold_storage() {
+    let crypto_storage = ram_threshold_storage(None);
+    let pub_storage = crypto_storage.inner.public_storage.clone();
+
+    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
+    let config = ConfigBuilder::with_custom_parameters(pbs_params);
+    let client_key = tfhe::ClientKey::generate(config);
+    let public_key = CompactPublicKey::new(&client_key);
+
+    let req_id = derive_request_id("read_keys_threshold").unwrap();
+    store_versioned_at_request_id(
+        &mut *pub_storage.lock().await,
+        &req_id,
+        &public_key,
+        &PubDataType::PublicKey.to_string(),
+    )
+    .await
+    .unwrap();
+
+    // Reading the public key without a cache succeeds.
+    let _pk = read_cloned_pk(pub_storage, &req_id).await.unwrap();
+}
+
+#[tokio::test]
 async fn write_central_keys() {
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
@@ -408,6 +528,66 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             &req_id,
             &epoch_id,
             key_info,
+            public_key_set,
+            meta_store.clone(),
+            permit,
+            "",
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "expected storage failure to surface an error, got: {result:?}"
+    );
+
+    let is_err_status = {
+        let guard = meta_store.read().await;
+        matches!(
+            guard
+                .retrieve(&req_id)
+                .expect("request should remain tracked in meta store after failure"),
+            EntryState::Done(Err(_))
+        )
+    };
+    assert!(
+        is_err_status,
+        "expected terminal error status in meta store after storage failure"
+    );
+}
+
+#[tokio::test]
+async fn write_threshold_keys_failed_storage_sets_terminal_error() {
+    let req_id =
+        derive_request_id("write_threshold_keys_failed_storage_sets_terminal_error").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("write_threshold_keys_failed_storage_sets_terminal_error_epoch")
+            .unwrap()
+            .into();
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+        setup_threshold_store(&req_id, FailingRamStorage::new());
+    let public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
+
+    let meta_store = MetaStore::new_unlimited();
+    let permit = {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_id).unwrap()
+    };
+
+    crypto_storage
+        .inner
+        .public_storage
+        .lock()
+        .await
+        .set_fail_store_at(StorageEntry::new(
+            req_id,
+            None,
+            PubDataType::ServerKey.to_string(),
+        ));
+
+    let result = crypto_storage
+        .write_fhe_keys(
+            &req_id,
+            &epoch_id,
+            threshold_fhe_keys,
             public_key_set,
             meta_store.clone(),
             permit,
@@ -633,6 +813,8 @@ async fn write_threshold_keys_failed_storage() {
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
+    // The successful write caches exactly one FHE key entry.
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 
     // check the meta store is correct
     {
@@ -742,6 +924,68 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
             &req_id,
             &epoch_id,
             key_info,
+            PublicKeySet::Compressed {
+                compact_public_key: Arc::new(compact_pk),
+                compressed_keyset: Arc::new(compressed_keyset),
+            },
+            meta_store,
+            permit,
+            "",
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        crypto_storage
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .expect("sanity check: existence query should not fail"),
+        "complete compressed layout should be considered present"
+    );
+
+    {
+        let mut guard = crypto_storage.inner.public_storage.lock().await;
+        delete_at_request_id(&mut *guard, &req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+    }
+
+    assert!(
+        !crypto_storage
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .expect("storage should still be queryable after deleting PublicKey"),
+        "compressed keys should be treated as missing when the standalone PublicKey is absent"
+    );
+}
+
+#[tokio::test]
+async fn threshold_compressed_fhe_keys_exist_requires_standalone_public_key() {
+    let req_id =
+        derive_request_id("threshold_compressed_fhe_keys_exist_requires_standalone_public_key")
+            .unwrap();
+    let epoch_id: EpochId = derive_request_id(
+        "threshold_compressed_fhe_keys_exist_requires_standalone_public_key_epoch",
+    )
+    .unwrap()
+    .into();
+
+    let crypto_storage = ram_threshold_storage(None);
+    let (compressed_keyset, compact_pk, threshold_fhe_keys) =
+        generate_threshold_compressed_keys(&req_id, &req_id, 50);
+
+    let meta_store = MetaStore::new_unlimited();
+
+    let permit = {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_id).unwrap()
+    };
+
+    crypto_storage
+        .write_fhe_keys(
+            &req_id,
+            &epoch_id,
+            threshold_fhe_keys,
             PublicKeySet::Compressed {
                 compact_public_key: Arc::new(compact_pk),
                 compressed_keyset: Arc::new(compressed_keyset),
@@ -1256,6 +1500,67 @@ async fn handle_fhe_keys_compressed_writes_and_caches() {
     assert!(
         pub_s
             .data_exists(&req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn handle_threshold_fhe_keys_compressed_writes_and_caches() {
+    // Compressed layout: stores CompressedXofKeySet + PublicKey, no ServerKey.
+    let req_id = derive_request_id("handle_threshold_fhe_keys_compressed").unwrap();
+    let epoch_id: EpochId = derive_request_id("handle_threshold_fhe_keys_compressed_epoch")
+        .unwrap()
+        .into();
+    let storage = fresh_ram_storage();
+
+    let (compressed_keyset, compact_pk, threshold_fhe_keys) =
+        generate_threshold_compressed_keys(&req_id, &req_id, 7);
+    let public_key_set = PublicKeySet::Compressed {
+        compact_public_key: Arc::new(compact_pk),
+        compressed_keyset: Arc::new(compressed_keyset),
+    };
+
+    let cache = Arc::new(RwLock::new(HashMap::new()));
+    storage
+        .handle_fhe_keys(
+            &req_id,
+            &epoch_id,
+            threshold_fhe_keys,
+            PrivDataType::FheKeyInfo,
+            public_key_set,
+            cache.clone(),
+            false,
+            TEST_METRIC,
+        )
+        .await
+        .unwrap();
+
+    let cache_guard = cache.read().await;
+    assert!(cache_guard.contains_key(&(req_id, epoch_id)));
+    let pub_s = storage.public_storage.lock().await;
+    assert!(
+        pub_s
+            .data_exists(&req_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .unwrap()
+    );
+    assert!(
+        pub_s
+            .data_exists(&req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !pub_s
+            .data_exists(&req_id, &PubDataType::ServerKey.to_string())
+            .await
+            .unwrap()
+    );
+    let priv_s = storage.private_storage.lock().await;
+    assert!(
+        priv_s
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
             .await
             .unwrap()
     );

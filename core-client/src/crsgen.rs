@@ -455,24 +455,17 @@ pub(crate) async fn do_abort_crs_gen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::{
-        rpc_types::{PrivDataType, ecdsa_signatures},
-        solidity_types::CrsgenVerification,
-    };
+    use kms_grpc::{rpc_types::ecdsa_signatures, solidity_types::CrsgenVerification};
     use kms_lib::{
-        consts::{
-            DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM, default_extra_data,
-        },
-        cryptography::signatures::{
-            PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
-        },
-        util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+        consts::{TEST_PARAM, default_extra_data},
+        cryptography::signatures::{PublicSigKey, compute_eip712_signature, gen_sig_keys},
+        engine::base::derive_request_id,
+        vault::storage::crypto_material::calculate_max_num_bits,
     };
     use rand::SeedableRng;
-    use std::str::FromStr;
-    use tfhe::zk::CompactPkeCrs;
-    use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+    use threshold_execution::zk::ceremony::{
+        max_num_bits_from_crs, public_parameters_by_trusted_setup,
+    };
 
     /// The error every failed ECDSA check now reports; see the keygen twin.
     const UNKNOWN_PARTY: &str = "belongs to no known party";
@@ -491,42 +484,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_eip712_sigs() {
-        let mut pub_storage = RamStorage::new();
-        let mut priv_storage = RamStorage::new();
-
-        // make sure signing keys exist
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, sk) = gen_sig_keys(&mut rng);
+        let client = client_knowing(verf_key);
 
         // compute a small CRS for testing
-        let crs_id = &TEST_CENTRAL_CRS_ID;
-        ensure_central_crs_exists(
-            &mut pub_storage,
-            &mut priv_storage,
-            TEST_PARAM,
-            crs_id,
-            &DEFAULT_EPOCH_ID,
-            true,
+        let crs_id = &derive_request_id("test_eip712_sigs_crs").unwrap();
+        let sid = crs_id.derive_session_id().unwrap();
+        let pke_params = TEST_PARAM.compact_pk_enc_params();
+        let crs = public_parameters_by_trusted_setup(
+            &pke_params,
+            Some(calculate_max_num_bits(&TEST_PARAM)),
+            sid,
+            &mut rng,
         )
-        .await;
-        let crs: CompactPkeCrs = read_versioned_at_request_id(
-            &pub_storage,
-            &RequestId::from_str(&crs_id.to_string()).unwrap(),
-            &PubDataType::CRS.to_string(),
-        )
-        .await
+        .unwrap()
+        .try_into_tfhe_zk_pok_pp(&pke_params, sid)
         .unwrap();
-
-        // read generated private signature key, derive public verifcation key and address from it
-        let sk: PrivateSigKey = read_versioned_at_request_id(
-            &priv_storage,
-            &RequestId::from_str(&SIGNING_KEY_ID.to_string()).unwrap(),
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        let client = client_knowing(sk.verf_key());
 
         // set up a dummy EIP 712 domain
         let domain = alloy_sol_types::eip712_domain!(

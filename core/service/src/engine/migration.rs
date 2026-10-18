@@ -3224,7 +3224,7 @@ mod tests {
         migrate_to_0_15_x(
             &mut pub_storage,
             &mut priv_storage,
-            KMSType::Centralized,
+            KMSType::Threshold,
             None,
         )
         .await
@@ -3241,14 +3241,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_centralized_empty() {
+    async fn test_migrate_to_0_15_x_empty() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
         migrate_to_0_15_x(
             &mut pub_storage,
             &mut priv_storage,
-            KMSType::Centralized,
+            KMSType::Threshold,
             None,
         )
         .await

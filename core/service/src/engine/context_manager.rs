@@ -1662,9 +1662,28 @@ mod tests {
             Arc::new(TaskTracker::new()),
         );
 
+        let non_existent_id = ContextId::from_bytes([99u8; 32]);
+        assert!(
+            !context_manager
+                .mpc_context_exists_and_consistent(&non_existent_id)
+                .await
+                .unwrap()
+        );
+
         let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
         assert_eq!(1, context_manager.session_maker.context_count().await);
+        assert!(
+            context_manager
+                .mpc_context_exists_in_cache(&context_id)
+                .await
+        );
+        assert!(
+            context_manager
+                .mpc_context_exists_and_consistent(&context_id)
+                .await
+                .unwrap()
+        );
 
         // check that the context is stored
         {
@@ -1755,6 +1774,23 @@ mod tests {
 
         // The keeper context is untouched.
         assert_eq!(1, context_manager.session_maker.context_count().await);
+        assert!(
+            !context_manager
+                .mpc_context_exists_in_cache(&context_id)
+                .await
+        );
+        assert!(
+            !context_manager
+                .mpc_context_exists_and_consistent(&context_id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            context_manager
+                .mpc_context_exists_and_consistent(&keeper_context_id)
+                .await
+                .unwrap()
+        );
 
         {
             let storage_ref = Arc::clone(&crypto_storage.private_storage);
@@ -1782,6 +1818,65 @@ mod tests {
                 "context destruction must not delete epoch data: epoch_ids is ignored by the context manager"
             );
         }
+
+        // With three contexts, destroying the middle one leaves the other two in place.
+        let middle_context_id = ContextId::from_bytes([9u8; 32]);
+        let last_context_id = ContextId::from_bytes([10u8; 32]);
+        for id in [middle_context_id, last_context_id] {
+            let context = ContextInfo {
+                mpc_nodes: vec![NodeInfo {
+                    mpc_identity: "Node1".to_string(),
+                    party_id: 1,
+                    external_url: "http://localhost:12345".to_string(),
+                    ca_cert: None,
+                    public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+                }],
+                context_id: id,
+                software_version: SoftwareVersion {
+                    major: 0,
+                    minor: 1,
+                    patch: 0,
+                    tag: None,
+                },
+                threshold: 0,
+                pcr_values: vec![],
+            };
+            let request = Request::new(NewMpcContextRequest {
+                new_context: Some(context.try_into().unwrap()),
+            });
+            context_manager.new_mpc_context(request).await.unwrap();
+        }
+        assert_eq!(3, context_manager.session_maker.context_count().await);
+
+        let request = Request::new(DestroyMpcContextRequest {
+            context_id: Some(middle_context_id.into()),
+        });
+        context_manager.destroy_mpc_context(request).await.unwrap();
+
+        assert_eq!(2, context_manager.session_maker.context_count().await);
+        for id in [keeper_context_id, last_context_id] {
+            assert!(context_manager.mpc_context_exists_in_cache(&id).await);
+            assert!(
+                context_manager
+                    .mpc_context_exists_and_consistent(&id)
+                    .await
+                    .unwrap()
+            );
+        }
+        assert!(
+            !context_manager
+                .mpc_context_exists_in_cache(&middle_context_id)
+                .await
+        );
+        assert!(
+            !context_manager
+                .mpc_context_exists_and_consistent(&middle_context_id)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

@@ -2684,16 +2684,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_private_storage_is_rejected_in_both_modes() {
+    async fn empty_private_storage_is_rejected() {
         let storage = RamStorage::new();
-        let registry = BTreeMap::new();
-        for layout in [threshold_layout(&registry), PrivateLayout::Centralized] {
-            let err = verify_private_storage_layout(&storage, layout)
-                .await
-                .expect_err("a serving node must have a signing identity")
-                .to_string();
-            assert!(err.contains(ERR_MISSING_SIGNING_IDENTITY), "got: {err}");
-        }
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect_err("a serving node must have a signing identity")
+            .to_string();
+        assert!(err.contains(ERR_MISSING_SIGNING_IDENTITY), "got: {err}");
     }
 
     #[tokio::test]
@@ -2784,7 +2781,7 @@ mod tests {
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
         store_context(&mut storage, &handle, &declared_id).await;
 
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("a context must use its declared ID as its storage handle")
             .to_string();
@@ -3025,18 +3022,18 @@ mod tests {
     async fn signing_key_or_seed_alone_is_a_valid_identity() {
         let mut storage = RamStorage::new();
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
-        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect("a node that predates the seed has only the ECDSA key");
 
         let mut storage = RamStorage::new();
         store_flat(&mut storage, PrivDataType::SigningSeed, &SIGNING_KEY_ID).await;
-        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect("a seed-only identity is a valid layout");
 
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
-        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect("key and seed together are a valid layout");
     }
@@ -3047,14 +3044,14 @@ mod tests {
         let wrong_id = test_id(214);
         store_flat(&mut storage, PrivDataType::SigningKey, &wrong_id).await;
 
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("the signing key must use its fixed handle")
             .to_string();
         assert!(err.contains(ERR_INVALID_SIGNING_KEY_LAYOUT), "got: {err}");
 
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("the signing key must be unique")
             .to_string();
@@ -3073,7 +3070,7 @@ mod tests {
         )
         .await;
 
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("the signing key must not be epoch-scoped")
             .to_string();
@@ -3086,7 +3083,7 @@ mod tests {
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
         store_flat(&mut storage, PrivDataType::SigningSeed, &test_id(215)).await;
 
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("the signing seed must use its fixed handle")
             .to_string();
@@ -3101,7 +3098,7 @@ mod tests {
             &SIGNING_KEY_ID,
         )
         .await;
-        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect_err("the signing seed must not be epoch-scoped")
             .to_string();

@@ -807,6 +807,77 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
+
+        {
+            // bad request ID format
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+                domain: Some(domain),
+                extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // bad context ID format
+            let req_id = RequestId::new_random(&mut rng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // bad epoch ID format
+            let req_id = RequestId::new_random(&mut rng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "badformat".to_string(),
+                }),
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
@@ -996,6 +1067,77 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn abort_already_finished() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        };
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+        let _crs = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
+            .await
+            .unwrap();
+
+        // The background task updates the meta store before it removes the cancellation token,
+        // so poll until the ongoing map no longer holds the request.
+        for _ in 0..100 {
+            if !crs_gen.ongoing.lock().await.contains_key(&req_id) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let err = crs_gen
+            .abort_crs_gen(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    // TODO(zama-ai/kms-internal/issues/2758): remove this test once validation no longer falls
+    // back to the default epoch.
+    /// A request without an epoch ID falls back to the default epoch and succeeds.
+    #[tokio::test]
+    async fn default_epoch_id() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
+        };
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+        let res = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            res.into_inner()
+                .request_id
+                .unwrap()
+                .request_id
+                .to_ascii_lowercase(),
+            req_id.as_str()
+        );
     }
 
     /// Which half of a partial CRS state exists when generation begins.

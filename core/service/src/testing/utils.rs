@@ -311,19 +311,19 @@ async fn test_purge() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
-    let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
-    let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
+    let mut pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
+    let mut priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
 
     // Check no keys exist
     assert!(
-        central_pub_storage
+        pub_storage
             .all_data_ids(&PubDataType::VerfKey.to_string())
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        central_priv_storage
+        priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())
             .await
             .unwrap()
@@ -331,10 +331,13 @@ async fn test_purge() {
     );
     // Create keys to be deleted
     assert!(
-        crate::util::key_setup::ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
+        crate::util::key_setup::ensure_threshold_server_signing_key_exists(
+            &mut pub_storage,
+            &mut priv_storage,
             true,
+            std::num::NonZeroUsize::MIN,
+            "p1".to_string(),
+            false,
         )
         .await
         .unwrap()
@@ -344,7 +347,7 @@ async fn test_purge() {
         let id = signing_material_id(scheme);
         for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
             assert!(
-                central_pub_storage
+                pub_storage
                     .all_data_ids(&data_type)
                     .await
                     .unwrap()
@@ -353,7 +356,7 @@ async fn test_purge() {
             );
         }
     }
-    let priv_ids = central_priv_storage
+    let priv_ids = priv_storage
         .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
@@ -371,7 +374,7 @@ async fn test_purge() {
     // Check the keys were deleted
     for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
         assert!(
-            central_pub_storage
+            pub_storage
                 .all_data_ids(&data_type)
                 .await
                 .unwrap()
@@ -380,7 +383,7 @@ async fn test_purge() {
         );
     }
     assert!(
-        central_priv_storage
+        priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())
             .await
             .unwrap()
