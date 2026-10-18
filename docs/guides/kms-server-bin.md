@@ -65,7 +65,7 @@ port = 50001
 
 ### Local test config
 
-To test the tool locally, the configuration file `../../core/service/config/local_keygen.toml` 
+To test the tool locally, the configuration file `../../core/service/config/local_keygen.toml`
 can be used:
 
 ```bash
