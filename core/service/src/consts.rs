@@ -91,8 +91,6 @@ cfg_if::cfg_if! {
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap());
         pub static TEST_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_13P").unwrap());
-        pub static TEST_CENTRAL_CRS_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_CENTRAL_CRS_ID").unwrap());
         pub static TEST_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap());
         pub static TEST_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
@@ -105,8 +103,6 @@ cfg_if::cfg_if! {
             LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap());
         pub static DEFAULT_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap());
-        pub static DEFAULT_CENTRAL_CRS_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_CRS_ID").unwrap());
         pub static DEFAULT_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap());
         pub static DEFAULT_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =

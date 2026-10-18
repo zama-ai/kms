@@ -1,6 +1,6 @@
 # Upgrade from v0.15 to v0.16
 
-Version 0.16 removes the KMS rate limiter. Remove the entire `[rate_limiter_conf]` section from every centralized and threshold KMS configuration file.
+Version 0.16 removes the KMS rate limiter. Remove the entire `[rate_limiter_conf]` section from every KMS configuration file.
 
 This includes all seven settings, regardless of their configured values:
 

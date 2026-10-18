@@ -59,7 +59,7 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
     client_key
 }
 
-/// compute the CRS in the centralized KMS.
+/// Computes a CRS by a trusted setup on this node and signs its metadata with `sk`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &NodeSigningIdentity,

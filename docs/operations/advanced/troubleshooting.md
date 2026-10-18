@@ -201,14 +201,14 @@ from, and escalate to the Zama team if you do not. Only the node's own prefix (`
 
 Every node also checks that its private storage is internally consistent before it serves.
 Private storage belongs to one node, so material that no flow of this node writes points at a
-misconfiguration (the wrong bucket or prefix, or a store reused between a centralized and a
-threshold deployment) or at a deletion that stopped half-way.
+misconfiguration (the wrong bucket or prefix, or a store reused between deployments) or at a
+deletion that stopped half-way.
 
 **Symptoms:** the pod exits during startup with one of these log lines:
 
 | Log line | Meaning |
 |---|---|
-| `Foreign material in private storage` | A threshold node found `FhePrivateKey` or legacy `PrssSetup`, or a centralized node found `FheKeyInfo`, PRSS material, or `EpochData`. |
+| `Foreign material in private storage` | The node found `FhePrivateKey` or legacy `PrssSetup`. |
 | `Dangling epoch in private storage` | Keysets or CRS metadata sit under an epoch that has no `EpochData`, so the node can neither serve nor delete them. Usually an epoch destruction that failed half-way. |
 | `Epoch without context in private storage` | An `EpochData` entry names a context that has no `Context` entry. |
 | `Context is stored under a different ID than it declares` | A `Context` entry uses a storage handle that differs from its declared context ID. |

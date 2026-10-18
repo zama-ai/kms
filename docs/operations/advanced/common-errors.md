@@ -90,7 +90,7 @@ This is likely due to a missing `#[cfg(feature = "non-wasm")]` for code that is 
 
 ## TFHE-rs version mismatch
 
-Happened once when the centralized version and the threshold deployed versions didn’t use the same TFHE-rs version.
+Happened once when two deployed versions didn’t use the same TFHE-rs version.
 In this case one has to be extra-careful otherwise trying to load the public key might crash.
 
 The error can look something like (but depends on the specific version/file type):
@@ -147,7 +147,6 @@ This is probably an issue with the docker images. Delete the old ones and build 
 
 ```rust
 docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
-docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build
 ```
 
 ## Missing field in ASC
@@ -248,24 +247,6 @@ docker build -f docker/core/service/Dockerfile --target dev \
   --build-arg KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev \
   -t ghcr.io/zama-ai/kms/core-service-insecure:latest-dev .
 ```
-
-## “MODE is  which is neither 'threshold' nor 'centralized’”
-
-in docker logs, for KMS validator service,  if you get :
-
-```jsx
-Instantiating ASCs
-MODE is  which is neither 'threshold' nor 'centralized', can't instantiate smart contract
-```
-
-- in `fhevm-L1-demo`repo, modify `docker-compose/docker-compose-full.yaml`, for the `kms-validator` service, by adding the following (or `threshold`) :
-
-```jsx
-    environment:
-      - MODE=centralized
-```
-
-- for more info, follow the same last steps as in [Option 2: the ASC + other stuff changed](https://www.notion.so/Option-2-the-ASC-other-stuff-changed-1295a7358d5e80c5a672d86ff223094a?pvs=21) (add a `MODE` to `kms-validator`  service)
 
 ## “transaction failed for ethereum-asc”
 

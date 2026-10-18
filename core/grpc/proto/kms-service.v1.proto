@@ -14,10 +14,6 @@ import "kms.v1.proto";
 // cores do not use this service; they use the separate, mutually authenticated
 // core-to-core interface. More details in docs/explanations/trust_model.md.
 //
-// The endpoints are mostly same for the centralized and threshold KMS
-// except some endpoints that are not applicable to the centralized KMS.
-// The exceptions are documented in the RPC documentation below.
-//
 // All endpoints may return the following errors, any exceptions are
 // also documented in the RPC documentation below.
 // In summary, only `NotFound`, `Unavailable`, and `ResourceExhausted` can be retried by the caller,
@@ -53,8 +49,6 @@ import "kms.v1.proto";
 service CoreServiceEndpoint {
   // Start computing the preprocessed material needed for a single key generation.
   //
-  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
-  //
   // The method is async in the sense that it returns immediately, but the actual preprocessing is done in the background.
   //
   // # Parameters
@@ -75,8 +69,6 @@ service CoreServiceEndpoint {
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
   // Retrieves the result from a preprocessing request.
-  //
-  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
   //
   // # Parameters
   // * `request` - The request ID under which the preprocessing was started
@@ -145,13 +137,9 @@ service CoreServiceEndpoint {
 
   // Aborts a key generation identified by its preprocessing ID.
   //
-  // In the threshold KMS this aborts either:
+  // This aborts either:
   //   * an ongoing preprocessing (before any key generation has consumed it), or
   //   * an ongoing key generation that has already consumed the preprocessing.
-  //
-  // In the centralized KMS, preprocessing is a no-op placeholder, so this
-  // endpoint only aborts an ongoing key generation that was started with the
-  // given `preproc_id`.
   //
   // # Parameters
   // * `request` - The `preproc_id` identifying the preprocessing used (or to be
@@ -163,8 +151,7 @@ service CoreServiceEndpoint {
   // * No `NewMpcEpoch`, `DestroyMpcEpoch`, or `DestroyMpcContext` call may be executed concurrently!
   // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   //   Furthermore, the request ID must be the same as the one used to start a preprocessing generation with method `KeyGenPreproc`.
-  //   In the threshold KMS the preprocessing or key generation identified by the `preproc_id` must be ongoing.
-  //   In the centralized KMS the key generation using the `preproc_id` must be ongoing.
+  //   The preprocessing or key generation identified by the `preproc_id` must be ongoing.
   // ## Post-condition:
   // * The `preproc_id` in `request` will not be usable again (neither will the associated `keygen_id` if key generation had been started).
   // * All data associated with the preprocessing identified by `preproc_id` has been removed.

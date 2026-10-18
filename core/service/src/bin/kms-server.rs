@@ -20,12 +20,9 @@ use kms_lib::{
         signatures::NodeSigningIdentity,
     },
     engine::{
-        backup_operator::boot_base_kms, centralized::central_kms::RealCentralizedKms,
-        context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
-        migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
-        threshold::service::new_real_threshold_kms,
+        backup_operator::boot_base_kms, context::SoftwareVersion, migration::migrate_to_0_15_x,
+        rng_source::RngSource, run_server, threshold::service::new_real_threshold_kms,
     },
-    grpc::MetaStoreStatusServiceImpl,
     vault::{
         Vault,
         aws::build_aws_sdk_config,
@@ -52,16 +49,12 @@ use tokio_rustls::rustls::{
 #[derive(Parser)]
 #[clap(name = "KMS server", version)]
 #[clap(
-    about = "We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file. \
+    about = "Runs one party of a threshold KMS. The configuration file must contain a `[threshold]` section. \
     See the help page for additional details (`kms-server --help`). \n
     Use the following to run a threshold KMS node with the default configuration: \n
     ./kms-server --config-file core/service/config/default_1.toml \n
     or using cargo : \n
     cargo run --bin kms-server -- --config-file core/service/config/default_1.toml \n
-    Use the following to run a centralized KMS node with the default configuration: \n
-    ./kms-server --config-file core/service/config/default_centralized.toml \n
-    or using cargo : \n
-    cargo run --bin kms-server -- --config-file core/service/config/default_centralized.toml \n
 
     If no configuration file is specified, the default configuration will be used \
     (core/service/config/default_1.toml). \n
@@ -323,8 +316,8 @@ fn main() -> anyhow::Result<()> {
     rt.block_on(main_exec())
 }
 
-/// Starts a KMS server.
-/// We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file.
+/// Starts a threshold KMS server.
+/// The configuration file must contain a `[threshold]` section.
 /// See the help page for additional details.
 /// Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file.
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
@@ -332,12 +325,17 @@ async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     let (mut core_config, tracer_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
-    if let Some(t) = core_config.threshold.as_mut()
-        && args.ignore_peerlist
-    {
-        tracing::warn!("Ignoring peerlist from configuration file as per command line argument");
-        t.peers = None;
+    let Some(threshold_config) = core_config.threshold.as_mut() else {
+        anyhow::bail!(
+            "kms-server config file {} is missing the required [threshold] section",
+            args.config_file
+        );
     };
+    if args.ignore_peerlist {
+        tracing::warn!("Ignoring peerlist from configuration file as per command line argument");
+        threshold_config.peers = None;
+    };
+    let threshold_config = threshold_config.clone();
 
     // Initialize the rayon pool used inside MPC protocols
     let num_rayon_threads = init_rayon_thread_pool(
@@ -353,8 +351,7 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // NOTE: Cache for GF16 (which we use here -- for now) is fully filled.
     // So this call is essentially useless for ResiduePolyF4
-    if let Some(threshold_config) = core_config.threshold.as_ref()
-        && let Some(peers) = threshold_config.peers.as_ref()
+    if let Some(peers) = threshold_config.peers.as_ref()
         && !peers.is_empty()
     {
         init_lagrange_stores(
@@ -448,10 +445,9 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // security module (used for remote attestation with AWS KMS or mTLS)
     let need_security_module = need_awskms_client
-        || core_config
-            .threshold
+        || threshold_config
+            .tls
             .as_ref()
-            .and_then(|t| t.tls.as_ref())
             .map(|tls| tls.is_auto())
             .unwrap_or(false);
     let security_module = need_security_module
@@ -485,10 +481,9 @@ async fn main_exec() -> anyhow::Result<()> {
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
 
-    let attest_private_vault_root_key_policy = core_config
-        .threshold
+    let attest_private_vault_root_key_policy = threshold_config
+        .tls
         .as_ref()
-        .and_then(|t| t.tls.as_ref())
         .and_then(|tls| match tls {
             TlsConf::Manual { .. } => Some(false),
             TlsConf::Auto {
@@ -522,14 +517,10 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // Migrate legacy FHE keys to epoch-aware format.
     // Must run after Vault init so the keychain can decrypt AppKeyBlob-wrapped data from older versions.
-    let kms_type = match core_config.threshold {
-        Some(_) => KMSType::Threshold,
-        None => KMSType::Centralized,
-    };
     migrate_to_0_15_x(
         &mut public_vault,
         &mut private_vault,
-        kms_type,
+        KMSType::Threshold,
         core_config.migration.as_ref(),
     )
     .await
@@ -597,7 +588,7 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // load key
     let base_kms = boot_base_kms(
-        kms_type,
+        KMSType::Threshold,
         &private_vault,
         &public_storage,
         backup_vault.as_ref(),
@@ -614,102 +605,58 @@ async fn main_exec() -> anyhow::Result<()> {
         base_kms.verf_key().address()
     );
 
-    match core_config.threshold {
-        Some(ref threshold_config) => {
-            let mpc_listener = make_mpc_listener(threshold_config).await;
-            let tls_identity = if able_to_use_tls && let Some(tls_config) = &threshold_config.tls {
-                Some(
-                    build_tls_config(
-                        &threshold_config.peers,
-                        tls_config,
-                        security_module.clone(),
-                        private_vault
-                            .keychain
-                            .as_ref()
-                            .map(|x| x.root_key_measurements()),
-                        &public_vault,
-                        base_kms.signing_identity()?,
-                        #[cfg(feature = "insecure")]
-                        core_config.mock_enclave.is_some_and(|m| m),
-                    )
-                    .await?,
-                )
-            } else {
-                tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
-                None
-            };
+    let mpc_listener = make_mpc_listener(&threshold_config).await;
+    let tls_identity = if able_to_use_tls && let Some(tls_config) = &threshold_config.tls {
+        Some(
+            build_tls_config(
+                &threshold_config.peers,
+                tls_config,
+                security_module.clone(),
+                private_vault
+                    .keychain
+                    .as_ref()
+                    .map(|x| x.root_key_measurements()),
+                &public_vault,
+                base_kms.signing_identity()?,
+                #[cfg(feature = "insecure")]
+                core_config.mock_enclave.is_some_and(|m| m),
+            )
+            .await?,
+        )
+    } else {
+        tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
+        None
+    };
 
-            let service_config = core_config.service.clone();
-            let (kms, (health, health_service), metastore_status_service) = new_real_threshold_kms(
-                core_config,
-                public_vault,
-                private_vault,
-                backup_vault,
-                security_module,
-                mpc_listener,
-                base_kms,
-                tls_identity,
-                std::future::pending(),
-            )
-            .await?;
-            register_process_health(health.clone())?;
-            let meta_store_status_service = Arc::new(metastore_status_service);
-            tracing::info!(
-                "Starting threshold KMS server v{}...",
-                SoftwareVersion::current()?
-            );
-            run_server(
-                service_config,
-                service_listener,
-                Arc::new(kms),
-                meta_store_status_service,
-                health_service,
-                health,
-                std::future::pending(),
-            )
-            .await?;
-        }
-        None => {
-            tracing::info!(
-                "Starting centralized KMS server v{}...",
-                SoftwareVersion::current()?
-            );
-            // create the default context if it does not exist
-            let service_config = core_config.service.clone();
-            create_default_centralized_context_in_storage(&mut private_vault, &base_kms.verf_key())
-                .await?;
-            // A node without its signing key boots in recovery mode, as a threshold node does,
-            // so that it can recover its keys from the custodians.
-            let (kms, (health, health_service)) = RealCentralizedKms::new_from_base_kms(
-                core_config,
-                public_vault,
-                private_vault,
-                backup_vault,
-                security_module,
-                base_kms,
-            )
-            .await?;
-            register_process_health(health.clone())?;
-            let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
-                Some(Arc::clone(kms.get_key_gen_meta_store())), // key_gen_store
-                Some(Arc::clone(kms.get_pub_dec_meta_store())), // pub_dec_store
-                Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
-                Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
-                None, // preproc_store - not available in centralized mode
-                Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
-            ));
-            run_server(
-                service_config,
-                service_listener,
-                Arc::new(kms),
-                meta_store_status_service,
-                health_service,
-                health,
-                std::future::pending(),
-            )
-            .await?
-        }
-    }
+    let service_config = core_config.service.clone();
+    let (kms, (health, health_service), metastore_status_service) = new_real_threshold_kms(
+        core_config,
+        public_vault,
+        private_vault,
+        backup_vault,
+        security_module,
+        mpc_listener,
+        base_kms,
+        tls_identity,
+        std::future::pending(),
+    )
+    .await?;
+    register_process_health(health.clone())?;
+    let meta_store_status_service = Arc::new(metastore_status_service);
+    tracing::info!(
+        "Starting threshold KMS server v{}...",
+        SoftwareVersion::current()?
+    );
+    run_server(
+        service_config,
+        service_listener,
+        Arc::new(kms),
+        meta_store_status_service,
+        health_service,
+        health,
+        std::future::pending(),
+    )
+    .await?;
 
     tracing::info!("KMS tracing shutting down...");
 

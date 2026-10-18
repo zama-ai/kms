@@ -1,26 +1,9 @@
 //! Test environment setup utilities
 //!
-//! This module provides high-level test environment builders for both
-//! centralized and threshold KMS configurations.
+//! This module provides high-level test environment builders for threshold KMS
+//! configurations.
 //!
 //! # Examples
-//!
-//! ## Centralized Test
-//!
-//! ```no_run
-//! use kms_lib::testing::prelude::*;
-//!
-//! #[tokio::test]
-//! async fn test_centralized() -> Result<()> {
-//!     let env = CentralizedTestEnv::builder()
-//!         .with_test_name("my_test")
-//!         .build()
-//!         .await?;
-//!
-//!     // Use env.server, env.client
-//!     Ok(())
-//! }
-//! ```
 //!
 //! ## Threshold Test
 //!
@@ -40,13 +23,9 @@
 //!     Ok(())
 //! }
 //! ```
-pub mod centralized;
 pub mod threshold;
 
 // Re-export for convenience
-pub use centralized::{
-    CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
-};
 pub use threshold::{
     TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
 };

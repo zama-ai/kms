@@ -1223,7 +1223,7 @@ pub struct CmdConfig {
 /// The optional `kms_type` key of a client config.
 ///
 /// The client supports threshold KMS deployments only, so `"threshold"` is the only accepted
-/// value. `"centralized"` and unknown values fail with an error that names the value.
+/// value. Any other value fails with an error that names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LegacyKmsType;
 
@@ -1235,10 +1235,6 @@ impl<'de> Deserialize<'de> for LegacyKmsType {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "threshold" => Ok(LegacyKmsType),
-            "centralized" => Err(serde::de::Error::custom(
-                "kms_type = \"centralized\" is not supported: the KMS runs in threshold mode only. \
-                 Remove the key or set it to \"threshold\".",
-            )),
             other => Err(serde::de::Error::custom(format!(
                 "unknown kms_type \"{other}\": the only accepted value is \"threshold\""
             ))),
@@ -3423,8 +3419,6 @@ mod tests {
             ("party_id > num_parties",       Some("threshold"),   Some(2), 2, 2, &[1, 5],       "Party ID must be between"),
             ("num_majority > num_parties",   Some("threshold"),   Some(4), 5, 5, &[1],          "Number for majority votes"),
             ("num_reconstruct > num_parties",Some("threshold"),   Some(4), 2, 5, &[1],          "Number for reconstruction shares"),
-            ("centralized",                  Some("centralized"), Some(4), 2, 3, &[1, 2, 3, 4], "threshold mode only"),
-            ("centralized single server",    Some("centralized"), None,    1, 1, &[1],          "threshold mode only"),
             ("unknown kms_type",             Some("thresholdish"), Some(4), 2, 3, &[1, 2, 3, 4], "unknown kms_type"),
         ];
         for &(desc, kt, np, maj, rec, ids, expected_substr) in cases {

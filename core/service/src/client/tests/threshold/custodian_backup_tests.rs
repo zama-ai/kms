@@ -198,7 +198,7 @@ impl ThresholdBackupTestEnv {
             )
             .unwrap(),
             custodian_backup_vault(path, self.backup_prefixes()[idx].as_deref()).await,
-            Some(party as usize),
+            party as usize,
         )
         .await
     }
@@ -907,8 +907,8 @@ async fn test_recovery_without_signing_material_threshold() {
     .await;
 }
 
-/// Same intent as centralized negative test: corrupt signcryption for two custodians; invalid
-/// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
+/// Corrupts the signcryption for two custodians. Recovery filters the invalid outputs and still
+/// restores the signing keys (`assert_eq!` on recovered keys).
 #[tokio::test]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;

@@ -400,8 +400,7 @@ mod tests {
     /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.
     #[test]
     fn config_validation_rejects_a_secret_sharing_private_vault() {
-        let mut config: CoreConfig =
-            init_conf("config/default_centralized.toml").expect("config must parse");
+        let mut config: CoreConfig = init_conf("config/default_1.toml").expect("config must parse");
         config.private_vault = Some(vault_with(Some(Keychain::SecretSharing(
             SecretSharingKeychain {},
         ))));
@@ -575,38 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn test_centralized_config() {
-        let core_config: CoreConfig = init_conf("config/default_centralized").unwrap();
-        core_config
-            .validate()
-            .expect("centralized config must validate");
-        assert_eq!(core_config.service.listen_address, "0.0.0.0");
-        assert_eq!(core_config.service.listen_port, 50051);
-
-        let private_vault = core_config.private_vault.as_ref().expect("private_vault");
-
-        assert_eq!(
-            private_vault.storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./keys"),
-                prefix: None,
-            })
-        );
-        assert!(private_vault.keychain.is_none(), "no keychain expected");
-        assert_eq!(
-            core_config.public_vault.unwrap().storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./keys"),
-                prefix: None,
-            })
-        );
-        assert!(
-            core_config.threshold.is_none(),
-            "threshold section should be absent in centralized config"
-        );
-    }
-
-    #[test]
     fn test_requires_pcr_allowlist() {
         let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
         assert!(!core_config.requires_pcr_allowlist());
@@ -628,11 +595,17 @@ mod tests {
     }
 
     #[test]
-    fn test_centralized_enclave_config() {
-        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+    fn test_enclave_bootstrap_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("enclave.toml");
+        let mut contents = std::fs::read_to_string("config/default_1.toml").unwrap();
+        contents.push_str("\n[enclave_bootstrap]\nweb_identity_token_port = 4100\n");
+        std::fs::write(&config_path, contents).unwrap();
+
+        let core_config: CoreConfig = init_conf(config_path.to_str().unwrap()).unwrap();
         core_config
             .validate()
-            .expect("centralized enclave config must validate");
+            .expect("enclave config must validate");
 
         let enclave_bootstrap = core_config
             .enclave_bootstrap

@@ -268,8 +268,7 @@ message KeyGenResult {
 }
 
 // Keeping the fields in lowercase is important because
-// it needs to match what the config reads out of the toml config files,
-// e.g., in default_centralized.toml.
+// it needs to match what the config reads out of the toml config files.
 enum FheParameter {
   // The default must be represented by 0. This is the default large and secure
   // parameter set.

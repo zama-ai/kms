@@ -55,16 +55,14 @@ KMS uses TOML configuration files with different sections for various components
 
 The repository ships sample configurations in `core/service/config/`:
 
-- `default_centralized.toml` — centralized mode with local file storage
 - `default_1.toml` … `default_4.toml` — threshold parties 1–4 with local file storage
 - `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
-- `default_centralized_enclave.toml` — centralized mode inside an AWS Nitro Enclave
 
 **Development Environment**:
 - Local file storage for simplicity
 - Minimal security requirements
 - Local metrics and tracing endpoints
-- **Reference**: `core/service/config/default_centralized.toml` or `default_1.toml` … `default_4.toml`
+- **Reference**: `core/service/config/default_1.toml` … `default_4.toml`
 
 **Staging / Production Environments**:
 - Encrypted S3 storage with KMS keys
@@ -171,7 +169,6 @@ openssl enc -aes-256-gcm -d -in config.toml.enc -out /tmp/config.toml -k "$ENCRY
 **Configuration Templates**:
 - Use environment-specific templates for different deployment stages
 - Implement variable substitution for dynamic values
-- Maintain separate templates for centralized vs threshold modes
 - Use configuration management tools (Helm, Kustomize, etc.)
 
 **Environment Variables**:

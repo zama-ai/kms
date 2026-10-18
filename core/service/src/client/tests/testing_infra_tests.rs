@@ -48,7 +48,6 @@ mod tests {
     #[test]
     fn test_material_spec_creation() {
         // Expected key types for each spec
-        let centralized_expected = &[KeyType::ClientKeys, KeyType::SigningKeys, KeyType::FheKeys];
         let threshold_expected = &[
             KeyType::ClientKeys,
             KeyType::SigningKeys,
@@ -57,25 +56,9 @@ mod tests {
             KeyType::DefaultEpoch,
         ];
 
-        // Test centralized spec
-        let centralized = TestMaterialSpec::centralized_basic();
-        assert!(!centralized.is_threshold());
-        assert_eq!(centralized.party_count(), 1);
-        for key_type in KeyType::iter() {
-            let expected = centralized_expected.contains(&key_type);
-            assert_eq!(
-                centralized.requires_key_type(key_type),
-                expected,
-                "centralized_basic: {:?} should be {}",
-                key_type,
-                if expected { "required" } else { "not required" }
-            );
-        }
-
         // Test threshold spec
         let threshold = TestMaterialSpec::threshold_basic(4);
-        assert!(threshold.is_threshold());
-        assert_eq!(threshold.party_count(), 4);
+        assert_eq!(threshold.party_count, 4);
         for key_type in KeyType::iter() {
             let expected = threshold_expected.contains(&key_type);
             assert_eq!(
@@ -88,7 +71,7 @@ mod tests {
         }
 
         // Test comprehensive spec (includes ALL key types)
-        let comprehensive = TestMaterialSpec::comprehensive(Some(4));
+        let comprehensive = TestMaterialSpec::comprehensive(4);
         assert!(comprehensive.include_slow_material);
         for key_type in KeyType::iter() {
             assert!(

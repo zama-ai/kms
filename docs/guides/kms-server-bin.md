@@ -2,7 +2,7 @@
 
 ## KMS Key Generation
 
-`kms-gen-keys` generates the server signing keys (and, in threshold mode, the per-party self-signed CA certificates used for mTLS).
+`kms-gen-keys` generates the server signing keys and the per-party self-signed CA certificates used for mTLS.
 
 To generate the signing material before the KMS server is started, pass a TOML config file:
 
@@ -10,7 +10,7 @@ To generate the signing material before the KMS server is started, pass a TOML c
 cargo run --bin kms-gen-keys -- --config-file /path/to/kms-gen-keys.toml
 ```
 
-The config must include a `[keygen]` section and the storage settings used to write the generated material:
+The config must include a `[keygen]` section, a `[threshold]` section and the storage settings used to write the generated material:
 
 ```toml
 [keygen]
@@ -26,19 +26,16 @@ path = "./keys"
 path = "./keys"
 ```
 
-For threshold configs, `threshold.my_id` selects the party. The TLS certificate
+The `threshold.my_id` field selects the party. The TLS certificate
 subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
-
-Omit the `[threshold]` section to generate centralized signing material. The
-centralized mode does not generate a CA certificate.
 
 ### `[threshold]` options
 
 The `[threshold]` section accepts only the fields below. The tool rejects any
 other field.
-The tool needs a TLS subject on every threshold run, also when a CA certificate
+The tool needs a TLS subject on every run, also when a CA certificate
 exists. Still, the tool only generates a CA certificate when public storage has 
 no `CACert` object, so a run on an existing party does not change its certificate,
 in which case any values can be used for the `[threshold]` parameters.
@@ -68,7 +65,7 @@ port = 50001
 
 ### Local test config
 
-To test the tool locally, in threshold mode, the configuration file `../../core/service/config/local_keygen.toml` 
+To test the tool locally, the configuration file `../../core/service/config/local_keygen.toml` 
 can be used:
 
 ```bash
@@ -236,14 +233,6 @@ cargo run --bin kms-gen-tls-certs -- --ca-prefix p --ca-count 4
 ```
 
 ## Running the KMS
-
-### Locally running a centralized KMS Core
-
-Running a centralized KMS Core with the default configuration:
-
-```bash
-cargo run --bin kms-server -- --config-file config/default_centralized.toml
-```
 
 ### Locally running a threshold KMS Core
 

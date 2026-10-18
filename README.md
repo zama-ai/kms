@@ -49,8 +49,6 @@ The KMS is in turn composed of the following components, which we illustrate in 
 
 ![KMS system](./docs/getting-started/overview.png)
 
-We observe that while the standard deployment of the KMS system is in a threshold setting, it can also be deployed in a centralized manner, where it will consist of a single logical Connector, Core and Keychain DA.
-
 
 ## Installation
 

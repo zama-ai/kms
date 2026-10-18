@@ -6,12 +6,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use kms_lib::testing::material::{
-    CENTRALIZED_MATERIAL_SUBDIR, MaterialType, material_subdir, threshold_material_subdir,
-};
-use kms_lib::testing::utils::setup::{
-    generate_central_material_to_path, generate_threshold_material_to_path,
-};
+use kms_lib::testing::material::{MaterialType, material_subdir, threshold_material_subdir};
+use kms_lib::testing::utils::setup::generate_threshold_material_to_path;
 use path_absolutize::Absolutize;
 use std::collections::BTreeSet;
 use tracing::info;
@@ -50,7 +46,7 @@ struct Cli {
     #[arg(long, value_enum, value_delimiter = ',', default_values_t = [Profile::Insecure, Profile::Secure])]
     profile: Vec<Profile>,
 
-    /// Threshold party counts to generate in addition to centralized material
+    /// Threshold party counts to generate, e.g. `4,13`
     #[arg(long, value_delimiter = ',')]
     parties: Vec<usize>,
 
@@ -123,6 +119,9 @@ async fn generate_requested_material(
     if profiles.is_empty() {
         bail!("At least one --profile must be provided");
     }
+    if parties.is_empty() {
+        bail!("At least one --parties value must be provided");
+    }
 
     for profile in profiles {
         generate_profile_material(output_dir, *profile, parties, force).await?;
@@ -143,7 +142,7 @@ async fn generate_profile_material(
     let profile_dir = output_dir.join(material_subdir(material_type));
 
     info!(
-        "Generating {:?} material with centralized fixtures and threshold parties {:?}",
+        "Generating {:?} material for threshold parties {:?}",
         profile, parties
     );
 
@@ -157,8 +156,6 @@ async fn generate_profile_material(
     }
 
     fs::create_dir_all(&profile_dir).await?;
-    let centralized_dir = profile_dir.join(CENTRALIZED_MATERIAL_SUBDIR);
-    generate_central_material_to_path(material_type, Some(&centralized_dir)).await;
 
     for party_count in parties.iter().copied().collect::<BTreeSet<_>>() {
         let threshold_dir = profile_dir.join(threshold_material_subdir(party_count));

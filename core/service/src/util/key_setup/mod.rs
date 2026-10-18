@@ -9,8 +9,6 @@ cfg_if::cfg_if! {
             CrsGenMetadata,
         };
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-        use crate::engine::centralized::central_kms::generate_fhe_keys;
-        use crate::util::key_setup::local_material::gen_centralized_crs;
         use crate::engine::threshold::service::epoch_manager::EpochData;
         use crate::engine::threshold::service::session::PRSSSetupCombined;
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
@@ -18,15 +16,13 @@ cfg_if::cfg_if! {
             calculate_max_num_bits,  data_exists, get_core_signing_identity,
         };
         use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-        use crate::vault::storage::{delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id, StorageExt};
+        use crate::vault::storage::{store_versioned_at_request_and_epoch_id, StorageExt};
 
         use hashing::hash_versioned;
         use futures_util::future;
         use itertools::Itertools;
         use kms_grpc::identifiers::EpochId;
         use std::sync::Arc;
-        use tfhe::Seed;
-        use threshold_execution::keyset_config::StandardKeySetConfig;
         use threshold_execution::tfhe_internals::parameters::DKGParams;
         use threshold_execution::tfhe_internals::test_feature::gen_key_set;
         use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_client_key;
@@ -646,333 +642,6 @@ where
     Ok(())
 }
 
-/// Generates and stores a Common Reference String (CRS) if it doesn't exist.
-///
-/// Handles the complete CRS lifecycle:
-/// 1. Validates storage consistency
-/// 2. Checks for existing CRS
-/// 3. Generates new CRS with the given parameters
-/// 4. Stores both public CRS and private metadata
-///
-/// # Returns
-/// - `true` if new CRS was generated
-/// - `false` if CRS already existed
-///
-/// # Panics
-/// - If storage validation fails
-/// - If CRS generation fails
-/// - If storage operations fail
-#[cfg(any(test, feature = "testing"))]
-pub async fn ensure_central_crs_exists<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    dkg_params: DKGParams,
-    crs_id: &RequestId,
-    epoch_id: &EpochId,
-    deterministic: bool,
-) -> bool
-where
-    PubS: Storage,
-    PrivS: StorageExt,
-{
-    // Check if data already exists in both storages
-    match check_data_exists_at_epoch(
-        pub_storage,
-        priv_storage,
-        crs_id,
-        epoch_id,
-        &PubDataType::CRS,
-        &PrivDataType::CrsInfo,
-    )
-    .await
-    {
-        Ok(true) => {
-            return false;
-        }
-        Ok(false) => {
-            // continue with generation
-            tracing::info!("CRS does not exist, proceeding with generation.");
-        }
-        Err(e) => {
-            tracing::warn!("Failed to check if CRS exists, proceeding with generation anyway: {e}");
-        }
-    }
-
-    // Get signing key with proper error handling
-    let sk = match get_core_signing_identity(priv_storage).await {
-        Ok(key) => key,
-        Err(e) => {
-            tracing::error!("Failed to get signing key: {}", e);
-            return false; // Cannot proceed without signing key
-        }
-    };
-    let mut rng = get_rng(deterministic, Some(0)).expect("Failed to create RNG");
-
-    // Calculate max_num_bits based on DKG parameters - now handles errors internally
-    let max_num_bits = calculate_max_num_bits(&dkg_params);
-
-    // Convert usize to Option<u32> for gen_centralized_crs
-    let max_num_bits_u32 = Some(max_num_bits as u32);
-
-    // Use proper error handling instead of unwrap
-    let domain = dummy_domain();
-    let (pp, crs_info) = match gen_centralized_crs(
-        &sk,
-        &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-        &dkg_params,
-        max_num_bits_u32,
-        &domain,
-        vec![],
-        crs_id,
-        &mut rng,
-    ) {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!("Failed to generate centralized CRS: {}", e);
-            return false; // Cannot proceed without CRS
-        }
-    };
-
-    // Store private CRS info with proper error handling
-    if let Err(e) = store_versioned_at_request_and_epoch_id(
-        priv_storage,
-        crs_id,
-        epoch_id,
-        &crs_info,
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await
-    {
-        tracing::error!("Failed to store private CRS info: {}", e);
-        return false; // Storage operation failed
-    }
-    log_storage_success(crs_id, priv_storage.info(), "CRS data", false, false);
-
-    // Store public CRS with proper error handling
-    if let Err(e) =
-        store_versioned_at_request_id(pub_storage, crs_id, &pp, &PubDataType::CRS.to_string()).await
-    {
-        tracing::error!("Failed to store public CRS: {}", e);
-        return false; // Storage operation failed
-    }
-    log_storage_success(crs_id, pub_storage.info(), "CRS data", true, false);
-
-    true
-}
-
-/// Ensures central server FHE keys exist.
-///
-/// Manages the complete FHE key lifecycle:
-/// 1. Validates storage consistency
-/// 2. Checks for existing keys
-/// 3. Generates new key pairs with the given parameters
-/// 4. Stores both public and private keys with metadata
-/// 5. Manages two distinct key sets under [key_id] and [other_key_id]
-///
-/// # Returns
-/// - `true` if new keys were generated
-/// - `false` if keys already existed
-///
-/// # Panics
-/// - If storage validation fails
-/// - If key generation fails
-/// - If storage operations fail
-#[cfg(any(test, feature = "testing"))]
-pub async fn ensure_central_keys_exist<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    dkg_params: DKGParams,
-    key_id: &RequestId,
-    other_key_id: &RequestId,
-    epoch_id: &EpochId,
-    deterministic: bool,
-) -> bool
-where
-    PubS: Storage,
-    PrivS: StorageExt,
-{
-    // Check if PUBLIC data already exists. If so, skip regeneration entirely.
-    //
-    // Key generation uses seed-based XOF expansion, making it non-deterministic
-    // across calls unless the same seed is used. If PUB keys exist but PRIV was
-    // purged (e.g., for backup recovery tests), regenerating would create keys
-    // with different digests that don't match the existing PUB data (since
-    // store_data doesn't overwrite). The missing PRIV data will be restored
-    // from backup.
-    let compressed_xof_keyset_type = PubDataType::CompressedXofKeySet.to_string();
-    let pub_types_to_purge = [
-        compressed_xof_keyset_type.clone(),
-        PubDataType::PublicKey.to_string(),
-        PubDataType::ServerKey.to_string(),
-    ];
-    let pub_complete = data_exists(pub_storage, key_id, &compressed_xof_keyset_type)
-        .await
-        .unwrap_or(false)
-        && data_exists(pub_storage, other_key_id, &compressed_xof_keyset_type)
-            .await
-            .unwrap_or(false);
-    if pub_complete {
-        log_data_exists(
-            priv_storage.info(),
-            Some(pub_storage.info()),
-            key_id,
-            "FHE keys",
-        );
-        return false;
-    }
-
-    // PUB data is incomplete — purge any leftover fragments and regenerate everything.
-    for existing_pub_type in &pub_types_to_purge {
-        let _ = delete_at_request_id(pub_storage, key_id, existing_pub_type).await;
-        let _ = delete_at_request_id(pub_storage, other_key_id, existing_pub_type).await;
-    }
-    let _ = delete_at_request_and_epoch_id(
-        priv_storage,
-        key_id,
-        epoch_id,
-        &PrivDataType::FhePrivateKey.to_string(),
-    )
-    .await;
-    let _ = delete_at_request_and_epoch_id(
-        priv_storage,
-        other_key_id,
-        epoch_id,
-        &PrivDataType::FhePrivateKey.to_string(),
-    )
-    .await;
-
-    // Get signing key with proper error handling
-    let sk = match get_core_signing_identity(priv_storage).await {
-        Ok(key) => key,
-        Err(e) => {
-            tracing::error!("Failed to get signing key: {}", e);
-            return false; // Cannot proceed without signing key
-        }
-    };
-
-    let seed = match deterministic {
-        true => Some(Seed(42)),
-        false => None,
-    };
-
-    // Generate the two FHE key sets in parallel on the rayon pool.
-    let key_id_1 = *key_id;
-    let key_id_2 = *other_key_id;
-    let sk_1 = sk.clone();
-    let sk_2 = sk;
-    let (fhekey1, fhekey2) = tokio::task::spawn_blocking(move || {
-        rayon::join(
-            || {
-                generate_fhe_keys(
-                    &sk_1,
-                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-                    dkg_params,
-                    StandardKeySetConfig::default().secret_key_config,
-                    &key_id_1,
-                    &INSECURE_PREPROCESSING_ID,
-                    seed,
-                    &dummy_domain(),
-                    vec![],
-                )
-            },
-            || {
-                generate_fhe_keys(
-                    &sk_2,
-                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-                    dkg_params,
-                    StandardKeySetConfig::default().secret_key_config,
-                    &key_id_2,
-                    &INSECURE_PREPROCESSING_ID,
-                    seed,
-                    &dummy_domain(),
-                    vec![],
-                )
-            },
-        )
-    })
-    .await
-    .expect("FHE keygen task panicked");
-
-    let (compressed_keyset_1, public_key_1, key_info_1) = match fhekey1 {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!("Failed to generate first set of FHE keys: {}", e);
-            return false;
-        }
-    };
-    let (compressed_keyset_2, public_key_2, key_info_2) = match fhekey2 {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!("Failed to generate second set of FHE keys: {}", e);
-            return false;
-        }
-    };
-
-    let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
-    let pub_fhe_map = HashMap::from([
-        (*key_id, (compressed_keyset_1, public_key_1)),
-        (*other_key_id, (compressed_keyset_2, public_key_2)),
-    ]);
-
-    // Store private key data. The centralized service reads back this slot as
-    // a `KmsFheKeyHandles`, so the bundled `key_info` is the value we persist
-    // (despite the type tag being named `FhePrivateKey`).
-    for (req_id, key_info) in &priv_fhe_map {
-        if let Err(e) = store_versioned_at_request_and_epoch_id(
-            priv_storage,
-            req_id,
-            epoch_id,
-            key_info,
-            &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!("Failed to store key info for request ID {}: {}", req_id, e);
-            continue; // Skip this key but try others
-        }
-        log_storage_success(req_id, priv_storage.info(), "key data", false, false);
-    }
-
-    // Store compressed keyset and the public key derived from it as public key data
-    for (req_id, (compressed_keyset, public_key)) in pub_fhe_map {
-        tracing::info!("Storing compressed keyset");
-        if let Err(e) = store_versioned_at_request_id(
-            pub_storage,
-            &req_id,
-            &compressed_keyset,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store compressed keyset for request ID {}: {}",
-                req_id,
-                e
-            );
-            continue; // Skip this key but try others
-        }
-        log_storage_success(req_id, pub_storage.info(), "compressed keyset", true, false);
-
-        if let Err(e) = store_versioned_at_request_id(
-            pub_storage,
-            &req_id,
-            &public_key,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store public key for request ID {}: {}",
-                req_id,
-                e
-            );
-            continue;
-        }
-        log_storage_success(req_id, pub_storage.info(), "public key", true, false);
-    }
-    true
-}
-
 /// Configuration for threshold signing key generation.
 ///
 /// Defines the signing participation model for the threshold system.
@@ -1261,7 +930,11 @@ where
     let threshold = max_threshold(amount_parties);
 
     // Check if PUBLIC data already exists for all parties. If so, skip entirely.
-    // See comment in ensure_central_keys_exist for why we only check PUB.
+    //
+    // Key generation uses seed-based XOF expansion, so regenerating while PUB data exists
+    // creates keys whose digests do not match the stored PUB data (`store_data` does not
+    // overwrite). Missing PRIV data is restored from backup instead, e.g. in backup recovery
+    // tests.
     let pub_type = PubDataType::CompressedXofKeySet.to_string();
     let legacy_pub_types = [
         PubDataType::CompressedXofKeySet.to_string(),
@@ -1538,7 +1211,7 @@ where
 /// 1. Validates storage consistency
 /// 2. Checks for existing CRS
 /// 3. Collects signing keys from all parties
-/// 4. Generates centralized parameters with proper security
+/// 4. Generates the public parameters by a trusted setup
 /// 5. Distributes CRS to all parties with signatures
 ///
 /// # Returns
@@ -1635,7 +1308,7 @@ where
         public_parameters_by_trusted_setup(&pke_params, Some(max_num_bits), sid, &mut rng)
             .unwrap_or_else(|e| {
                 panic!(
-                    "Failed to make centralized public parameters (max_bits: {max_num_bits}): {e}"
+                    "Failed to make trusted-setup public parameters (max_bits: {max_num_bits}): {e}"
                 );
             });
 
