@@ -56,37 +56,9 @@ jobs:
             rust_log_level: 'error'
             nextest_threads: '4'
           #======================================================================
-          - job_name: core-client-centralized-p1
-            crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:1/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '4'
-          - job_name: core-client-centralized-p2
-            crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:2/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '4'
-          - job_name: core-client-centralized-p3
-            crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:3/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '4'
-          #======================================================================
           - job_name: core-client-unit-p1
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:1/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:1/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -95,7 +67,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-client-unit-p2
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:2/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:2/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -104,7 +76,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-client-unit-p3
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:3/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:3/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'

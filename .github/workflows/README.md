@@ -276,7 +276,7 @@ workflow generation, and artifact analysis on pull requests.
 | `workflow_call` (from `build-and-test.yml`) | Uses pre-built images via `image_tag` input |
 | Scheduled | Builds fresh images at workflow start |
 
-Matrix: `check` (lint/format), `threshold` (4-party), `centralized` (1-party).
+Matrix: `check` (lint/format), `threshold` (4-party).
 
 `ci/scripts/deploy.sh` handles Kind cluster creation, infra deployment (LocalStack, TKMS, Crossplane), image loading, KMS deployment, and port forwarding.
 

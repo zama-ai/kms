@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use futures::future::join_all;
 use kms_core_client::*;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
 #[cfg(feature = "slow_tests")]
@@ -14,7 +14,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::conf::{ContextEpochAssociation, MigrationConfig};
-use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT};
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -23,7 +23,6 @@ use std::fs::write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
-use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
 #[cfg(feature = "slow_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
@@ -201,110 +200,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 // ============================================================================
 // CLI TEST SETUP FUNCTIONS
 // ============================================================================
-
-/// Helper to setup isolated centralized KMS for CLI testing (without backup vault)
-///
-/// # Arguments
-/// * `test_name` - Test identifier for logging/debugging (e.g., "centralized_insecure")
-///
-/// # Returns
-/// * `TempDir` - Isolated temporary directory with test material (auto-cleanup on drop)
-/// * `ServerHandle` - Running KMS server (auto-shutdown on drop)
-/// * `PathBuf` - Path to generated CLI config file (for --config flag)
-///
-/// # Example
-/// ```no_run
-/// let (material_dir, _server, config_path) =
-///     setup_isolated_centralized_cli_test("my_test").await?;
-/// ```
-async fn setup_isolated_centralized_cli_test(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, false, false, FheParameter::Test).await
-}
-
-/// Helper to setup isolated centralized KMS for CLI testing with backup vault
-#[cfg(feature = "insecure")]
-async fn setup_isolated_centralized_cli_test_with_backup(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, false, FheParameter::Test).await
-}
-
-/// Helper to setup isolated centralized KMS for CLI testing with custodian backup vault
-async fn setup_isolated_centralized_cli_test_with_custodian_backup(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, true, FheParameter::Test).await
-}
-
-/// Generate CLI config file for centralized KMS
-///
-/// Note: We generate configs dynamically (not from template files) because:
-/// - Ports are dynamically allocated (random free ports per test)
-/// - Paths are dynamic (unique TempDir per test)
-/// - This ensures complete test isolation
-///
-/// Output matches the production client schema (`CoreClientConfig`); see
-/// `core-client/config/client_local_centralized.toml` for the reference shape.
-fn generate_centralized_cli_config(
-    material_dir: &TempDir,
-    server: &ServerHandle,
-    fhe_params: FheParameter,
-) -> Result<PathBuf> {
-    let config_path = material_dir.path().join("client_config.toml");
-    // Canonicalize the path to resolve symlinks (e.g., /var -> /private/var on macOS)
-    // This ensures the CLI client uses the same path as the FileStorage
-    let canonical_path = material_dir.path().canonicalize()?;
-    let cfg = CoreClientConfig {
-        kms_type: KmsType::Centralized,
-        cores: vec![CoreConf {
-            party_id: 1,
-            address: format!("localhost:{}", server.service_port),
-            s3_endpoint: format!("file://{}", canonical_path.display()),
-            object_folder: "PUB".to_string(),
-            private_object_folder: None,
-            config_path: None,
-        }],
-        decryption_mode: None,
-        num_parties: 1,
-        num_majority: 1,
-        num_reconstruct: 1,
-        fhe_params: Some(fhe_params),
-        default_domain: None,
-    };
-    write_core_client_toml(&config_path, &cfg)?;
-    Ok(config_path)
-}
-
-/// Internal implementation for centralized CLI test setup
-async fn setup_isolated_centralized_cli_test_impl(
-    test_name: &str,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
-    fhe_params: FheParameter,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    // Use builder pattern with full feature support
-    let mut builder = CentralizedTestEnv::builder().with_test_name(test_name);
-
-    if with_backup_vault {
-        builder = builder.with_backup_vault();
-    }
-
-    if with_custodian_keychain {
-        builder = builder.with_custodian_keychain();
-    }
-
-    let env = builder.build().await?;
-
-    let material_dir = env.material_dir;
-    let server = env.server;
-
-    // Generate CLI config file pointing to local test material
-    let config_path = generate_centralized_cli_config(&material_dir, &server, fhe_params)?;
-
-    Ok((material_dir, server, config_path))
-}
 
 /// Helper to setup isolated threshold KMS for CLI testing WITHOUT pre-loaded PRSS material.
 ///
@@ -965,7 +860,7 @@ fn cmd_config(config_path: &Path, command: CCCommand, max_iter: usize) -> CmdCon
 }
 
 /// Build a `CipherParameters` with sensible defaults, overriding only what varies per test case.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn cipher_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -989,7 +884,7 @@ fn cipher_params(
 }
 
 /// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 fn public_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1015,7 +910,7 @@ fn public_decrypt_params(
 }
 
 /// Build `DecryptParameters` for a single non-rate user decrypt.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn user_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1039,7 +934,7 @@ fn user_decrypt_params(
     }
 }
 
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
     DecryptFile {
         input_path,
@@ -1051,7 +946,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
 
 /// Helper to run the insecure (dummy) preprocessing and insecure key generation
 /// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1088,6 +983,7 @@ async fn insecure_preproc_and_keygen(
 // ============================================================================
 
 /// Helper to run CRS generation via CLI (isolated version)
+#[cfg(feature = "insecure")]
 async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -> Result<String> {
     crs_gen_with_params(
         config_path,
@@ -1141,7 +1037,7 @@ async fn crs_gen_with_params(
 /// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
 /// - Encrypt to file + PublicDecrypt/UserDecrypt from file
 /// - SnS precompute variants (no_precompute_sns=false)
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn integration_test_commands(
     config_path: &Path,
     keys_folder: &Path,
@@ -2190,37 +2086,6 @@ struct StrictCheckedInCoreToml {
 }
 
 #[test]
-fn config_conformance_client_local_centralized() {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_centralized.toml");
-    let raw =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw).expect(
-        "strict TOML parse of client_local_centralized.toml failed (unknown or extra keys?)",
-    );
-    assert_eq!(strict.kms_type, "centralized");
-    assert_eq!(strict.num_parties, 1);
-    assert_eq!(strict.num_majority, 1);
-    assert_eq!(strict.num_reconstruct, 1);
-    assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
-    assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
-    assert_eq!(strict.cores.len(), 1);
-    assert_eq!(strict.cores[0].party_id, 1);
-    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
-    // the load.  This avoids the need for unsafe env::remove_var and lets the
-    // test run concurrently with other tests that read the environment.
-    let loaded: CoreClientConfig = Settings::builder()
-        .path(path.to_str().expect("utf8 path"))
-        .env_prefix("_CONF_TEST_NOOP")
-        .build()
-        .init_conf()
-        .expect("Settings::init_conf for client_local_centralized.toml");
-    assert_eq!(loaded.kms_type, KmsType::Centralized);
-    assert_eq!(loaded.cores.len(), 1);
-    assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
-}
-
-#[test]
 fn config_conformance_client_local_threshold() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_threshold.toml");
     let raw =
@@ -2237,7 +2102,9 @@ fn config_conformance_client_local_threshold() {
     for (i, core) in strict.cores.iter().enumerate() {
         assert_eq!(core.party_id, i + 1);
     }
-    // Use an inert env_prefix — see config_conformance_client_local_centralized.
+    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
+    // the load.  This avoids the need for unsafe env::remove_var and lets the
+    // test run concurrently with other tests that read the environment.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))
         .env_prefix("_CONF_TEST_NOOP")
@@ -2252,148 +2119,6 @@ fn config_conformance_client_local_threshold() {
 // ============================================================================
 // TESTS
 // ============================================================================
-
-/// Test centralized insecure key generation via CLI
-#[cfg(feature = "insecure")]
-#[tokio::test]
-async fn test_centralized_insecure() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure").await?;
-
-    // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    integration_test_commands(&config_path, keys_folder, key_id).await?;
-
-    Ok(())
-}
-
-/// Test centralized CRS generation via CLI
-#[tokio::test]
-async fn test_centralized_crsgen_secure() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_crsgen").await?;
-
-    // Run CRS generation via CLI (use material_dir as keys_folder)
-    let keys_folder = material_dir.path();
-    let crs_id = crs_gen(&config_path, keys_folder, false).await?;
-
-    // Verify CRS ID format (hex string with double the length of ID_LENGTH)
-    assert_eq!(crs_id.len(), ID_LENGTH * 2);
-
-    Ok(())
-}
-
-/// Test centralized abort key generation via CLI
-///
-/// Aborting an unknown request_id exercises the CLI dispatch: the command fans
-/// out to every party and completes successfully even though each server
-/// responds with an error code (NotFound for centralized).
-#[tokio::test]
-async fn test_centralized_abort_key_gen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_abort_key_gen").await?;
-
-    let keys_folder = material_dir.path();
-    let request_id =
-        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd21")?;
-    let res = abort_key_gen(&config_path, keys_folder, request_id).await?;
-    // No ongoing key generation, so NotFound should be returned by all servers
-    res.iter().for_each(|r| assert!(r.contains("not found")));
-    Ok(())
-}
-
-/// Test centralized abort CRS generation via CLI
-#[tokio::test]
-async fn test_centralized_abort_crs_gen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_abort_crs_gen").await?;
-
-    let keys_folder = material_dir.path();
-    let request_id =
-        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd22")?;
-    let res = abort_crs_gen(&config_path, keys_folder, request_id).await?;
-    // No ongoing key generation, so NotFound should be returned by all servers
-    res.iter().for_each(|r| assert!(r.contains("not found")));
-    Ok(())
-}
-
-/// Test centralized restore from backup via CLI (without custodians)
-///
-/// Note: This test mainly validates the CLI endpoints and content returned from KMS.
-/// Full restore validation is done in service/client tests.
-#[cfg(feature = "insecure")]
-#[tokio::test]
-async fn test_centralized_restore_from_backup() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server with backup vault
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test_with_backup("centralized_restore").await?;
-
-    // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
-    let keys_folder = material_dir.path();
-    let _crs_id = crs_gen(&config_path, keys_folder, true).await?;
-    restore_from_backup(&config_path, keys_folder).await?;
-
-    Ok(())
-}
-
-/// Test centralized custodian backup via CLI
-#[tokio::test]
-async fn test_centralized_custodian_backup() -> Result<()> {
-    init_logging();
-
-    let amount_custodians = 5;
-    let custodian_threshold = 2;
-
-    // Setup isolated centralized KMS server with custodian backup vault (includes SecretSharingKeychain)
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test_with_custodian_backup("centralized_custodian").await?;
-
-    let temp_path = material_dir.path();
-
-    // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
-
-    // Create custodian context
-    let cus_backup_id =
-        new_custodian_context(&config_path, temp_path, custodian_threshold, setup_msgs).await;
-
-    // Initialize custodian backup, naming the context as an operator does after a rotation.
-    let operator_recovery_resp = custodian_backup_init(
-        &config_path,
-        temp_path,
-        Some(RequestId::from_str(&cus_backup_id)?),
-    )
-    .await;
-
-    // Re-encrypt with custodian keys
-    let custodian_recovery_output =
-        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resp).await?;
-
-    // Recover backup using custodian outputs
-    let recovery_backup_id = custodian_backup_recovery(
-        &config_path,
-        temp_path,
-        custodian_recovery_output,
-        RequestId::from_str(&cus_backup_id)?,
-    )
-    .await;
-    assert_eq!(cus_backup_id, recovery_backup_id);
-
-    Ok(())
-}
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]

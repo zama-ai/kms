@@ -306,10 +306,10 @@ Conventions:
   `namespace="kms-ci"`. It does **not** apply the `ci_` metric-name prefix: the cluster
   Prometheus remote-write keep list only matches `kms_.+`, so prefixed names would never
   reach Grafana Cloud. Query the existing KMS dashboard with `namespace="kms-ci"`.)
-- The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
-  `kms-test-centralized`, from the CI `DEPLOYMENT_TYPE`), so their metrics are already told apart by
-  Prometheus' `namespace` label — there is no `deployment_type` const-label. You could add one via
-  `metricsLabels`, but keep any added labels **low-cardinality**.
+- The kind matrix deploys to a namespace named after the CI `DEPLOYMENT_TYPE` (`kms-test-threshold`),
+  so its metrics are already told apart by Prometheus' `namespace` label — there is no
+  `deployment_type` const-label. You could add one via `metricsLabels`, but keep any added labels
+  **low-cardinality**.
 
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`

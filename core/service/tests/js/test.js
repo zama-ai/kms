@@ -106,21 +106,6 @@ test('pke', (_t) => {
     assert.deepEqual(x, pt);
 });
 
-test('centralized user decryption response', (_t) => {
-    // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
-    const { data, client, enc_pk, enc_sk } = loadVector('test-central-wasm-transcript.8.json');
-
-    // with verification, using the request and eip712 domain from the vector
-    const pt = process_user_decryption_resp_from_js(
-        client, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true);
-    assertExpected(pt, data.expected);
-
-    // without verification (insecure path): no request nor domain is needed
-    const pt2 = process_user_decryption_resp_from_js(
-        client, null, null, data.responses, enc_pk, enc_sk, data.threshold, false);
-    assertExpected(pt2, data.expected);
-});
-
 test('threshold user decryption response', (_t) => {
     // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
     const { data, client, enc_pk, enc_sk } = loadVector('test-threshold-wasm-transcript.8.json');

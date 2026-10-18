@@ -18,8 +18,6 @@ pub enum KMSMode {
     ThresholdTestParameterNoInit,
     ThresholdTestParameterNoInitSixParty,
     ThresholdCustodianTestParameter,
-    Centralized,
-    CentralizedCustodian,
 }
 
 // Wrapper struct for Output
@@ -103,8 +101,6 @@ impl DockerComposeCmd {
             | KMSMode::ThresholdCustodianTestParameter => {
                 &[50100, 50200, 50300, 50400, 50001, 50002, 50003, 50004]
             }
-            // Must match the port as defined in kms/docker-compose-core-centralized.yml
-            KMSMode::Centralized | KMSMode::CentralizedCustodian => &[50051],
         }
     }
 
@@ -117,9 +113,7 @@ impl DockerComposeCmd {
 
         // set the FHE params based on mode
         match self.mode {
-            KMSMode::ThresholdDefaultParameter
-            | KMSMode::Centralized
-            | KMSMode::CentralizedCustodian => unsafe {
+            KMSMode::ThresholdDefaultParameter => unsafe {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
             },
             KMSMode::ThresholdTestParameter
@@ -169,13 +163,6 @@ impl DockerComposeCmd {
             KMSMode::ThresholdCustodianTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
                 build.env("KMS_DOCKER_BACKUP_SECRET_SHARING", "true");
-            }
-            KMSMode::CentralizedCustodian => {
-                build.arg("docker-compose-core-centralized.yml");
-                build.env("KMS_DOCKER_BACKUP_SECRET_SHARING", "true");
-            }
-            KMSMode::Centralized => {
-                build.arg("docker-compose-core-centralized.yml");
             }
         }
 
@@ -231,9 +218,6 @@ impl DockerComposeCmd {
                 KMSMode::ThresholdTestParameterNoInitSixParty => {
                     docker_logs.arg("docker-compose-core-threshold-6.yml");
                 }
-                KMSMode::CentralizedCustodian | KMSMode::Centralized => {
-                    docker_logs.arg("docker-compose-core-centralized.yml");
-                }
             }
 
             docker_logs.arg("logs");
@@ -262,9 +246,6 @@ impl DockerComposeCmd {
                 }
                 KMSMode::ThresholdTestParameterNoInitSixParty => {
                     docker_down.arg("docker-compose-core-threshold-6.yml");
-                }
-                KMSMode::Centralized | KMSMode::CentralizedCustodian => {
-                    docker_down.arg("docker-compose-core-centralized.yml");
                 }
             }
             docker_down

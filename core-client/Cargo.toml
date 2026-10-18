@@ -22,11 +22,6 @@ path = "tests/integration/integration_test.rs"
 required-features = ["testing"]
 
 [[test]]
-name = "kubernetes_test_centralized"
-path = "tests/kind-testing/kubernetes_test_centralized.rs"
-required-features = ["kind_tests"]
-
-[[test]]
 name = "kubernetes_test_threshold"
 path = "tests/kind-testing/kubernetes_test_threshold.rs"
 required-features = ["kind_tests"]

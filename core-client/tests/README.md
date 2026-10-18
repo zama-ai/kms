@@ -7,7 +7,6 @@
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
 | **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests -- threshold` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
-| **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
 ## Folder Layout
 
@@ -88,8 +87,8 @@ Native tests spawn KMS servers in-process. See `integration/integration_test.rs`
 ```rust
 #[tokio::test]
 async fn test_my_feature() -> Result<()> {
-    // Setup returns (TempDir, ServerHandle, config_path)
-    let (_dir, _server, config) = setup_isolated_centralized_cli_test("my_test").await?;
+    // Setup returns (TempDir, HashMap<party_id, ServerHandle>, config_path)
+    let (_dir, _servers, config) = setup_isolated_threshold_cli_test_signing_only("my_test", 4).await?;
     
     // Run CLI command
     let output = Command::new(env!("CARGO_BIN_EXE_kms-core-client"))
@@ -100,11 +99,6 @@ async fn test_my_feature() -> Result<()> {
     Ok(())
 }
 ```
-
-**Centralized setup variants:**
-- `setup_isolated_centralized_cli_test` — basic centralized test
-- `setup_isolated_centralized_cli_test_with_backup` — with backup vault
-- `setup_isolated_centralized_cli_test_with_custodian_backup` — with custodian backup vault
 
 **Threshold setup variants** (all take `party_count: usize`):
 - `setup_isolated_threshold_cli_test` — basic threshold test
@@ -126,9 +120,7 @@ K8s tests connect to a real kind cluster.
 ./ci/scripts/deploy.sh --target kind-local --deployment-type threshold --block
 ```
 
-**Which file to use:**
-- **Threshold tests** → `core-client/tests/kind-testing/kubernetes_test_threshold.rs`
-- **Centralized tests** → `core-client/tests/kind-testing/kubernetes_test_centralized.rs`
+K8s tests live in `core-client/tests/kind-testing/kubernetes_test_threshold.rs`.
 
 ### Writing a K8s test
 

@@ -3,45 +3,11 @@
 //! These tests validate the testing infrastructure components:
 //! - `TestMaterialManager` - copies pre-generated material to isolated directories
 //! - `TestMaterialSpec` - declares what cryptographic material a test needs
-//! - `CentralizedTestEnv` - builder for centralized KMS test environments
 //! - `ThresholdTestEnv` - builder for threshold KMS test environments
 //!
-//! For examples of how to write isolated tests, see:
-//! - Centralized: `centralized/misc_tests.rs`
-//! - Threshold: `threshold/misc_tests.rs`
+//! For examples of how to write isolated tests, see `threshold/misc_tests.rs`.
 
 use crate::testing::prelude::*;
-
-/// Validates that CentralizedTestEnv builder fails gracefully when material is missing.
-#[tokio::test]
-async fn test_centralized_material_validation() -> Result<()> {
-    use std::path::PathBuf;
-
-    let nonexistent_path = PathBuf::from("/nonexistent/test-material");
-    let manager = TestMaterialManager::new(Some(nonexistent_path.clone()));
-
-    let result = CentralizedTestEnv::builder()
-        .with_test_name("centralized_validation_test")
-        .with_material_manager(manager)
-        .build()
-        .await;
-
-    assert!(
-        result.is_err(),
-        "CentralizedTestEnv setup should fail when material doesn't exist"
-    );
-
-    if let Err(e) = result {
-        let error_msg = e.to_string();
-        assert!(
-            error_msg.contains("Material not found"),
-            "Error should mention missing material, got: {}",
-            error_msg
-        );
-    }
-
-    Ok(())
-}
 
 /// Validates that ThresholdTestEnv builder fails gracefully when material is missing.
 #[tokio::test]
