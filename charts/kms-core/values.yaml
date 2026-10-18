@@ -3,8 +3,10 @@
 kmsPeers:
   # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
   # id: 1
-  # The number of peers managed by the StatefulSets
-  count: 1
+  # The number of peers managed by the StatefulSets. The default 4 matches the default
+  # thresholdValue of 1 (3 * thresholdValue + 1 parties). A release that runs one party
+  # with a peersList sets count: 1.
+  count: 4
 
 kmsCore:
   # Add the following to enable the core:
@@ -115,7 +117,7 @@ kmsCore:
     rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
-    thresholdValue: 4
+    thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs

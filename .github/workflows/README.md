@@ -290,7 +290,7 @@ Called by `build-and-test.yml` when a PR has both pre-built images and one of th
 - `pr-preview-threshold` — 4-party threshold
 - `pr-preview-thresholdWithEnclave` — threshold + Nitro Enclave
 
-A `pr-preview-centralized*` label fails the label check. Other `pr-preview-*` labels deploy nothing.
+Other `pr-preview-*` labels deploy nothing.
 
 Namespace: `kms-ci-{actor}-{pr_number}`.
 

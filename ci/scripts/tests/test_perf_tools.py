@@ -118,7 +118,7 @@ class RunnerTests(TemporaryWorkingDirectory):
             with patch.dict(os.environ, {"DEPLOYMENT_TYPE": "thresholdWithEnclave"}):
                 runner.validate()
         with (
-            patch.dict(os.environ, {"DEPLOYMENT_TYPE": "centralized"}),
+            patch.dict(os.environ, {"DEPLOYMENT_TYPE": "thresholdish"}),
             self.assertRaises(ValueError),
         ):
             runner.validate()

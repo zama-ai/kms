@@ -130,12 +130,6 @@ jobs:
         run: |
           echo "PR labels: $PR_LABELS"
 
-          # KMS deploys in threshold mode only
-          if echo "$PR_LABELS" | jq -e '.[] | select(startswith("pr-preview-centralized"))' > /dev/null; then
-            echo "::error::pr-preview-centralized* labels are not supported: use pr-preview-threshold or pr-preview-thresholdWithEnclave"
-            exit 1
-          fi
-
           # Check if any pr-preview label exists
           SUPPORTED='select(. == "pr-preview-threshold" or . == "pr-preview-thresholdWithEnclave")'
           if echo "$PR_LABELS" | jq -e ".[] | ${SUPPORTED}" > /dev/null; then

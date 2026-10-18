@@ -99,16 +99,10 @@ parse_args() {
 
 #=============================================================================
 # Validate Deployment Type
-# KMS runs in threshold mode only. The centralized types are rejected by name
-# so that an old label or workflow input fails with an explicit message.
 #=============================================================================
 validate_deployment_type() {
     case "${DEPLOYMENT_TYPE}" in
         threshold|thresholdWithEnclave) ;;
-        centralized|centralizedWithEnclave)
-            log_error "Deployment type '${DEPLOYMENT_TYPE}' is not supported: KMS deploys in threshold mode only, use threshold or thresholdWithEnclave"
-            exit 1
-            ;;
         *)
             log_error "Unknown deployment type '${DEPLOYMENT_TYPE}': expected threshold or thresholdWithEnclave"
             exit 1

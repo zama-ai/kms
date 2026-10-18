@@ -28,7 +28,7 @@
      value `true` so existing values files keep working. */}}
 {{- define "kmsValidateThresholdMode" -}}
 {{- if eq (toString .Values.kmsCore.thresholdMode.enabled) "false" -}}
-{{- fail "kmsCore.thresholdMode.enabled=false is not supported: centralized mode is removed and the chart deploys threshold mode only. Set kmsCore.thresholdMode.enabled to true or remove the key." -}}
+{{- fail "kmsCore.thresholdMode.enabled=false is not supported: the chart deploys threshold mode only. Set kmsCore.thresholdMode.enabled to true or remove the key." -}}
 {{- end -}}
 {{- end -}}
 

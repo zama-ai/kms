@@ -70,9 +70,7 @@ jobs:
 
           jq empty charts/kms-core/values.schema.json
           helm lint charts/kms-core
-          helm template test charts/kms-core \
-            --set kmsPeers.count=4 \
-            --set kmsCore.thresholdMode.thresholdValue=1 >/dev/null
+          helm template test charts/kms-core >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/threshold/kms-service/values-kms-ci.yaml \
             --set kmsPeers.count=4 \
@@ -144,4 +142,4 @@ jobs:
             echo "expected thresholdMode.enabled=false to fail" >&2
             exit 1
           fi
-          grep -Fq "centralized mode is removed" <<<"$output"
+          grep -Fq "the chart deploys threshold mode only" <<<"$output"
