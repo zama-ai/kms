@@ -440,7 +440,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
     /// Insecure (dummy) preprocessing: no preprocessing material is generated,
     /// only the preprocessing ID, the external signature and the DKG parameters
-    /// are stored in the meta store, mirroring the centralized KMS preprocessing.
+    /// are stored in the meta store.
     /// The stored entry can only be consumed by the insecure key generation.
     #[cfg(feature = "insecure")]
     async fn inner_insecure_key_gen_preproc(

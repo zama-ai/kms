@@ -1,20 +1,13 @@
 use hashing::DomainSep;
 use kms_grpc::kms::v1::*;
 use kms_grpc::{ContextId, EpochId};
-use rand::CryptoRng;
-use rand::RngCore;
 use serde::Serialize;
-use std::sync::Arc;
-use tfhe::FheTypes;
 use tonic::Request;
 use tonic::Response;
 
-use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::signatures::{NodeSigningIdentity, Signature};
+use crate::cryptography::signatures::Signature;
 use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
-
-use super::base::KmsFheKeyHandles;
 
 pub trait BaseKms {
     fn sign<T: Serialize + AsRef<[u8]>>(
@@ -25,28 +18,6 @@ pub trait BaseKms {
     fn digest<T: ?Sized + AsRef<[u8]>>(
         domain_separator: &DomainSep,
         msg: &T,
-    ) -> anyhow::Result<Vec<u8>>;
-}
-/// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
-pub trait Kms: BaseKms {
-    fn public_decrypt(
-        keys: &KmsFheKeyHandles,
-        ct: &[u8],
-        fhe_type: FheTypes,
-        ct_format: CiphertextFormat,
-    ) -> anyhow::Result<TypedPlaintext>;
-
-    #[expect(clippy::too_many_arguments)]
-    fn user_decrypt(
-        keys: &KmsFheKeyHandles,
-        identity: Arc<NodeSigningIdentity>,
-        rng: &mut (impl CryptoRng + RngCore),
-        ct: &[u8],
-        ct_type: FheTypes,
-        ct_format: CiphertextFormat,
-        digest_link: &[u8],
-        enc_key: &UnifiedPublicEncKey,
-        client_address: &[u8],
     ) -> anyhow::Result<Vec<u8>>;
 }
 

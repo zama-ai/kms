@@ -85,8 +85,6 @@ cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         pub const TMP_PATH_PREFIX: &str = "temp";
 
-        pub static TEST_CENTRAL_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_CENTRAL_KEY_ID").unwrap());
         pub static TEST_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap());
         pub static TEST_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
@@ -95,10 +93,6 @@ cfg_if::cfg_if! {
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap());
         pub static TEST_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_13P").unwrap());
-        pub static OTHER_CENTRAL_TEST_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("OTHER_TEST_ID").unwrap());
-        pub static DEFAULT_CENTRAL_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_KEY_ID").unwrap());
         pub static DEFAULT_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap());
         pub static DEFAULT_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
@@ -109,8 +103,6 @@ cfg_if::cfg_if! {
             LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap());
         pub static DEFAULT_DEC_ID: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("DEFAULT_DEC_ID").unwrap());
-        pub static OTHER_CENTRAL_DEFAULT_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("OTHER_DEFAULT_ID").unwrap());
         pub static PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
             LazyLock::new(|| (1..=13).map(|i| Some(format!("PUB-p{}", i))).collect());
         pub static PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
@@ -136,7 +128,7 @@ cfg_if::cfg_if! {
 
 cfg_if::cfg_if! {
     if #[cfg(test)] {
-        // These ones should be removed or moved to more relevant positions in client or central kms.
+        // These ones should be removed or moved to more relevant positions in the client.
         // The generated files use the suffix `.{plaintext_bits}.json` (see the wasm transcript
         // generation in the user decryption tests), e.g. `temp/test-threshold-wasm-transcript.8.json`.
         pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript";

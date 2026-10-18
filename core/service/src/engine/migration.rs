@@ -1006,7 +1006,7 @@ mod tests {
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
-        delete_non_legacy_verf_material, ensure_central_server_signing_keys_exist,
+        delete_non_legacy_verf_material, ensure_threshold_server_signing_key_exists,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_identity, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;
@@ -3118,10 +3118,8 @@ mod tests {
         // survives and migrate_prss_to_epoch converts it into EpochData.
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
             .await;
-        // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        // Derive the signing key of a single party.
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
 
         migrate_to_0_15_x(
             &mut pub_storage,
@@ -3152,10 +3150,8 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
-        // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        // Derive the signing key of a single party.
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
 
         let config = default_migration_config();
 
@@ -3187,9 +3183,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         // Derive signing key
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
 
         migrate_to_0_15_x(
             &mut pub_storage,
@@ -3284,15 +3278,30 @@ mod tests {
             .unwrap();
     }
 
+    /// Runs [ensure_threshold_server_signing_key_exists] deterministically for party 1.
+    async fn ensure_signing_key_exists(
+        pub_storage: &mut RamStorage,
+        priv_storage: &mut RamStorage,
+    ) {
+        ensure_threshold_server_signing_key_exists(
+            pub_storage,
+            priv_storage,
+            true,
+            std::num::NonZeroUsize::MIN,
+            "p1".to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+    }
+
     /// Helper method:
     /// A node from before multi-scheme support: an ECDSA signing key in private
     /// storage, and in public storage only the deprecated ECDSA material.
     async fn pre_multi_scheme_node() -> (RamStorage, RamStorage) {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
         delete_non_legacy_verf_material(&mut pub_storage)
             .await
             .unwrap();

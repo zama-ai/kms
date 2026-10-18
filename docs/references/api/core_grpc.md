@@ -328,8 +328,7 @@ message Empty {}
 
 ### Description
 
-In the __threshold__ case it triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
-In the __centralized__ case no correlated randomness is needed, so this is a dummy that records preprocessing metadata but no material; the entry must nonetheless exist before calling `KeyGen`.
+It triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
@@ -403,8 +402,7 @@ Only the preprocessing ID (along with the parameters and the external signature)
 Because nothing is generated, this call completes (almost) instantly.
 
 As for the secure variant, a preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is required before threshold `InsecureKeyGen`.
-In the __threshold__ setting the stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
-In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that record preprocessing metadata but no material — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
+The stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
 Completion status can be validated using the `GetInsecureKeyGenPreprocResult` endpoint.
 </details>
 
@@ -469,7 +467,7 @@ message Empty {}
 
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a finished `KeyGenPreprocRequest`. This holds in both the __threshold__ and the __centralized__ setting; in the latter the preprocessing is a dummy that records metadata but no material, and the entry must still exist.
+The `preproc_id` must be the `request_id` of a finished `KeyGenPreprocRequest`.
 The `keyset_config` is the information about the keys to generate and _must_ match the similar argument used during preprocessing in `KeyGenPreprocRequest`.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
 
@@ -548,7 +546,7 @@ message Empty {}
 Insecure version of `KeyGen`, where MPC is _not_ used for key generation.
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` or `GetInsecureKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a finished preprocessing request and is consumed by this call, so each insecure key generation requires its own preprocessing. In the __threshold__ setting the preprocessing must have been produced by `InsecureKeyGenPreproc`; a `preproc_id` produced by the secure `KeyGenPreproc` fails with `FailedPrecondition`. In the __centralized__ setting both preprocessing endpoints are identical dummies, so their entries are interchangeable.
+The `preproc_id` must be the `request_id` of a finished preprocessing request and is consumed by this call, so each insecure key generation requires its own preprocessing. The preprocessing must have been produced by `InsecureKeyGenPreproc`; a `preproc_id` produced by the secure `KeyGenPreproc` fails with `FailedPrecondition`.
 
 The `keyset_config` is the information about the keys to generate.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
@@ -825,14 +823,14 @@ message KeyMaterialAvailabilityResponse {
 
 ### Description
 
-This RPC provides a comprehensive view of all available key material in the KMS, including FHE keys, CRS keys, and preprocessing material (threshold KMS only).
+This RPC provides a comprehensive view of all available key material in the KMS, including FHE keys, CRS keys, and preprocessing material.
 
 The response contains:
 
 - `fhe_key_ids`: List of all available FHE key IDs (request IDs from KeyGen operations)
 - `crs_ids`: List of all available CRS key IDs (request IDs from CrsGen operations)  
-- `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations in threshold KMS, empty for centralized KMS)
-- `storage_info`: Diagnostic information about the storage backend (e.g., "Centralized KMS" or "Threshold KMS")
+- `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations)
+- `storage_info`: Diagnostic information about the storage backend (e.g., "Threshold KMS")
 
 This endpoint is useful for:
 - Health checks and monitoring

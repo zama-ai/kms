@@ -7,7 +7,7 @@ When reviewing changes — whether a single commit or an entire branch — ignor
 - Check for deadlocks, livelocks, TOCTOU, and other concurrency issues.
 - Variable names and comments are consistent across touched files — identical semantic concepts share names.
 - Comments and docs follow [PROSE.md](./PROSE.md). Watch for the common failures: comments that narrate the change instead of the code, comments on trivial code, and comments the change made stale.
-- When changing a function or pattern, check whether siblings and analogous implementations need matching changes. Examples: `purge_crs_data` ↔ `purge_key_data`; `*_threshold` ↔ `*_central` / `*_centralized`; S3-storage ↔ filesystem-storage.
+- When changing a function or pattern, check whether siblings and analogous implementations need matching changes. Examples: `purge_crs_data` ↔ `purge_key_data`; S3-storage ↔ filesystem-storage.
 - If CLI code or configuration changed, update docs (`md`) and deployment configs (`yml`, `toml`) consistently.
 - No internal protobuf/comms compatibility breaks — a KMS released from `main` after this PR can still talk to the previous release.
 - Strong types at module/service boundaries (`enum`, `Duration`, `Url`, `PathBuf`, `IpAddr`, …) validated/parsed at the edge — no untyped/loosely-typed input crosses boundaries.

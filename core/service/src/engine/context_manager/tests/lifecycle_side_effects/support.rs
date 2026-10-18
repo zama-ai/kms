@@ -1,8 +1,7 @@
 //! Fixtures for MPC context creation and destruction failure tests.
 //!
 //! [`ContextFixture`] uses [`FailingRamStorage`] as the private store. It seeds a keeper context,
-//! optionally seeds a target context, and loads the same data into a centralized cache or a
-//! threshold session maker. Tests can then compare storage state and lifecycle state.
+//! optionally seeds a target context, and loads the same data into a threshold session maker. Tests can then compare storage state and lifecycle state.
 
 use super::super::*;
 use crate::engine::rng_source::{RngSource, TaskRngs, test_rng_source};
@@ -36,10 +35,7 @@ pub(super) enum InitialTargetContextState {
     Stored,
 }
 
-pub(super) enum TestContextManager {
-    Centralized(CentralizedContextManager<RamStorage, FailingRamStorage>),
-    Threshold(ThresholdContextManager<RamStorage, FailingRamStorage>),
-}
+pub(super) struct TestContextManager(ThresholdContextManager<RamStorage, FailingRamStorage>);
 
 impl TestContextManager {
     pub(super) async fn new_mpc_context(
@@ -49,10 +45,7 @@ impl TestContextManager {
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(context.clone().try_into().unwrap()),
         });
-        match self {
-            Self::Centralized(manager) => manager.new_mpc_context(request).await,
-            Self::Threshold(manager) => manager.new_mpc_context(request).await,
-        }
+        self.0.new_mpc_context(request).await
     }
 
     pub(super) async fn destroy_mpc_context(
@@ -62,32 +55,20 @@ impl TestContextManager {
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
-        match self {
-            Self::Centralized(manager) => manager.destroy_mpc_context(request).await,
-            Self::Threshold(manager) => manager.destroy_mpc_context(request).await,
-        }
+        self.0.destroy_mpc_context(request).await
     }
 
     /// Holds the manager's lifecycle lock so tests can verify that an update waits for it.
     pub(super) async fn lock_updates(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        match self {
-            Self::Centralized(manager) => manager.inner.mpc_context_update_lock.lock().await,
-            Self::Threshold(manager) => manager.inner.mpc_context_update_lock.lock().await,
-        }
+        self.0.inner.mpc_context_update_lock.lock().await
     }
 
     /// Returns whether persistent and in-memory state both contain `context_id`.
     pub(super) async fn mpc_context_exists_and_consistent(&self, context_id: &ContextId) -> bool {
-        match self {
-            Self::Centralized(manager) => manager
-                .mpc_context_exists_and_consistent(context_id)
-                .await
-                .unwrap(),
-            Self::Threshold(manager) => manager
-                .mpc_context_exists_and_consistent(context_id)
-                .await
-                .unwrap(),
-        }
+        self.0
+            .mpc_context_exists_and_consistent(context_id)
+            .await
+            .unwrap()
     }
 }
 
@@ -157,34 +138,23 @@ impl ContextFixture {
         }
     }
 
-    pub(super) async fn manager(&self, kms_type: KMSType) -> TestContextManager {
-        let base_kms = BaseKmsStruct::new(kms_type, self.signing_key.clone(), test_rng_source());
-
-        match kms_type {
-            KMSType::Centralized => {
-                let manager = CentralizedContextManager::new(
-                    base_kms,
-                    self.storage.clone(),
-                    MetaStore::new(100, 10),
-                    Arc::new(TaskTracker::new()),
-                );
-                manager.load_mpc_context_from_storage().await.unwrap();
-                TestContextManager::Centralized(manager)
-            }
-            KMSType::Threshold => {
-                let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-                let manager = ThresholdContextManager::new(
-                    base_kms,
-                    self.storage.clone(),
-                    MetaStore::new(100, 10),
-                    session_maker,
-                    false,
-                    Arc::new(TaskTracker::new()),
-                );
-                manager.load_mpc_context_from_storage().await.unwrap();
-                TestContextManager::Threshold(manager)
-            }
-        }
+    pub(super) async fn manager(&self) -> TestContextManager {
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            self.signing_key.clone(),
+            test_rng_source(),
+        );
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
+        let manager = ThresholdContextManager::new(
+            base_kms,
+            self.storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::new(TaskTracker::new()),
+        );
+        manager.load_mpc_context_from_storage().await.unwrap();
+        TestContextManager(manager)
     }
 
     pub(super) async fn fail_target_store(&self, phase: FaultPhase) {

@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     /// Validate KMS configuration file
     Config {
-        /// Path to KMS config file (centralized or threshold)
+        /// Path to KMS config file (must contain a `[threshold]` section)
         #[arg(short, long)]
         file: PathBuf,
     },
@@ -43,7 +43,7 @@ enum Commands {
         #[arg(short, long)]
         endpoint: String,
 
-        /// Optional config file for peer checks (threshold only)
+        /// Optional config file for peer checks
         #[arg(short, long)]
         config: Option<PathBuf>,
     },

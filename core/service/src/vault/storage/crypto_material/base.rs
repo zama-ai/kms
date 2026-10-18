@@ -1,7 +1,7 @@
 //! Base implementation of cryptographic material storage
 //!
 //! This module provides the foundational storage implementation used by
-//! both centralized and threshold KMS variants.
+//! the threshold KMS.
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
@@ -24,9 +24,7 @@ use crate::{
         Vault,
         storage::{
             Storage, StorageExt, StoreWriteOutcome,
-            crypto_material::{
-                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
-            },
+            crypto_material::{log_storage_success, traits::PrivateCryptoMaterialReader},
             delete_at_request_and_epoch_id, delete_at_request_id, delete_recovery_material_at_id,
             read_all_data_versioned, read_context_at_id, read_custodian_context_anchor,
             store_custodian_context_anchor, store_recovery_material,
@@ -167,7 +165,7 @@ pub enum PublicKeySet {
 }
 
 /// A cached generic storage entity for the common data structures
-/// used by both the centralized and the threshold KMS.
+/// used by the threshold KMS.
 ///
 /// This struct provides thread-safe access to public, private, and optional backup storage,
 /// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
@@ -1129,12 +1127,11 @@ where
     pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
         let priv_storage = self.private_storage.lock().await;
         let res = read_context_at_id(&*priv_storage, context_id).await?;
-        log_storage_success_optional_variant(
+        log_storage_success(
             context_id,
             priv_storage.info(),
             &PrivDataType::ContextInfo.to_string(),
             false,
-            None,
         );
         Ok(res)
     }

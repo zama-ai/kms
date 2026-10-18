@@ -887,6 +887,10 @@ where
 /// The private storage layout for one deployment mode.
 pub(crate) enum PrivateLayout<'a> {
     /// A centralized node layout.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the centralized layout tests construct it")
+    )]
     Centralized,
     /// A threshold node layout and its epoch-to-context registry.
     Threshold {

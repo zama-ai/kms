@@ -1,6 +1,6 @@
 # KMS Health Check Tool
 
-Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for both centralized and threshold KMS instances.
+Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for threshold KMS instances.
 
 __NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
 
@@ -39,7 +39,7 @@ HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 k
 
 The tool deals with two distinct kinds of configuration:
 
-- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
+- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `[threshold]` section is required: a config without it fails validation with `Missing required [threshold] section in config`. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
 - **Tool config (timeouts)** — there is no CLI flag for this; it is configured through a configuration file at a fixed location or environment variables, as described below.
 
 ### Health Check Configuration File
@@ -153,6 +153,10 @@ Configuration values are applied in the following order (highest precedence firs
 - **Degraded**: At least threshold + 1 but below 2/3 majority, operational with reduced fault tolerance
 - **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
+## Node Type
+
+The tool supports threshold nodes only. When `GetHealthStatus` reports a `node_type` other than `NODE_TYPE_THRESHOLD` (2), the tool reports `Unsupported node type <n>` with the numeric wire value and sets the overall status to Unhealthy. It then skips the key material and context sections of that response.
+
 ## Output Format
 
 Default is text with colors. Use `--format json` for machine-readable output.
@@ -203,7 +207,7 @@ enum HealthStatus {
 // Node type for KMS deployment
 enum NodeType {
   NODE_TYPE_UNSPECIFIED = 0;
-  NODE_TYPE_CENTRALIZED = 1;
+  reserved 1;
   NODE_TYPE_THRESHOLD = 2;
 }
 
@@ -330,7 +334,7 @@ docker run -v $(pwd):/workspace \
 
 ## Known Limitations
 
-- **Operator Key**: In threshold mode, only available if backup vault uses `SecretSharing` keychain
+- **Operator Key**: Only available if backup vault uses `SecretSharing` keychain
 - **Docker Resolution**: Automatically translates Docker service names to localhost when needed
 
 ## Bandwidth Benchmark

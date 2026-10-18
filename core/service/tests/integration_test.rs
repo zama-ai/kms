@@ -246,11 +246,7 @@ tls_subject = "kms-party"
         assert!(log.contains("Deleting published verification material from public storage"));
         assert!(log.contains("Deleting SigningKey under request ID "));
         assert!(log.contains("Deleting SigningSeed under request ID "));
-        assert!(
-            log.contains(
-                "Successfully stored private threshold server signing key under the handle"
-            )
-        );
+        assert!(log.contains("Successfully stored private server signing key under the handle"));
         assert!(log.contains("Successfully stored CA certificate"));
         assert!(log.contains(&format!(
             "Stored {} TypedVerfKey under the handle {}",
@@ -290,9 +286,8 @@ tls_subject = "kms-party"
                 .contains("Deleting published verification material from public storage")
         );
         assert!(
-            overwrite_again_log.contains(
-                "Successfully stored private threshold server signing key under the handle"
-            )
+            overwrite_again_log
+                .contains("Successfully stored private server signing key under the handle")
         );
         assert!(overwrite_again_log.contains(&format!(
             "Stored {} TypedVerfKey under the handle {}",
@@ -649,7 +644,7 @@ tls_subject = "kms-party"
                 );
             }
             assert!(output.status.success());
-            assert!(log.contains("Successfully stored private threshold server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
+            assert!(log.contains("Successfully stored private server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
             // The public ECDSA material of the same identity, at the same handle, in
             // both the canonical and the deprecated location.
             for folder in ["TypedVerfKey", "VerfKey"] {

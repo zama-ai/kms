@@ -27,10 +27,9 @@ use rand::SeedableRng;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tfhe::{
-    CompactPublicKey, ConfigBuilder, Seed, shortint::ClassicPBSParameters,
+    CompactPublicKey, ConfigBuilder, shortint::ClassicPBSParameters,
     xof_key_set::CompressedXofKeySet,
 };
-use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
     private_keysets::PrivateKeySet,
     public_keysets::FhePubKeySet,
@@ -44,17 +43,13 @@ use tokio::sync::{Mutex, RwLock};
 use super::base::{BackupPolicy, StorageError, update_meta_store};
 use crate::{
     consts::TEST_PARAM,
-    engine::{
-        base::KmsFheKeyHandles,
-        centralized::central_kms::{generate_fhe_keys, generate_uncompressed_fhe_keys},
-        threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
-    },
+    engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{
         StorageReader, StorageReaderExt,
         crypto_material::{
-            CentralizedCryptoMaterialStorage, CryptoMaterialStorage,
-            ThresholdCryptoMaterialStorage, check_data_exists, check_data_exists_at_epoch,
+            CryptoMaterialStorage, ThresholdCryptoMaterialStorage, check_data_exists,
+            check_data_exists_at_epoch,
         },
         delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
@@ -100,57 +95,6 @@ fn ram_threshold_storage(
         backup_vault,
         HashMap::new(),
     )
-}
-
-fn generate_compressed_keys(
-    req_id: &RequestId,
-    prep_id: &RequestId,
-    signing_seed: u64,
-) -> (
-    PrivateSigKey,
-    alloy_sol_types::Eip712Domain,
-    CompressedXofKeySet,
-    CompactPublicKey,
-    KmsFheKeyHandles,
-) {
-    let mut rng = AesRng::seed_from_u64(signing_seed);
-    let (_pk, sk) = gen_sig_keys(&mut rng);
-    let domain = dummy_domain();
-    let (compressed_keyset, compact_pk, key_info) = generate_fhe_keys(
-        &NodeSigningIdentity::ecdsa_only(sk.clone()),
-        &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-        TEST_PARAM,
-        KeyGenSecretKeyConfig::GenerateAll,
-        req_id,
-        prep_id,
-        Some(Seed(42)),
-        &domain,
-        vec![],
-    )
-    .unwrap();
-
-    (sk, domain, compressed_keyset, compact_pk, key_info)
-}
-
-fn generate_uncompressed_keys(
-    req_id: &RequestId,
-    prep_id: &RequestId,
-    signing_seed: u64,
-) -> (FhePubKeySet, KmsFheKeyHandles) {
-    let mut rng = AesRng::seed_from_u64(signing_seed);
-    let (_, signing_key) = gen_sig_keys(&mut rng);
-    generate_uncompressed_fhe_keys(
-        &signing_key.into(),
-        &[SigningSchemeType::Ecdsa256k1],
-        TEST_PARAM,
-        KeyGenSecretKeyConfig::GenerateAll,
-        req_id,
-        prep_id,
-        Some(Seed(42)),
-        &dummy_domain(),
-        vec![],
-    )
-    .unwrap()
 }
 
 /// Returns a signing key, the test domain, a compressed keyset tagged with `key_id`, its compact
@@ -346,42 +290,6 @@ async fn write_crs() {
 }
 
 #[tokio::test]
-async fn read_public_key() {
-    // it doens't matter if we use centralized or threshold
-    // the public key reading logic is the same
-    let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        RamStorage::new(),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
-
-    let pub_storage = crypto_storage.inner.public_storage.clone();
-
-    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
-    let config = ConfigBuilder::with_custom_parameters(pbs_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-
-    let req_id = derive_request_id("read_keys").unwrap();
-    {
-        let pub_storage = pub_storage.clone();
-        let mut s = pub_storage.lock().await;
-        store_versioned_at_request_id(
-            &mut (*s),
-            &req_id,
-            &public_key,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        .unwrap();
-    }
-
-    // reading the public key without cache should succeed
-    let _pk = read_cloned_pk(pub_storage.clone(), &req_id).await.unwrap();
-}
-
-#[tokio::test]
 async fn read_public_key_from_threshold_storage() {
     let crypto_storage = ram_threshold_storage(None);
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -403,155 +311,6 @@ async fn read_public_key_from_threshold_storage() {
 
     // Reading the public key without a cache succeeds.
     let _pk = read_cloned_pk(pub_storage, &req_id).await.unwrap();
-}
-
-#[tokio::test]
-async fn write_central_keys() {
-    let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
-    let pub_storage = crypto_storage.inner.public_storage.clone();
-
-    let req_id = derive_request_id("write_central_keys").unwrap();
-    let epoch_id: EpochId = derive_request_id("write_central_keys_epoch")
-        .unwrap()
-        .into();
-
-    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
-    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
-
-    let meta_store = MetaStore::new_unlimited();
-
-    // Insert + capture permit, then write.
-    let permit = {
-        let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap()
-    };
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info.clone(),
-            fhe_key_set.clone(),
-            meta_store.clone(),
-            permit,
-            "",
-        )
-        .await;
-    assert!(result.is_ok(), "expected success: {result:?}");
-    // The successful write caches exactly one FHE key entry.
-    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
-
-    // Note: under the strong-permit invariant, "second write to same req_id"
-    // is impossible from the outside — `insert` refuses to mint a duplicate
-    // permit.
-
-    let new_req_id = derive_request_id("write_central_keys_2").unwrap();
-    // write on a failed storage device should fail
-    {
-        let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_fail_store_at(StorageEntry::new(
-            new_req_id,
-            None,
-            PubDataType::ServerKey.to_string(),
-        ));
-    }
-    let new_permit = {
-        let mut guard = meta_store.write().await;
-        guard.insert(&new_req_id).unwrap()
-    };
-    let result = crypto_storage
-        .write_fhe_keys(
-            &new_req_id,
-            &epoch_id,
-            key_info,
-            fhe_key_set,
-            meta_store.clone(),
-            new_permit,
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Writing error"),
-        "expected underlying storage failure, got: {err}"
-    );
-
-    // check the meta store is correct
-    {
-        let guard = meta_store.read().await;
-        assert!(guard.has_existed(&req_id));
-        assert!(guard.has_existed(&new_req_id));
-    }
-}
-
-#[tokio::test]
-async fn write_central_keys_failed_storage_sets_terminal_error() {
-    let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
-    let pub_storage = crypto_storage.inner.public_storage.clone();
-
-    let req_id =
-        derive_request_id("write_central_keys_failed_storage_sets_terminal_error").unwrap();
-    let epoch_id: EpochId =
-        derive_request_id("write_central_keys_failed_storage_sets_terminal_error_epoch")
-            .unwrap()
-            .into();
-
-    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
-    let public_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
-
-    let meta_store = MetaStore::new_unlimited();
-    let permit = {
-        let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap()
-    };
-
-    {
-        let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_fail_store_at(StorageEntry::new(
-            req_id,
-            None,
-            PubDataType::ServerKey.to_string(),
-        ));
-    }
-
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info,
-            public_key_set,
-            meta_store.clone(),
-            permit,
-            "",
-        )
-        .await;
-    assert!(
-        result.is_err(),
-        "expected storage failure to surface an error, got: {result:?}"
-    );
-
-    let is_err_status = {
-        let guard = meta_store.read().await;
-        matches!(
-            guard
-                .retrieve(&req_id)
-                .expect("request should remain tracked in meta store after failure"),
-            EntryState::Done(Err(_))
-        )
-    };
-    assert!(
-        is_err_status,
-        "expected terminal error status in meta store after storage failure"
-    );
 }
 
 #[tokio::test]
@@ -891,71 +650,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         err.to_string().contains(&expected_msg),
         "Unexpected error message: {}",
         err
-    );
-}
-
-#[tokio::test]
-async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
-    let req_id =
-        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
-    let epoch_id: EpochId =
-        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key_epoch")
-            .unwrap()
-            .into();
-
-    let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        RamStorage::new(),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
-    let (_, _, compressed_keyset, compact_pk, key_info) =
-        generate_compressed_keys(&req_id, &req_id, 50);
-
-    let meta_store = MetaStore::new_unlimited();
-
-    let permit = {
-        let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap()
-    };
-
-    crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info,
-            PublicKeySet::Compressed {
-                compact_public_key: Arc::new(compact_pk),
-                compressed_keyset: Arc::new(compressed_keyset),
-            },
-            meta_store,
-            permit,
-            "",
-        )
-        .await
-        .unwrap();
-
-    assert!(
-        crypto_storage
-            .fhe_keys_exists(&req_id, &epoch_id)
-            .await
-            .expect("sanity check: existence query should not fail"),
-        "complete compressed layout should be considered present"
-    );
-
-    {
-        let mut guard = crypto_storage.inner.public_storage.lock().await;
-        delete_at_request_id(&mut *guard, &req_id, &PubDataType::PublicKey.to_string())
-            .await
-            .unwrap();
-    }
-
-    assert!(
-        !crypto_storage
-            .fhe_keys_exists(&req_id, &epoch_id)
-            .await
-            .expect("storage should still be queryable after deleting PublicKey"),
-        "compressed keys should be treated as missing when the standalone PublicKey is absent"
     );
 }
 
@@ -1455,54 +1149,6 @@ async fn write_all_updates_backup_vault() {
         .await
         .unwrap();
     assert_eq!(backup_sk.signing_key_id(), sk.signing_key_id());
-}
-
-#[tokio::test]
-async fn handle_fhe_keys_compressed_writes_and_caches() {
-    // Compressed layout: stores CompressedXofKeySet + PublicKey, no ServerKey.
-    let req_id = derive_request_id("handle_fhe_keys_compressed").unwrap();
-    let epoch_id: EpochId = derive_request_id("handle_fhe_keys_compressed_epoch")
-        .unwrap()
-        .into();
-    let storage = fresh_ram_storage();
-
-    let (_sk, _domain, compressed_keyset, compact_pk, key_info) =
-        generate_compressed_keys(&req_id, &req_id, 7);
-    let public_key_set = PublicKeySet::Compressed {
-        compact_public_key: Arc::new(compact_pk),
-        compressed_keyset: Arc::new(compressed_keyset),
-    };
-
-    let cache = Arc::new(RwLock::new(HashMap::new()));
-    storage
-        .handle_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info,
-            PrivDataType::FhePrivateKey,
-            public_key_set,
-            cache.clone(),
-            false,
-            TEST_METRIC,
-        )
-        .await
-        .unwrap();
-
-    let cache_guard = cache.read().await;
-    assert!(cache_guard.contains_key(&(req_id, epoch_id)));
-    let pub_s = storage.public_storage.lock().await;
-    assert!(
-        pub_s
-            .data_exists(&req_id, &PubDataType::CompressedXofKeySet.to_string())
-            .await
-            .unwrap()
-    );
-    assert!(
-        pub_s
-            .data_exists(&req_id, &PubDataType::PublicKey.to_string())
-            .await
-            .unwrap()
-    );
 }
 
 #[tokio::test]

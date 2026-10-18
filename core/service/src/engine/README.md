@@ -5,7 +5,7 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 ## Structure
 
 - **base.rs**  
-  Universal code for the gRPC service structure, providing shared logic and abstractions used by both centralized and threshold services. That is, the structs and universal methods used to define a KMS server.
+  Universal code for the gRPC service structure, providing shared logic and abstractions used by the threshold service. That is, the structs and universal methods used to define a KMS server.
 
 - **context.rs**  
   Definitions and utilities for managing the service context, including state and configuration relevant to KMS operations.
@@ -18,22 +18,6 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 
 - **validation_non_wasm.rs / validation_wasm.rs**  
   Validation logic for different build targets (native and WASM). Observe that the WASM build is _only_ used for user decryption.
-
-### Centralized KMS (`centralized/`)
-
-- **central_kms.rs**  
-  Core logic for centralized key management.
-
-- **endpoint.rs**  
-  Entry points for centralized gRPC calls (now at the root of the `centralized` folder).
-
-- **service/**  
-  Endpoint-specific code for centralized operations:
-  - **context.rs**: Service context management.
-  - **crs_gen.rs**: CRS generation logic.
-  - **decryption.rs**: Decryption endpoint logic.
-  - **key_gen.rs**: Key generation endpoint logic.
-  - **mod.rs**: Module declarations for centralized service.
 
 ### Threshold KMS (`threshold/`)
 
@@ -64,7 +48,7 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 
 ## Purpose
 
-The `engine` module acts as the backbone of the KMS server, exposing cryptographic functionality via gRPC endpoints. It supports both centralized and threshold (distributed) key management, allowing for flexible deployment in various security architectures.
+The `engine` module acts as the backbone of the KMS server, exposing cryptographic functionality via gRPC endpoints. It implements threshold (distributed) key management.
 
 ## Usage
 
@@ -74,7 +58,7 @@ This module is not intended to be used directly. Instead, it is integrated into 
 ## Expanding
 
 To expand the module add relevant structures and/or functions to the protobuf files (found in `../../../grpc/proto/*`).
-Then compile to generate the protobuf fixtures and add the new methods to `centralized/endpoint.rs`, respecitvely `threshold/endpoint.rs`.
+Then compile to generate the protobuf fixtures and add the new methods to `threshold/endpoint.rs`.
 
 ---
 

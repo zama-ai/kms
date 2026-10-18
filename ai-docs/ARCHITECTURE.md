@@ -2,7 +2,7 @@
 
 This document describes the architecture of the Zama KMS: a key-management
 service for fully homomorphic encryption facilitated by [TFHE-rs](https://github.com/zama-ai/tfhe-rs).
-The system supports key generation, CRS generation and decryption in both a single-party centralized service or as an `n`-party threshold MPC cluster.
+The system supports key generation, CRS generation and decryption as an `n`-party threshold MPC cluster.
 Input and output happen through gRPC and is designed to be triggered and consumed by [FHEVM](https://github.com/zama-ai/fhevm).
 
 The underlying MPC protocol is maliciously secure and robust; see
@@ -23,10 +23,6 @@ The KMS exposes a gRPC API. In the threshold deployment the KMS is itself a
 cluster of `n` independent parties (typically 13 parties, threshold `t = 4`)
 that run an MPC protocol among themselves; each party runs the same binary with
 its own configuration and secret share.
-
-A single deployment mode is chosen at startup via the server configuration
-(centralized vs. threshold). The gRPC surface is shared between modes; a few
-RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
 The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Threshold KMS deployments using Nitro Enclave remote attestation reject both new and stored contexts whose PCR allowlist is empty; stored contexts that fail validation are skipped during startup. Non-enclave and mocked-enclave deployments permit an empty allowlist.
 
@@ -105,8 +101,8 @@ The service crate is the main surface area. Key subdirectories under
 [core/service/src/](../core/service/src/):
 
 - [engine/](../core/service/src/engine/) — RPC handlers and KMS state machines.
-  Split into [centralized/](../core/service/src/engine/centralized/) and
-  [threshold/](../core/service/src/engine/threshold/) submodules. Other notable
+  The protocol code lives in the
+  [threshold/](../core/service/src/engine/threshold/) submodule. Other notable
   files: [base.rs](../core/service/src/engine/base.rs),
   [context.rs](../core/service/src/engine/context.rs),
   [backup_operator.rs](../core/service/src/engine/backup_operator.rs),
@@ -207,8 +203,7 @@ Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the re
 or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
 A successful refresh protects future task seeds once fresh entropy is unknown to the attacker.
 Existing task RNGs remain unchanged. The source does not provide backtracking resistance
-within a reseeding interval. Centralized services seed at construction; epoch refresh
-applies to threshold services.
+within a reseeding interval.
 
 ### Binaries
 
@@ -256,7 +251,7 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   preprocessing), `KeyGen`, and `NewMpcEpoch` for key rotation. Multiple keyset
   configurations are supported (standard, decompression-only, compressed
   variants). Insecure key generation still requires an explicit preprocessing
-  ID for both the centralized and threshold cases.
+  ID.
   Standard threshold keygen persists a dedicated OPRF LWE secret-key share in
   each party's private key material and includes the corresponding OPRF server
   key in the generated TFHE server key. Legacy private keysets that predate this
@@ -348,31 +343,15 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 EIP-712 signature validation on user-decryption requests is shared between
 the server and in-browser verifiers via the `validation_wasm` build.
 
-## Deployment modes
+## Deployment
 
-Mode is selected in the server TOML config — a party runs in threshold mode
-when the optional `[threshold]` section is present; see the sample
-files in `core/service/config/` (`default_centralized.toml`,
-`default_1.toml`..`default_4.toml`, and the compose-specific variants).
+A party reads its threshold settings from the required `[threshold]` section of
+the server TOML config; see the sample files in `core/service/config/`
+(`default_1.toml`..`default_4.toml`, and the compose-specific variants).
 
-In both modes, when the same key or CRS ID has metadata under multiple epochs,
-startup loads the metadata from the greatest epoch ID into the result meta
-store. Epoch IDs are compared as big-endian integers.
-
-### Centralized
-
-A single `RealCentralizedKms` instance holds all key material. No MPC; keys
-live in the configured vault backend. Preprocessing / reshare RPCs are not
-applicable.
-
-A centralized node keeps no epoch registry and stores no `EpochData`, so every
-epoch-scoped entry it holds belongs to the default epoch. `KeyGen`, `CrsGen`,
-`KeyGenPreproc`, `NewMpcEpoch`, `PublicDecrypt` and `UserDecrypt` reject any
-other epoch ID with `InvalidArgument`. A request that omits the epoch ID still
-falls back to the default epoch, so a caller that never sets the field is
-unaffected.
-
-### Threshold
+When the same key or CRS ID has metadata under multiple epochs, startup loads
+the metadata from the greatest epoch ID into the result meta store. Epoch IDs
+are compared as big-endian integers.
 
 `n` parties each run a `ThresholdKms` server. Each party holds a secret share
 of the FHE secret key and participates in the MPC protocol for every
@@ -479,7 +458,7 @@ intermediate state bootable: keysets never sit under an epoch the node does not 
 [boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
 stays in recovery mode, where the restore can be repeated.
 
-A threshold or centralized node without its signing key boots in **recovery mode**. It skips the
+A node without its signing key boots in **recovery mode**. It skips the
 boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
 from public storage. When public storage no longer holds that key, the node takes its backup key set
 from the `operator_verf_keys` that its recovery material embeds. It refuses to boot if the contexts
@@ -496,8 +475,6 @@ restarts.
 
 Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at
-[core/service/src/client/tests/centralized/custodian_backup_tests.rs](../core/service/src/client/tests/centralized/custodian_backup_tests.rs)
-and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](../core/service/src/client/tests/threshold/custodian_backup_tests.rs).
 
 ## Paired material writes
@@ -578,8 +555,7 @@ cannot be validated is never fetched: legacy metadata (no digest), decompression
 private counterpart), and node-specific material (a peer publishes its own verification keys,
 CA certificate, and recovery material, not this node's). A needed entry that no peer can supply
 fails boot, carrying the original verification failure as its context so the log still names
-what was wrong locally. Centralized nodes skip the sync — no peer publishes their material —
-and recovery mode skips it along with the other checks.
+what was wrong locally. Recovery mode skips the sync along with the other checks.
 
 The code is split by level. [material_integrity.rs](../core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
@@ -611,7 +587,7 @@ What it verifies, and how failures are treated:
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
-| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup` on a threshold node; `FheKeyInfo`, `PrssSetup`, `PrssSetupCombined`, or `EpochData` on a centralized node) | boot fails if foreign material exists |
+| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup`) | boot fails if foreign material exists |
 | Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry | boot fails |
 | Every `EpochData` has a `Context` entry | boot fails |
 | Every `Context` entry uses its declared context ID as its storage handle | boot fails |
@@ -627,7 +603,7 @@ The current loader requires the ECDSA key and attaches the seed when one is pres
 
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
-until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
+until the 0.16 migration removes them.
 The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
 A successful delete response alone does not count as completed cleanup.
 
@@ -667,7 +643,7 @@ The sweep enumerates through `StorageReader::all_data_types` (the top-level fold
 under the storage root) and `all_data_ids` (the entries of each `PubDataType` folder). An object
 directly under the root is reported whatever its name, because a data type stores its entries
 inside its folder only. The sweep is bounded by the storage root the node is configured with —
-`PUB` for a centralized node, `PUB-pX` for party X — so other parties' prefixes in a shared bucket
+for example `PUB-pX` for party X — so other parties' prefixes in a shared bucket
 are never listed. It does not descend into sub-folders beneath a data type: public data is never
 epoched, and both `all_data_ids` implementations skip such folders. A name that does not parse as
 a request ID makes the folder listing fail; that failure is logged as an error too, and boot
@@ -766,7 +742,7 @@ exact commands.
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
-- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for both centralized and threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
+- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
 
 ## Further reading
 

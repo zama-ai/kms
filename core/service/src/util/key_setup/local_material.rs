@@ -3,18 +3,24 @@
 //! These helpers run on one node, without an MPC protocol. Insecure CRS generation, tests,
 //! benchmarks and test fixtures use them.
 
-use crate::cryptography::signing::SigningSchemeType;
-use crate::cryptography::signing::identity::NodeSigningIdentity;
-use crate::engine::base::CrsGenMetadata;
-use kms_grpc::RequestId;
-use rand::{CryptoRng, Rng};
-use tfhe::zk::CompactPkeCrs;
 use tfhe::{ClientKey, Seed};
-use threshold_execution::{
-    tfhe_internals::parameters::DKGParams, zk::ceremony::public_parameters_by_trusted_setup,
-};
-use threshold_types::rng::AesRng;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 
+// The CRS helpers serve the insecure CRS generation endpoint and tests only.
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "insecure"))] {
+        use crate::cryptography::signing::SigningSchemeType;
+        use crate::cryptography::signing::identity::NodeSigningIdentity;
+        use crate::engine::base::CrsGenMetadata;
+        use kms_grpc::RequestId;
+        use rand::{CryptoRng, Rng};
+        use tfhe::zk::CompactPkeCrs;
+        use threshold_execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use threshold_types::rng::AesRng;
+    }
+}
+
+#[cfg(any(test, feature = "insecure"))]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_crs(
     sk: &NodeSigningIdentity,
@@ -32,7 +38,7 @@ pub(crate) async fn async_generate_crs(
     let signing_schemes = signing_schemes.to_vec();
 
     rayon::spawn_fifo(move || {
-        let out = gen_centralized_crs(
+        let out = gen_trusted_setup_crs(
             &sk_copy,
             &signing_schemes,
             &params,
@@ -60,8 +66,9 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
 }
 
 /// Computes a CRS by a trusted setup on this node and signs its metadata with `sk`.
+#[cfg(any(test, feature = "insecure"))]
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
+pub(crate) fn gen_trusted_setup_crs<R: Rng + CryptoRng>(
     sk: &NodeSigningIdentity,
     signing_schemes: &[SigningSchemeType],
     params: &DKGParams,

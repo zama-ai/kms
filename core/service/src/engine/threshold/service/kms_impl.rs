@@ -434,8 +434,7 @@ pub struct BucketMetaStore {
 /// `Real` holds the actual correlated randomness produced by the secure
 /// preprocessing endpoint. `Insecure` is a marker stored by the insecure
 /// preprocessing endpoint: no material exists and the entry may only be
-/// consumed by the insecure key generation, mirroring the dummy
-/// preprocessing of the centralized KMS.
+/// consumed by the insecure key generation.
 #[derive(Clone)]
 pub enum PreprocMaterial {
     Real(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),

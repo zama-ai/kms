@@ -134,7 +134,7 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     {
         panic!("Failed to store private client key: {e}");
     }
-    log_storage_success(req_id, client_storage.info(), "client key", false, false);
+    log_storage_success(req_id, client_storage.info(), "client key", false);
 
     // Compute handle with error handling
     let pk_handle = match compute_handle(&client_pk) {
@@ -155,82 +155,9 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     {
         panic!("Failed to store public client key: {e}");
     }
-    log_storage_success(pk_handle, client_storage.info(), "client key", true, false);
+    log_storage_success(pk_handle, client_storage.info(), "client key", true);
 
     true
-}
-
-/// Ensures central server signing and verification keys exist.
-///
-/// The signing key and the root signing seed both live at the fixed
-/// [`SIGNING_KEY_ID`] handle. If the signing key already exists, it is left
-/// untouched and only what is missing around it is
-/// completed. Otherwise a root seed is generated, the ECDSA key is derived
-/// from it, and both are stored together with the verification material of
-/// every signing scheme.
-///
-/// # Returns
-/// - `Ok(true)` if new keys were generated
-/// - `Ok(false)` if a signing key already existed
-/// - `Err` if reading, generating or storing any of the material failed
-pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    #[cfg(any(test, feature = "testing", feature = "insecure"))] deterministic: bool,
-) -> anyhow::Result<bool>
-where
-    PubS: Storage,
-    PrivS: Storage,
-{
-    // Check if keys already exist
-    let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
-        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
-
-    #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_large_seed_rng(deterministic, Some(0))?;
-    #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_large_seed_rng(false, Some(0))?;
-
-    if let Some(sk) = signing_keys_map.get(&*SIGNING_KEY_ID) {
-        // If a signing key already exists under this request ID, then only the
-        // public verification material may still need to be written
-        log_data_exists(
-            priv_storage.info(),
-            Some(pub_storage.info()),
-            *SIGNING_KEY_ID,
-            "Server signing keys",
-        );
-        // An upgraded node keeps the ECDSA key it is registered under; all it
-        // may still be missing is the root the *other* schemes derive from.
-        let seed = ensure_root_signing_seed(pub_storage, priv_storage, &mut rng).await?;
-        let identity = NodeSigningIdentity::new(sk.clone(), seed);
-        ensure_all_verf_material(pub_storage, &identity).await?;
-
-        return Ok(false);
-    }
-    // Reject a storage that still holds verification material.
-    // We already checked that no signing key exists so if verification material
-    // exist it means inconsistent storage.
-    ensure_no_verf_material(pub_storage).await?;
-    ensure_no_root_signing_seed(priv_storage).await?;
-
-    if !signing_keys_map.is_empty() {
-        tracing::warn!(
-            "Existing signing keys found under other request IDs but none under request ID {}, generating new keys",
-            *SIGNING_KEY_ID
-        );
-    }
-
-    let identity = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
-
-    // Persist every scheme's verification material, ECDSA's included.
-    ensure_all_verf_material(pub_storage, &identity)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to store scheme verification material: {e}"))?;
-
-    Ok(true)
 }
 
 /// Generates a fresh signing identity and persists its private half at
@@ -238,7 +165,6 @@ where
 async fn generate_and_store_signing_key_material<PrivS, R>(
     priv_storage: &mut PrivS,
     rng: &mut R,
-    is_threshold: bool,
 ) -> anyhow::Result<NodeSigningIdentity>
 where
     PrivS: Storage,
@@ -274,7 +200,6 @@ where
         priv_storage.info(),
         "server signing key",
         false,
-        is_threshold,
     );
 
     Ok(NodeSigningIdentity::new(sk, seed))
@@ -609,39 +534,6 @@ where
     Ok(())
 }
 
-/// Store a caller-supplied server signing key together with the public verification key and
-/// Ethereum address it implies, all at the fixed [`SIGNING_KEY_ID`] handle.
-#[cfg(test)]
-pub(crate) async fn store_server_signing_keys<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    sk: &PrivateSigKey,
-) -> anyhow::Result<()>
-where
-    PubS: Storage,
-    PrivS: Storage,
-{
-    let req_id = &*SIGNING_KEY_ID;
-    let pk = sk.verf_key();
-    store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
-        .await?;
-    store_text_at_request_id(
-        pub_storage,
-        req_id,
-        &pk.address().to_string(),
-        &PubDataType::VerfAddress.to_string(),
-    )
-    .await?;
-    store_versioned_at_request_id(
-        priv_storage,
-        req_id,
-        sk,
-        &PrivDataType::SigningKey.to_string(),
-    )
-    .await?;
-    Ok(())
-}
-
 /// Configuration for threshold signing key generation.
 ///
 /// Defines the signing participation model for the threshold system.
@@ -818,7 +710,7 @@ where
         );
     }
 
-    let identity = generate_and_store_signing_key_material(priv_storage, &mut rng, true)
+    let identity = generate_and_store_signing_key_material(priv_storage, &mut rng)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
@@ -1090,7 +982,7 @@ where
                     );
                     return;
                 }
-                log_storage_success(key_id, pub_s.info(), "compressed keyset", true, true);
+                log_storage_success(key_id, pub_s.info(), "compressed keyset", true);
 
                 // Store the compact public key alongside the compressed keyset
                 if let Err(store_err) = store_versioned_at_request_id(
@@ -1108,7 +1000,7 @@ where
                     );
                     return;
                 }
-                log_storage_success(key_id, pub_s.info(), "public key", true, true);
+                log_storage_success(key_id, pub_s.info(), "public key", true);
 
                 if let Err(store_err) = store_versioned_at_request_and_epoch_id(
                     priv_s,
@@ -1126,7 +1018,7 @@ where
                     );
                     return;
                 }
-                log_storage_success(key_id, priv_s.info(), "key data", false, true);
+                log_storage_success(key_id, priv_s.info(), "key data", false);
             }
         });
 
@@ -1357,7 +1249,7 @@ where
                 )
                 .await
                 .unwrap_or_else(|e| panic!("Failed to store private CRS info for party: {e}"));
-                log_storage_success(crs_id, cur_priv.info(), "CRS data", false, true);
+                log_storage_success(crs_id, cur_priv.info(), "CRS data", false);
 
                 // PANICS: If storage fails - system would be unable to perform cryptographic operations
                 store_versioned_at_request_id::<PubS, tfhe::zk::CompactPkeCrs>(
@@ -1368,7 +1260,7 @@ where
                 )
                 .await
                 .unwrap_or_else(|e| panic!("Failed to store public CRS for party: {e}"));
-                log_storage_success(crs_id, cur_pub.info(), "CRS data", true, true);
+                log_storage_success(crs_id, cur_pub.info(), "CRS data", true);
             }
         });
 
@@ -1417,7 +1309,7 @@ mod tests {
         read_versioned_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
     };
     use crate::{
-        consts::DEFAULT_PARAM, dummy_domain, util::key_setup::local_material::gen_centralized_crs,
+        consts::DEFAULT_PARAM, dummy_domain, util::key_setup::local_material::gen_trusted_setup_crs,
     };
     use hashing::DomainSep;
     use kms_grpc::RequestId;
@@ -1484,7 +1376,7 @@ mod tests {
         let params = &DEFAULT_PARAM;
         let eip712_domain = dummy_domain();
         for max_num_bits in [64, 128, 256, 1024, 2048] {
-            let (crs, _) = gen_centralized_crs(
+            let (crs, _) = gen_trusted_setup_crs(
                 &NodeSigningIdentity::ecdsa_only(sk.clone()),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 params,
@@ -2233,8 +2125,7 @@ mod tests {
         }
     }
 
-    /// The threshold path behaves like the central one, and gives each party its own
-    /// independent seed.
+    /// Each threshold party gets its own independent seed.
     #[tokio::test]
     async fn threshold_parties_get_independent_seeds() {
         let mut seeds = Vec::new();

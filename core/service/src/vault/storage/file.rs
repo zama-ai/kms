@@ -482,7 +482,7 @@ pub mod tests {
 
     #[ignore]
     #[tokio::test]
-    async fn centralized_file_storage_with_path() {
+    async fn default_prefix_file_storage_with_path() {
         file_storage_with_path(false).await
     }
 
