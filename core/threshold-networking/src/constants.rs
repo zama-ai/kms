@@ -15,13 +15,13 @@ pub(crate) const MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY: u64 = 2000;
 pub(crate) const INITIAL_INTERVAL_MS: u64 = 100;
 
 // The default time interval to update session status
-pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 60;
+pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 120;
 
 // The default time interval after which we completely forget about completed sessions
-pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 86400; // 24 hours
+pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 21600; // 6 hours
 
 // The default time interval after which we discard inactive sessions
-pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
+pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 10800; // 3 hours
 
 // The default maximum waiting time we wait for trying to push or fetch a message in the send/rec queue
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
