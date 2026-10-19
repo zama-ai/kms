@@ -100,7 +100,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
+        crypto_material::{CachedCryptoMaterialStorage, PrivateCryptoMaterialReader},
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
     },
@@ -425,7 +425,7 @@ pub(crate) struct EpochManager<
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
     Reshare: ReshareSecretKeys,
 > {
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
     pub(crate) session_maker: SessionMaker,
     pub base_kms: crate::engine::base::BaseKmsStruct,
     pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
@@ -472,7 +472,7 @@ impl<
     /// Execute the PRSS setup phase and store the epoch data in the storage backend (which includes the PRSS result)
     async fn init_epoch(
         session_maker: SessionMaker,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
@@ -799,7 +799,7 @@ impl<
     /// are checked or restored before private material is written.
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
         reshare_storage_lock: &tokio::sync::Mutex<()>,
         sk: &NodeSigningIdentity,
@@ -1516,7 +1516,7 @@ impl<
     /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
     async fn destroy_epoch(
         epoch_id: &EpochId,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
     ) -> Result<Response<Empty>, MetricedError> {
         if !session_maker.epoch_exists(epoch_id).await {
@@ -2321,7 +2321,7 @@ pub(crate) mod tests {
                 session_maker,
                 _init: PhantomData,
                 base_kms,
-                crypto_storage: ThresholdCryptoMaterialStorage::new(
+                crypto_storage: CachedCryptoMaterialStorage::new(
                     RamStorage::new(),
                     RamStorage::new(),
                     None,
@@ -3043,7 +3043,7 @@ pub(crate) mod tests {
 
     /// Stores `keys` as the key material this party holds for `key_id` in `epoch_id`.
     async fn store_previous_epoch_keys(
-        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         key_id: &RequestId,
         epoch_id: &EpochId,
         keys: &ThresholdFheKeys,
@@ -3582,7 +3582,7 @@ pub(crate) mod tests {
             .await;
 
         // Fault-injecting private storage that can fail the key-share deletion once.
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             RamStorage::new(),
             FailingRamStorage::new(),
             None,
@@ -3954,7 +3954,7 @@ pub(crate) mod tests {
     /// Store `bytes` as the `data_type` public material of `data_id` and return their digest,
     /// the way the digest of stored public material is computed at boot.
     async fn store_public_bytes(
-        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         data_id: &RequestId,
         data_type: PubDataType,
         bytes: &[u8],
@@ -4003,7 +4003,7 @@ pub(crate) mod tests {
 
     /// Run the boot-time sanity checks on everything the reshare stored for `epoch_id`.
     async fn boot_sanity_check_epoch(
-        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
         let private_storage = crypto_storage.get_private_storage();
@@ -4349,7 +4349,7 @@ pub(crate) mod tests {
             Some(new_epoch_id),
             PrivDataType::FheKeyInfo.to_string(),
         ));
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             FailingRamStorage::new(),
             private_storage,
             None,
@@ -4430,7 +4430,7 @@ pub(crate) mod tests {
         let mut private_storage = FailingRamStorage::new();
         private_storage.set_fail_store_after_mutation_at(entry.clone());
         private_storage.set_fail_delete_at(entry);
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             FailingRamStorage::new(),
             private_storage,
             None,
@@ -4499,7 +4499,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(51);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             RamStorage::new(),
             FailingRamStorage::new(),
             None,

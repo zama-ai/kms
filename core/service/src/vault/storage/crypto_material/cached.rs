@@ -42,7 +42,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 
 /// A cached generic storage entity for the threshold KMS.
 /// Cloning this object is cheap since it uses Arc internally.
-pub struct ThresholdCryptoMaterialStorage<
+pub struct CachedCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 > {
@@ -52,7 +52,7 @@ pub struct ThresholdCryptoMaterialStorage<
 }
 
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-    ThresholdCryptoMaterialStorage<PubS, PrivS>
+    CachedCryptoMaterialStorage<PubS, PrivS>
 {
     /// Create a new cached storage device for threshold KMS.
     pub fn new(
@@ -488,7 +488,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Clone
-    for ThresholdCryptoMaterialStorage<PubS, PrivS>
+    for CachedCryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {
         Self {
@@ -498,9 +498,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 }
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-    From<&ThresholdCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
+    From<&CachedCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
 {
-    fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS>) -> Self {
+    fn from(value: &CachedCryptoMaterialStorage<PubS, PrivS>) -> Self {
         value.inner.clone()
     }
 }

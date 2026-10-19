@@ -74,7 +74,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{CryptoMaterialReader, PublicKeySet, ThresholdCryptoMaterialStorage},
+        crypto_material::{CachedCryptoMaterialStorage, CryptoMaterialReader, PublicKeySet},
     },
 };
 
@@ -127,7 +127,7 @@ pub(crate) struct KeyGenerator<
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
@@ -790,7 +790,7 @@ impl<
     async fn decompression_key_gen_closure<P>(
         epoch_id: &EpochId,
         base_session: &mut BaseSession,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         preprocessing: &mut P,
@@ -857,7 +857,7 @@ impl<
     async fn get_glwe_and_compression_key_shares(
         keyset_added_info: KeySetAddedInfo,
         epoch_id: &EpochId,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
     ) -> anyhow::Result<(
         GlweSecretKeyShare<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         CompressionPrivateKeyShares<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1031,7 +1031,7 @@ impl<
         epoch_id: &EpochId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
@@ -1175,7 +1175,7 @@ impl<
 
     async fn compressed_key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         epoch_id: EpochId,
@@ -1232,7 +1232,7 @@ impl<
 
     async fn key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         epoch_id: EpochId,
@@ -1293,7 +1293,7 @@ impl<
         epoch_id: &EpochId,
         mut dkg_sessions: DkgSessions,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
@@ -1718,7 +1718,7 @@ impl<
     /// Reads the tag from an existing keyset in public storage.
     /// Tries CompressedXofKeySet first, then falls back to ServerKey.
     async fn read_existing_key_tag(
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
         existing_keyset_id: &RequestId,
     ) -> anyhow::Result<tfhe::Tag> {
         let pub_storage = crypto_storage.inner.public_storage.lock().await;
@@ -1757,7 +1757,7 @@ impl<
     /// Errors out if the old `meta_data` has no `PubDataType::PublicKey` entry (e.g. a
     /// pre-dual-storage compressed keyset) or if the digests do not match.
     async fn read_existing_compact_public_key(
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
         existing_keyset_id: &RequestId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<tfhe::CompactPublicKey> {
@@ -1887,12 +1887,8 @@ mod tests {
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
         ) -> Self {
-            let crypto_storage = ThresholdCryptoMaterialStorage::new(
-                pub_storage,
-                priv_storage,
-                None,
-                HashMap::new(),
-            );
+            let crypto_storage =
+                CachedCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
 
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));

@@ -62,7 +62,7 @@ use crate::{
         MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
         update_err_req_in_meta_store, update_req_in_meta_store,
     },
-    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
+    vault::storage::{Storage, StorageExt, crypto_material::CachedCryptoMaterialStorage},
 };
 
 // === Current Module Imports ===
@@ -123,7 +123,7 @@ pub(crate) struct PublicDecryptor<
         > + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
@@ -770,12 +770,8 @@ mod tests {
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
         ) -> Self {
-            let crypto_storage = ThresholdCryptoMaterialStorage::new(
-                pub_storage,
-                priv_storage,
-                None,
-                HashMap::new(),
-            );
+            let crypto_storage =
+                CachedCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
 
             let tracker = Arc::new(TaskTracker::new());
 

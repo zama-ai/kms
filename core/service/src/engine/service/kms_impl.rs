@@ -78,7 +78,7 @@ use crate::{
     vault::{
         Vault, adopt_custodian_context,
         storage::{
-            Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
+            Storage, StorageExt, crypto_material::CachedCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
             read_all_recovery_material, s3::RealReadOnlyS3StorageGetter,
             select_data_from_max_epoch,
@@ -747,7 +747,7 @@ where
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+    let crypto_storage = CachedCryptoMaterialStorage::new(
         public_storage,
         private_storage,
         backup_storage,
@@ -932,7 +932,7 @@ fn update_threshold_kms_system_metrics<PubS, PrivS>(
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
     refresh_interval: std::time::Duration,
 ) -> tokio::task::JoinHandle<()>
 where

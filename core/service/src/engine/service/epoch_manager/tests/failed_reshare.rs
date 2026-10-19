@@ -17,7 +17,7 @@ use crate::vault::storage::test_support::{
 async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: bool) {
     let mut rng = AesRng::seed_from_u64(45);
     let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+    let crypto_storage = CachedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         FailingRamStorage::new(),
         None,

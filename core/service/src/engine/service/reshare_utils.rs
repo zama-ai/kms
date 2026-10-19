@@ -10,7 +10,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt, StorageReader, StoreWriteOutcome,
-        crypto_material::ThresholdCryptoMaterialStorage, read_context_at_id,
+        crypto_material::CachedCryptoMaterialStorage, read_context_at_id,
         s3::ReadOnlyS3StorageGetter,
     },
 };
@@ -277,7 +277,7 @@ async fn fetch_context_from_storage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
-    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
     context_id: &ContextId,
 ) -> anyhow::Result<ContextInfo> {
     let priv_storage = crypto_storage.get_private_storage();
@@ -291,7 +291,7 @@ async fn fetch_public_fhe_materials_from_peers<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
     key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
@@ -385,7 +385,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
     request_id: &RequestId,
     key_id: &RequestId,
     context_id: &ContextId,
@@ -628,7 +628,7 @@ async fn fetch_public_crs_materials_from_peers<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
     crs_id: &RequestId,
     context_id: &ContextId,
     crs_digests: &[u8],
@@ -661,7 +661,7 @@ pub(crate) async fn get_verified_crs_material<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
     request_id: &RequestId,
     crs_id: &RequestId,
     context_id: &ContextId,
@@ -715,7 +715,7 @@ mod tests {
     use crate::engine::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::service::reshare_utils::get_verified_crs_material;
     use crate::engine::service::reshare_utils::get_verified_fhe_public_materials;
-    use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
+    use crate::vault::storage::crypto_material::CachedCryptoMaterialStorage;
     use crate::vault::storage::ram::{FailingRamStorage, RamStorage};
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
@@ -782,7 +782,7 @@ mod tests {
         context_id: ContextId,
         two_nodes: bool,
     ) -> (
-        ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         HashMap<PubDataType, Vec<u8>>,
         DummyReadOnlyS3StorageGetter,
         (ServerKey, CompactPublicKey),
@@ -828,7 +828,7 @@ mod tests {
         .unwrap();
 
         // create dummy crypto storage
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             RamStorage::new(),
             RamStorage::new(),
             None,
@@ -1228,7 +1228,7 @@ mod tests {
         context_id: ContextId,
         two_nodes: bool,
     ) -> (
-        ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         HashMap<PubDataType, Vec<u8>>,
         DummyReadOnlyS3StorageGetter,
         (CompressedXofKeySet, CompactPublicKey),
@@ -1255,7 +1255,7 @@ mod tests {
             .await;
 
         // create dummy crypto storage
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        let crypto_storage = CachedCryptoMaterialStorage::new(
             RamStorage::new(),
             RamStorage::new(),
             None,

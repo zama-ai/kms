@@ -48,7 +48,7 @@ use crate::{
     vault::storage::{
         StorageReader, StorageReaderExt,
         crypto_material::{
-            CryptoMaterialStorage, ThresholdCryptoMaterialStorage, check_data_exists,
+            CachedCryptoMaterialStorage, CryptoMaterialStorage, check_data_exists,
             check_data_exists_at_epoch,
         },
         delete_at_request_id,
@@ -88,8 +88,8 @@ fn dummy_info() -> KeyGenMetadata {
 
 fn ram_threshold_storage(
     backup_vault: Option<crate::vault::Vault>,
-) -> ThresholdCryptoMaterialStorage<RamStorage, RamStorage> {
-    ThresholdCryptoMaterialStorage::new(
+) -> CachedCryptoMaterialStorage<RamStorage, RamStorage> {
+    CachedCryptoMaterialStorage::new(
         RamStorage::new(),
         RamStorage::new(),
         backup_vault,
@@ -628,7 +628,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         .into();
 
     // Create a threshold storage with no keys in the cache and no keys in storage
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+    let crypto_storage = CachedCryptoMaterialStorage::new(
         RamStorage::new(),
         RamStorage::new(),
         None,
@@ -753,19 +753,15 @@ fn setup_threshold_store<PubS>(
     req_id: &RequestId,
     public_storage: PubS,
 ) -> (
-    ThresholdCryptoMaterialStorage<PubS, RamStorage>,
+    CachedCryptoMaterialStorage<PubS, RamStorage>,
     ThresholdFheKeys,
     FhePubKeySet,
 )
 where
     PubS: Storage + Send + Sync + 'static,
 {
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        public_storage,
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
+    let crypto_storage =
+        CachedCryptoMaterialStorage::new(public_storage, RamStorage::new(), None, HashMap::new());
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
 

@@ -12,7 +12,7 @@ use crate::{
 };
 
 async fn store_migrated_compressed_material(
-    crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
     new_key_id: &RequestId,
     new_epoch_id: &EpochId,
     compressed_keyset: &CompressedXofKeySet,
@@ -97,7 +97,7 @@ fn assert_current_metadata_extra_data(meta_data: &KeyGenMetadata, expected_extra
 }
 
 async fn assert_migrated_public_material(
-    crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
     old_key_id: &RequestId,
     new_key_id: &RequestId,
     expected_server_key_bytes: &[u8],
@@ -158,7 +158,7 @@ async fn assert_migrated_public_material(
 }
 
 async fn load_public_material_bytes(
-    crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
     key_id: &RequestId,
     data_type: PubDataType,
 ) -> Vec<u8> {
@@ -180,7 +180,7 @@ async fn load_public_material_bytes(
 /// bytes into the migrated keyset (mirroring the production invariant
 /// that the old compact PK is preserved at `new_key_id`).
 async fn setup_pre_migration_uncompressed(
-    crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
     old_key_id: &RequestId,
     epoch_id: &EpochId,
     sk: &PrivateSigKey,

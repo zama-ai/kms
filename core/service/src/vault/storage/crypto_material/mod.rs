@@ -24,7 +24,7 @@
 //! ```rust,ignore
 //! use kms_core::vault::storage::crypto_material::{
 //!     CryptoMaterialStorage,
-//!     ThresholdCryptoMaterialStorage,
+//!     CachedCryptoMaterialStorage,
 //!     CryptoMaterialReader
 //! };
 //! // ...
@@ -44,7 +44,7 @@ mod tests;
 pub use base::CryptoMaterialStorage;
 pub use base::PublicKeySet;
 pub(crate) use base::StorageError;
-pub use cached::ThresholdCryptoMaterialStorage;
+pub use cached::CachedCryptoMaterialStorage;
 pub use traits::CryptoMaterialReader;
 pub use traits::PrivateCryptoMaterialReader;
 pub use utils::*;
