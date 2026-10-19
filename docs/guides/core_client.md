@@ -398,8 +398,10 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> --preproc-id <PREPROC_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+`--preproc-id <PREPROC_ID>` is the ID of the preprocessing the key was generated from. Every response must name it, since a response's signature only covers the preprocessing ID the response itself names. It is required unless `--no-verify` is set.
 
 Optional arguments:
  - `-u`/`--uncompressed`: Fetch legacy uncompressed public key material instead of the default compressed keyset.
@@ -510,8 +512,10 @@ After this migration completes, the old key ID can be used without `--uncompress
 
 It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> --preproc-id <PREPROC_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+`--preproc-id <PREPROC_ID>` is the ID of the preprocessing the key was generated from. Every response must name it, since a response's signature only covers the preprocessing ID the response itself names. It is required unless `--no-verify` is set.
 
 Optional arguments:
  - `-u`/`--uncompressed`: Fetch legacy uncompressed public key material instead of the default compressed keyset.
