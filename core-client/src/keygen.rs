@@ -195,6 +195,7 @@ pub(crate) async fn do_keygen(
         destination_prefix,
         req_id,
         Some(SigVerificationMaterial { domain, extra_data }),
+        Some(preproc_id),
         resp_response_vec,
         cmd_conf.download_all,
         shared_config.uncompressed,
@@ -215,6 +216,9 @@ pub(crate) async fn fetch_and_check_keygen(
     // `None`, the keys are still downloaded and request IDs checked, but the
     // external signature is not verified (an error is logged).
     verify: Option<SigVerificationMaterial>,
+    // The preprocessing ID of the request, when it is at hand. Otherwise the responses are only
+    // checked to agree on one.
+    expected_preproc_id: Option<RequestId>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
     uncompressed: bool,
@@ -249,6 +253,7 @@ pub(crate) async fn fetch_and_check_keygen(
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     let mut signers = Vec::with_capacity(responses.len());
+    let mut preproc_id = expected_preproc_id;
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
@@ -279,16 +284,12 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let prep_id = response.preprocessing_id.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "No preprocessing ID in keygen response, cannot verify its signatures"
-                        )
-                    })?;
+                    let prep_id = agreed_preproc_id(response.preprocessing_id, &mut preproc_id)?;
                     let signer = check_compressed_keyset_signatures(
                         internal_client,
                         &compressed_keyset,
                         &compact_public_key,
-                        &prep_id.try_into()?,
+                        &prep_id,
                         &request_id,
                         &response.signatures,
                         &response.external_signature,
@@ -337,16 +338,12 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let prep_id = response.preprocessing_id.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "No preprocessing ID in keygen response, cannot verify its signatures"
-                        )
-                    })?;
+                    let prep_id = agreed_preproc_id(response.preprocessing_id, &mut preproc_id)?;
                     let signer = check_uncompressed_keyset_signatures(
                         internal_client,
                         &public_key,
                         &server_key,
-                        &prep_id.try_into()?,
+                        &prep_id,
                         &request_id,
                         &response.signatures,
                         &response.external_signature,
@@ -568,6 +565,30 @@ pub(crate) async fn do_abort_key_gen(
         );
     }
     Ok(resp_response_vec)
+}
+
+/// Return the preprocessing ID a keygen response names, after checking it against `agreed`.
+///
+/// The signature covers the preprocessing ID the response itself names, so it does not show that
+/// the keyset came from the requested preprocessing. `agreed` starts as the requested ID when the
+/// request is at hand. Otherwise it takes the ID of the first response.
+fn agreed_preproc_id(
+    response_preproc_id: Option<kms_grpc::kms::v1::RequestId>,
+    agreed: &mut Option<RequestId>,
+) -> anyhow::Result<RequestId> {
+    let preproc_id: RequestId = response_preproc_id
+        .ok_or_else(|| {
+            anyhow::anyhow!("No preprocessing ID in keygen response, cannot verify its signatures")
+        })?
+        .try_into()?;
+    match *agreed {
+        Some(expected) => anyhow::ensure!(
+            preproc_id == expected,
+            "keygen response names preprocessing {preproc_id}, but {expected} was expected"
+        ),
+        None => *agreed = Some(preproc_id),
+    }
+    Ok(preproc_id)
 }
 
 /// Verify every signature a keygen result carries, under every scheme the client
@@ -1154,5 +1175,36 @@ mod tests {
             .to_string()
             .contains(UNKNOWN_PARTY)
         );
+    }
+
+    /// Keygen responses must name the requested preprocessing, or, without the request, all
+    /// name the same one.
+    #[test]
+    fn test_agreed_preproc_id() {
+        let requested = RequestId::from_bytes([1u8; 32]);
+        let other = RequestId::from_bytes([2u8; 32]);
+
+        // With the request at hand, only its preprocessing ID is accepted.
+        let mut agreed = Some(requested);
+        assert_eq!(
+            agreed_preproc_id(Some(requested.into()), &mut agreed).unwrap(),
+            requested
+        );
+        let err = agreed_preproc_id(Some(other.into()), &mut agreed)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("was expected"), "unexpected error: {err}");
+
+        // Without it, the first response decides and the rest must match.
+        let mut agreed = None;
+        assert_eq!(
+            agreed_preproc_id(Some(other.into()), &mut agreed).unwrap(),
+            other
+        );
+        assert_eq!(agreed, Some(other));
+        assert!(agreed_preproc_id(Some(requested.into()), &mut agreed).is_err());
+
+        // A response without a preprocessing ID cannot be verified.
+        assert!(agreed_preproc_id(None, &mut agreed).is_err());
     }
 }

@@ -2668,6 +2668,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2707,6 +2708,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2805,6 +2807,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2843,6 +2846,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
             )
