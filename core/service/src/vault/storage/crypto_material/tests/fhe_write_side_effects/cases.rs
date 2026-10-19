@@ -12,10 +12,10 @@ async fn fhe_write_rejects_an_existing_pair_half(#[case] existing_half: StorageT
     let preproc_id = derive_request_id("existing_fhe_pair_half_preproc").unwrap();
     let epoch_id = *DEFAULT_EPOCH_ID;
     let (_, original_public, original_private) =
-        generate_threshold_compressed_keys(&key_id, &preproc_id, 3183);
+        generate_compressed_fhe_keys(&key_id, &preproc_id, 3183);
     // Another seed gives a different key pair.
     let (compressed_keyset, compact_public_key, attempted_private) =
-        generate_threshold_compressed_keys(&key_id, &preproc_id, 3184);
+        generate_compressed_fhe_keys(&key_id, &preproc_id, 3184);
     let storage =
         CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
     match existing_half {
@@ -95,7 +95,7 @@ async fn fhe_write_rejects_an_existing_special_key(#[case] existing_type: PubDat
     let key_id = derive_request_id("existing_special_key").unwrap();
     let preproc_id = derive_request_id("existing_special_key_preproc").unwrap();
     let (compressed_keyset, compact_public_key, private_keys) =
-        generate_threshold_compressed_keys(&key_id, &preproc_id, 3183);
+        generate_compressed_fhe_keys(&key_id, &preproc_id, 3183);
     let storage =
         CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
     let public_before = {
@@ -149,7 +149,7 @@ async fn compressed_fhe_write_cleans_new_entries_after_private_failure() {
         .into();
     let preproc_id = derive_request_id("compressed_fhe_write_failure_preproc").unwrap();
     let (compressed_keyset, compact_public_key, private_keys) =
-        generate_threshold_compressed_keys(&key_id, &preproc_id, 3183);
+        generate_compressed_fhe_keys(&key_id, &preproc_id, 3183);
 
     run_fhe_write_rollback(
         key_id,

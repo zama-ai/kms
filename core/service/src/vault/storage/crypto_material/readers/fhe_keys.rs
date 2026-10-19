@@ -1,10 +1,10 @@
-//! Implementation of CryptoMaterialReader for ThresholdFheKeys
+//! Implementation of CryptoMaterialReader for FheKeys
 //!
 //! This module provides the implementation of the CryptoMaterialReader trait
-//! for the ThresholdFheKeys type, enabling it to be read from storage.
+//! for the FheKeys type, enabling it to be read from storage.
 
 use crate::anyhow_error_and_warn_log;
-use crate::engine::service::ThresholdFheKeys;
+use crate::engine::service::FheKeys;
 use crate::vault::storage::crypto_material::traits::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageReaderExt, read_versioned_at_request_and_epoch_id};
 use kms_grpc::RequestId;
@@ -12,7 +12,7 @@ use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PrivDataType;
 
 #[tonic::async_trait]
-impl PrivateCryptoMaterialReader for ThresholdFheKeys {
+impl PrivateCryptoMaterialReader for FheKeys {
     async fn read_from_storage_at_epoch<S>(
         storage: &S,
         request_id: &RequestId,
@@ -30,7 +30,7 @@ impl PrivateCryptoMaterialReader for ThresholdFheKeys {
         .await
         .map_err(|e| {
             anyhow_error_and_warn_log(format!(
-                "Failed to read ThresholdFheKeys from storage for request ID {request_id}: {e}"
+                "Failed to read FheKeys from storage for request ID {request_id}: {e}"
             ))
         })
     }

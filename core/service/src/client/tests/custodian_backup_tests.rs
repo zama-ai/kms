@@ -69,7 +69,7 @@ use tonic::transport::Channel;
 ///
 /// Spins up a 4-party threshold cluster with custodian backup enabled and
 /// creates an initial custodian context.
-struct ThresholdBackupTestEnv {
+struct BackupTestEnv {
     kms_servers: Option<HashMap<u32, ServerHandle>>,
     kms_clients: Option<HashMap<u32, CoreServiceEndpointClient<Channel>>>,
     internal_client: Option<Client>,
@@ -78,7 +78,7 @@ struct ThresholdBackupTestEnv {
     material_dir: tempfile::TempDir,
 }
 
-impl ThresholdBackupTestEnv {
+impl BackupTestEnv {
     const AMOUNT_PARTIES: usize = 4;
 
     async fn new(test_name: &str, amount_custodians: usize, threshold: u32) -> Self {
@@ -234,8 +234,8 @@ async fn test_auto_update_backups(#[case] custodians: usize, #[case] threshold: 
 }
 
 async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
-    let mut env = ThresholdBackupTestEnv::new(
+    let n = BackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new(
         &format!("auto_update_backups_threshold_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
@@ -283,8 +283,8 @@ async fn test_planted_public_recovery_material_ignored() {
     use crate::vault::storage::tests::store_dummy_recovery_material;
     use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
 
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
-    let mut env = ThresholdBackupTestEnv::new("planted_public_recovery_threshold", 5, 2).await;
+    let n = BackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new("planted_public_recovery_threshold", 5, 2).await;
     env.shutdown().await;
 
     // Signed by each party, as a replayed retired context is, so a refused foreign signature
@@ -357,8 +357,8 @@ async fn test_backup_after_crs(#[case] custodians: usize, #[case] threshold: u32
     backup_after_crs(custodians, threshold).await;
 }
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
-    let mut env = ThresholdBackupTestEnv::new(
+    let n = BackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new(
         &format!("backup_after_crs_threshold_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
@@ -494,8 +494,8 @@ async fn test_decrypt_after_recovery(#[case] custodians: usize, #[case] threshol
 }
 
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
-    let mut env = ThresholdBackupTestEnv::new(
+    let n = BackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new(
         &format!("decrypt_after_recovery_threshold_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
@@ -633,9 +633,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 async fn test_recovery_names_the_context_after_rotation() {
     use crate::vault::storage::read_custodian_context_anchor;
 
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let n = BackupTestEnv::AMOUNT_PARTIES;
     let (amount_custodians, threshold) = (3, 1);
-    let mut env = ThresholdBackupTestEnv::new(
+    let mut env = BackupTestEnv::new(
         "recovery_names_context_threshold",
         amount_custodians,
         threshold,
@@ -775,9 +775,9 @@ async fn test_recovery_without_signing_material() {
     use crate::vault::storage::read_custodian_context_anchor;
 
     const PARTY: u32 = 1;
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let n = BackupTestEnv::AMOUNT_PARTIES;
     let (amount_custodians, threshold) = (3, 1);
-    let mut env = ThresholdBackupTestEnv::new(
+    let mut env = BackupTestEnv::new(
         "recovery_without_signing_material_threshold",
         amount_custodians,
         threshold,
@@ -943,8 +943,8 @@ fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecov
 }
 
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
-    let mut env = ThresholdBackupTestEnv::new(
+    let n = BackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new(
         &format!("decrypt_after_recovery_threshold_negative_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
@@ -1060,7 +1060,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 /// after a server boots from a fixture that holds the default epoch.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_epoch_in_custodian_backup() {
-    let mut env = ThresholdBackupTestEnv::new("test_epoch_in_custodian_backup", 3, 1).await;
+    let mut env = BackupTestEnv::new("test_epoch_in_custodian_backup", 3, 1).await;
 
     // Epoch is stored with epoch_id.into() as the request_id (non-epoched layout)
     let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
@@ -1074,7 +1074,7 @@ async fn test_epoch_in_custodian_backup() {
     .await;
     assert_eq!(
         backup.len(),
-        ThresholdBackupTestEnv::AMOUNT_PARTIES,
+        BackupTestEnv::AMOUNT_PARTIES,
         "Expected one epoch backup entry per party"
     );
     for entry in &backup {
@@ -1088,7 +1088,7 @@ async fn test_epoch_in_custodian_backup() {
 /// immediately after key generation (not just after recovery).
 #[tokio::test(flavor = "multi_thread")]
 async fn test_keygen_backup_presence() {
-    let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence", 3, 1).await;
+    let mut env = BackupTestEnv::new("test_keygen_backup_presence", 3, 1).await;
     let req_key_id: RequestId =
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
     let preproc_id: RequestId =
@@ -1126,7 +1126,7 @@ async fn test_keygen_backup_presence() {
     .await;
     assert_eq!(
         key_backup.len(),
-        ThresholdBackupTestEnv::AMOUNT_PARTIES,
+        BackupTestEnv::AMOUNT_PARTIES,
         "Expected one FheKeyInfo backup entry per party after keygen"
     );
     for entry in &key_backup {
@@ -1141,7 +1141,7 @@ async fn test_keygen_backup_presence() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_custodian_reencryption_with_existing_data() {
     // env already creates the first custodian context (env.req_new_cus)
-    let mut env = ThresholdBackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
+    let mut env = BackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
     let req_cus_b: RequestId =
         derive_request_id("test_custodian_reencryption_threshold_cus_b").unwrap();
     let req_key_id: RequestId =
@@ -1179,7 +1179,7 @@ async fn test_custodian_reencryption_with_existing_data() {
         env.backup_prefixes(),
     )
     .await;
-    assert_eq!(backup_a.len(), ThresholdBackupTestEnv::AMOUNT_PARTIES);
+    assert_eq!(backup_a.len(), BackupTestEnv::AMOUNT_PARTIES);
 
     // Create second custodian context (triggers re-encryption of all backup data)
     let _mnemonics_b = run_new_cus_context(
@@ -1203,12 +1203,12 @@ async fn test_custodian_reencryption_with_existing_data() {
     .await;
     assert_eq!(
         backup_b.len(),
-        ThresholdBackupTestEnv::AMOUNT_PARTIES,
+        BackupTestEnv::AMOUNT_PARTIES,
         "Expected backup entries under new custodian context after re-encryption"
     );
 
     // Verify ciphertexts differ (re-encrypted, not copied)
-    for i in 0..ThresholdBackupTestEnv::AMOUNT_PARTIES {
+    for i in 0..BackupTestEnv::AMOUNT_PARTIES {
         assert_ne!(
             backup_a[i].ciphertext, backup_b[i].ciphertext,
             "Backup ciphertexts should differ after custodian context change (party {i})"
@@ -1222,8 +1222,8 @@ async fn test_custodian_reencryption_with_existing_data() {
 /// being backed up in the custodian backup vault (threshold mode).
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mpc_context_backup() {
-    let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup", 3, 1).await;
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new("test_mpc_context_backup", 3, 1).await;
+    let n = BackupTestEnv::AMOUNT_PARTIES;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..n];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..n];
 
@@ -1311,8 +1311,8 @@ async fn test_mpc_context_backup() {
 /// after `store_reshared_keys` completes.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backup_after_reshare() {
-    let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare", 3, 1).await;
-    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let mut env = BackupTestEnv::new("test_backup_after_reshare", 3, 1).await;
+    let n = BackupTestEnv::AMOUNT_PARTIES;
     let req_key_id: RequestId =
         derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
     let preproc_id: RequestId =

@@ -16,7 +16,7 @@ use crate::{
             compute_info_keygen_from_digests,
         },
         material_integrity::verify_public_key_digest_from_bytes,
-        service::{ThresholdFheKeys, epoch_manager::EpochData},
+        service::{FheKeys, epoch_manager::EpochData},
     },
     util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
     vault::{
@@ -48,7 +48,7 @@ pub struct CachedCryptoMaterialStorage<
 > {
     pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
     /// Note that `fhe_keys` should be locked after any locking of elements in `inner`.
-    fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), ThresholdFheKeys>>>,
+    fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), FheKeys>>>,
 }
 
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
@@ -59,7 +59,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
+        fhe_keys: HashMap<(RequestId, EpochId), FheKeys>,
     ) -> Self {
         Self {
             inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
@@ -131,11 +131,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
+        threshold_fhe_keys: FheKeys,
     ) -> Result<(), StorageError> {
         let res = self
             .inner
-            .write_all::<ThresholdFheKeys, ThresholdFheKeys>(
+            .write_all::<FheKeys, FheKeys>(
                 key_id,
                 Some(epoch_id),
                 None, // No public data is made when refreshing keys
@@ -167,7 +167,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
+        threshold_fhe_keys: FheKeys,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         permit: MetaStorePermit<KeyGenMetadata>,
@@ -217,7 +217,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the
     /// compressed keyset under `new_key_id`, this function copies it to `old_key_id`
-    /// and replaces the `ThresholdFheKeys` at `(old_key_id, old_epoch_id)` with the
+    /// and replaces the `FheKeys` at `(old_key_id, old_epoch_id)` with the
     /// migrated one, re-signed under `old_key_id`.
     ///
     /// The operation is split into validate-then-mutate phases: everything is read
@@ -265,9 +265,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 )
                 .await?;
 
-                // Source of the migrated ThresholdFheKeys (stored by the keygen at
+                // Source of the migrated FheKeys (stored by the keygen at
                 // (new_key_id, new_epoch_id); this may differ from old_epoch_id).
-                let migrated_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+                let migrated_fhe_keys: FheKeys = read_versioned_at_request_and_epoch_id(
                     &*priv_storage,
                     new_key_id,
                     new_epoch_id,
@@ -276,7 +276,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .await?;
 
                 // Validate that the original key exists before mutating any backend.
-                let _: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+                let _: FheKeys = read_versioned_at_request_and_epoch_id(
                     &*priv_storage,
                     old_key_id,
                     old_epoch_id,
@@ -285,7 +285,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(
-                        "No existing ThresholdFheKeys at (old_key_id={old_key_id}, \
+                        "No existing FheKeys at (old_key_id={old_key_id}, \
                  old_epoch_id={old_epoch_id:?}): {e}"
                     )
                 })?;
@@ -298,7 +298,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     KeyGenMetadata::LegacyV0(_) => {
                         anyhow::bail!(
                             "Cannot copy compressed key to original: \
-                     migrated ThresholdFheKeys has LegacyV0 metadata"
+                     migrated FheKeys has LegacyV0 metadata"
                         );
                     }
                 };
@@ -306,17 +306,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     .key_digest_map
                     .contains_key(&PubDataType::CompressedXofKeySet)
                 {
-                    anyhow::bail!(
-                        "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
-                    );
+                    anyhow::bail!("Migrated FheKeys metadata missing CompressedXofKeySet digest");
                 }
                 let public_key_digest = migrated_inner
                     .key_digest_map
                     .get(&PubDataType::PublicKey)
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Migrated ThresholdFheKeys metadata missing PublicKey digest"
-                        )
+                        anyhow::anyhow!("Migrated FheKeys metadata missing PublicKey digest")
                     })?
                     .clone();
 
@@ -372,7 +368,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     extra_data,
                 )?;
 
-                let updated_fhe_keys = ThresholdFheKeys::new(
+                let updated_fhe_keys = FheKeys::new(
                     migrated_fhe_keys.private_keys.clone(),
                     migrated_fhe_keys.public_material.clone(),
                     new_metadata.clone(),
@@ -458,7 +454,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Read the key materials for decryption in the threshold case.
-    /// The object [ThresholdFheKeys] is big so
+    /// The object [FheKeys] is big so
     /// we return a lock guard instead of the whole object to avoid copying.
     ///
     /// This function ensures that the keys will be in the cache. If it is not already there it will be fetched first.
@@ -466,16 +462,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         req_id: &RequestId, // TODO(#2849) change to keyid
         epoch_id: &EpochId,
-    ) -> anyhow::Result<
-        OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), ThresholdFheKeys>, ThresholdFheKeys>,
-    > {
+    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), FheKeys>, FheKeys>> {
         // First refresh. If the key is already in the cache then this is cheap
         self.inner
-            .refresh_fhe_private_material::<ThresholdFheKeys>(
-                Arc::clone(&self.fhe_keys),
-                req_id,
-                epoch_id,
-            )
+            .refresh_fhe_private_material::<FheKeys>(Arc::clone(&self.fhe_keys), req_id, epoch_id)
             .await?;
         CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,

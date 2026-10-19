@@ -11,7 +11,7 @@ cfg_if::cfg_if! {
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::service::epoch_manager::EpochData;
         use crate::engine::service::session::PRSSSetupCombined;
-        use crate::engine::service::{PublicKeyMaterial, ThresholdFheKeys};
+        use crate::engine::service::{PublicKeyMaterial, FheKeys};
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_identity,
         };
@@ -955,7 +955,7 @@ where
                         return;
                     }
                 };
-                let threshold_fhe_keys = ThresholdFheKeys::new(
+                let threshold_fhe_keys = FheKeys::new(
                     share,
                     PublicKeyMaterial::Compressed {
                         keyset: compressed_keyset.clone(),

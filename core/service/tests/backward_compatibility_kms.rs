@@ -71,7 +71,7 @@ use kms_lib::{
             PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
-        service::{EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
+        service::{EpochData, FheKeys, PublicKeyMaterial, session::PRSSSetupCombined},
     },
     vault::keychain::AppKeyBlob,
 };
@@ -1312,9 +1312,9 @@ fn test_threshold_fhe_keys(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
-    let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
+    let original_versionized: FheKeys = load_and_unversionize(dir, test, format)?;
 
-    let new_versionized = ThresholdFheKeys::new(
+    let new_versionized = FheKeys::new(
         Arc::new(private_keys),
         PublicKeyMaterial::new_uncompressed(
             Arc::new(integer_server_key),
@@ -1328,7 +1328,7 @@ fn test_threshold_fhe_keys(
     let new_key_params = new_versionized.private_keys.parameters;
     let original_key_params = original_versionized.private_keys.parameters;
 
-    // Compare the key parameters and the public key info. We cannot directly compare ThresholdFheKeys
+    // Compare the key parameters and the public key info. We cannot directly compare FheKeys
     // by adding the `PartialEq` trait because TFHE-rs' Decompression keys are not able to be directly
     // compared. Instead, we compare the parameters, as done in TFHE-rs' tests
     if new_key_params != original_key_params {

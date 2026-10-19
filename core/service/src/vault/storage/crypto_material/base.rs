@@ -16,7 +16,7 @@ use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
-        service::ThresholdFheKeys,
+        service::FheKeys,
     },
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
@@ -146,7 +146,7 @@ pub(in crate::vault::storage::crypto_material) enum BackupPolicy {
 /// So we use this trait to differentiate FHE materials from others.
 pub(crate) trait PrivateMaterialUnderEpoch {}
 
-impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
+impl PrivateMaterialUnderEpoch for FheKeys {}
 impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
 /// The public-key payload produced by an FHE keygen and consumed by the
@@ -1200,7 +1200,7 @@ where
                     match cur_type {
                         // These types might have epoch-specific data
                         PrivDataType::FheKeyInfo => {
-                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, FheKeys>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

@@ -280,7 +280,7 @@ async fn build_tls_config(
     )?);
 
     // We do not need to add context to verifier here
-    // because it'll be added using [ensure_default_threshold_context_in_storage].
+    // because it'll be added using [ensure_default_context_in_storage].
 
     let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_client_cert_verifier(verifier.clone())

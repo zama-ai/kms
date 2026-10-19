@@ -268,10 +268,10 @@ where
             }
         }
     };
-    threshold_prss_to_epoch(priv_storage, inner_migration_conf).await
+    prss_to_epoch(priv_storage, inner_migration_conf).await
 }
 
-async fn threshold_prss_to_epoch<PrivS>(
+async fn prss_to_epoch<PrivS>(
     priv_storage: &mut PrivS,
     migration_config: &MigrationConfig,
 ) -> anyhow::Result<()>
@@ -2443,7 +2443,7 @@ mod tests {
         );
     }
 
-    // ── Tests for threshold_prss_to_epoch ──
+    // ── Tests for prss_to_epoch ──
 
     #[tokio::test]
     async fn test_prss_to_epoch_sunshine() {
@@ -2454,7 +2454,7 @@ mod tests {
         // Combined PRSS present at the default epoch, as produced by the earlier migrations.
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
 
-        threshold_prss_to_epoch(&mut storage, &default_migration_config())
+        prss_to_epoch(&mut storage, &default_migration_config())
             .await
             .unwrap();
 
@@ -2475,7 +2475,7 @@ mod tests {
     async fn test_prss_to_epoch_missing_prss_errors() {
         let mut storage = RamStorage::new();
         // No combined PRSS stored, so reading it back for the mapped epoch must fail.
-        let result = threshold_prss_to_epoch(&mut storage, &default_migration_config()).await;
+        let result = prss_to_epoch(&mut storage, &default_migration_config()).await;
         assert!(result.is_err());
     }
 
@@ -2488,7 +2488,7 @@ mod tests {
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
         store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
 
-        let err = threshold_prss_to_epoch(&mut storage, &default_migration_config())
+        let err = prss_to_epoch(&mut storage, &default_migration_config())
             .await
             .unwrap_err()
             .to_string();
@@ -2524,7 +2524,7 @@ mod tests {
             ],
         )]);
 
-        let err = threshold_prss_to_epoch(&mut storage, &config)
+        let err = prss_to_epoch(&mut storage, &config)
             .await
             .unwrap_err()
             .to_string();
@@ -2582,9 +2582,7 @@ mod tests {
             ],
         )]);
 
-        threshold_prss_to_epoch(&mut storage, &config)
-            .await
-            .unwrap();
+        prss_to_epoch(&mut storage, &config).await.unwrap();
 
         // The already-migrated epoch is left untouched: still the sentinel 9-party EpochData, not
         // the 4-party PRSS that lingers alongside it on disk.

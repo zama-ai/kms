@@ -43,7 +43,7 @@ use tokio::sync::{Mutex, RwLock};
 use super::base::{BackupPolicy, StorageError, update_meta_store};
 use crate::{
     consts::TEST_PARAM,
-    engine::service::{PublicKeyMaterial, ThresholdFheKeys},
+    engine::service::{FheKeys, PublicKeyMaterial},
     util::meta_store::MetaStore,
     vault::storage::{
         StorageReader, StorageReaderExt,
@@ -121,12 +121,12 @@ fn generate_compressed_keyset(
     )
 }
 
-/// Builds [ThresholdFheKeys] for a compressed keyset with metadata signed by `sk`.
+/// Builds [FheKeys] for a compressed keyset with metadata signed by `sk`.
 ///
 /// The caller passes `compact_pk` so that a test can reproduce the production invariant: a
 /// migration preserves the old `CompactPublicKey` bytes at the new key ID.
 #[expect(clippy::too_many_arguments)]
-fn threshold_fhe_keys_for_compressed_keyset(
+fn fhe_keys_for_compressed_keyset(
     req_id: &RequestId,
     prep_id: &RequestId,
     private_keys: Arc<PrivateKeySet<4>>,
@@ -135,7 +135,7 @@ fn threshold_fhe_keys_for_compressed_keyset(
     domain: &alloy_sol_types::Eip712Domain,
     compressed_keyset: &CompressedXofKeySet,
     extra_data: Vec<u8>,
-) -> ThresholdFheKeys {
+) -> FheKeys {
     let info = compute_info_compressed_keygen(
         &NodeSigningIdentity::ecdsa_only(sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
@@ -149,20 +149,20 @@ fn threshold_fhe_keys_for_compressed_keyset(
     )
     .unwrap();
 
-    ThresholdFheKeys::new(
+    FheKeys::new(
         private_keys,
         PublicKeyMaterial::new(compressed_keyset.clone()),
         info,
     )
 }
 
-/// Returns a compressed keyset, its compact public key and the first party's [ThresholdFheKeys]
+/// Returns a compressed keyset, its compact public key and the first party's [FheKeys]
 /// for it. The `seed` determines the key material.
-fn generate_threshold_compressed_keys(
+fn generate_compressed_fhe_keys(
     key_id: &RequestId,
     prep_id: &RequestId,
     seed: u64,
-) -> (CompressedXofKeySet, CompactPublicKey, ThresholdFheKeys) {
+) -> (CompressedXofKeySet, CompactPublicKey, FheKeys) {
     let (sk, domain, compressed_keyset, compact_pk, client_key) =
         generate_compressed_keyset(key_id, seed);
     let mut rng = AesRng::seed_from_u64(seed);
@@ -174,7 +174,7 @@ fn generate_threshold_compressed_keys(
         1,
     )
     .unwrap();
-    let threshold_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
+    let threshold_fhe_keys = fhe_keys_for_compressed_keyset(
         key_id,
         prep_id,
         Arc::new(key_shares[0].to_owned()),
@@ -664,7 +664,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
 
     let crypto_storage = ram_cached_storage(None);
     let (compressed_keyset, compact_pk, threshold_fhe_keys) =
-        generate_threshold_compressed_keys(&req_id, &req_id, 50);
+        generate_compressed_fhe_keys(&req_id, &req_id, 50);
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -722,7 +722,7 @@ async fn read_guarded_crypto_material_from_cache_not_found() {
             .into();
 
     // Create an empty cache
-    let empty_cache: Arc<RwLock<HashMap<(RequestId, EpochId), ThresholdFheKeys>>> =
+    let empty_cache: Arc<RwLock<HashMap<(RequestId, EpochId), FheKeys>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
     // Try to read from an empty cache - should return an error
@@ -752,7 +752,7 @@ fn setup_cached_store<PubS>(
     public_storage: PubS,
 ) -> (
     CachedCryptoMaterialStorage<PubS, RamStorage>,
-    ThresholdFheKeys,
+    FheKeys,
     FhePubKeySet,
 )
 where
@@ -775,7 +775,7 @@ where
     let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
-    let threshold_fhe_keys = ThresholdFheKeys::new(
+    let threshold_fhe_keys = FheKeys::new(
         Arc::new(key_shares[0].to_owned()),
         PublicKeyMaterial::new_uncompressed(
             Arc::new(integer_server_key),
@@ -1155,7 +1155,7 @@ async fn handle_fhe_keys_compressed_writes_and_caches() {
     let storage = fresh_ram_storage();
 
     let (compressed_keyset, compact_pk, threshold_fhe_keys) =
-        generate_threshold_compressed_keys(&req_id, &req_id, 7);
+        generate_compressed_fhe_keys(&req_id, &req_id, 7);
     let public_key_set = PublicKeySet::Compressed {
         compact_public_key: Arc::new(compact_pk),
         compressed_keyset: Arc::new(compressed_keyset),

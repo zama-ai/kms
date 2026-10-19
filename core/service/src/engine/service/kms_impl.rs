@@ -64,7 +64,7 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context_manager::{ContextManager, ensure_default_threshold_context_in_storage},
+        context_manager::{ContextManager, ensure_default_context_in_storage},
         kms::Kms,
         prepare_shutdown_signals,
         public_material_sync::sync_public_material_from_peers,
@@ -121,7 +121,7 @@ pub enum PublicKeyMaterialV0 {
 }
 
 /// Enum to hold either compressed or uncompressed public key material.
-/// This allows a single [`ThresholdFheKeys`] type to support both modes.
+/// This allows a single [`FheKeys`] type to support both modes.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(PublicKeyMaterialVersions)]
 pub enum PublicKeyMaterial {
@@ -198,19 +198,19 @@ struct UncompressedKeys {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum ThresholdFheKeysVersions {
-    V0(ThresholdFheKeysV0),
-    V1(ThresholdFheKeysV1),
-    V2(ThresholdFheKeysV2),
-    V3(ThresholdFheKeys),
+pub enum FheKeysVersions {
+    V0(FheKeysV0),
+    V1(FheKeysV1),
+    V2(FheKeysV2),
+    V3(FheKeys),
 }
 
 /// V3: Unified key storage supporting both compressed and uncompressed keys.
 /// These are the internal key materials (public and private)
 /// needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(ThresholdFheKeysVersions)]
-pub struct ThresholdFheKeys {
+#[versionize(FheKeysVersions)]
+pub struct FheKeys {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
@@ -226,7 +226,7 @@ pub struct ThresholdFheKeys {
 /// type, so current code reads old nested `PublicKeyMaterialVersions::V0` values by upgrading
 /// them during unversionizing, but cannot itself re-emit that old nested shape.
 #[derive(Clone, Serialize, Deserialize, Version)]
-pub struct ThresholdFheKeysV2 {
+pub struct FheKeysV2 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
@@ -234,7 +234,7 @@ pub struct ThresholdFheKeysV2 {
 
 /// V1: Original structure with separate fields for public keys.
 #[derive(Clone, Serialize, Deserialize, Version)]
-pub struct ThresholdFheKeysV1 {
+pub struct FheKeysV1 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
@@ -244,7 +244,7 @@ pub struct ThresholdFheKeysV1 {
 
 /// V0: Legacy structure with pk_meta_data instead of meta_data.
 #[derive(Clone, Serialize, Deserialize, Version)]
-pub struct ThresholdFheKeysV0 {
+pub struct FheKeysV0 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
@@ -252,11 +252,11 @@ pub struct ThresholdFheKeysV0 {
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
-impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
+impl Upgrade<FheKeysV1> for FheKeysV0 {
     type Error = Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeysV1, Self::Error> {
-        Ok(ThresholdFheKeysV1 {
+    fn upgrade(self) -> Result<FheKeysV1, Self::Error> {
+        Ok(FheKeysV1 {
             private_keys: Arc::clone(&self.private_keys),
             integer_server_key: Arc::clone(&self.integer_server_key),
             sns_key: self.sns_key.map(|sns_key| Arc::clone(&sns_key)),
@@ -268,11 +268,11 @@ impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
     }
 }
 
-impl Upgrade<ThresholdFheKeysV2> for ThresholdFheKeysV1 {
+impl Upgrade<FheKeysV2> for FheKeysV1 {
     type Error = Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeysV2, Self::Error> {
-        Ok(ThresholdFheKeysV2 {
+    fn upgrade(self) -> Result<FheKeysV2, Self::Error> {
+        Ok(FheKeysV2 {
             private_keys: self.private_keys,
             public_material: PublicKeyMaterial::Uncompressed {
                 integer_server_key: self.integer_server_key,
@@ -284,11 +284,11 @@ impl Upgrade<ThresholdFheKeysV2> for ThresholdFheKeysV1 {
     }
 }
 
-impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV2 {
+impl Upgrade<FheKeys> for FheKeysV2 {
     type Error = Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
-        Ok(ThresholdFheKeys {
+    fn upgrade(self) -> Result<FheKeys, Self::Error> {
+        Ok(FheKeys {
             private_keys: self.private_keys,
             public_material: self.public_material,
             meta_data: self.meta_data,
@@ -297,7 +297,7 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV2 {
     }
 }
 
-impl ThresholdFheKeys {
+impl FheKeys {
     pub fn new(
         private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
         public_material: PublicKeyMaterial,
@@ -369,19 +369,21 @@ impl ThresholdFheKeys {
         }
     }
 
-    /// Check if this ThresholdFheKeys contains compressed keys.
+    /// Check if this FheKeys contains compressed keys.
     pub fn is_compressed(&self) -> bool {
         matches!(self.public_material, PublicKeyMaterial::Compressed { .. })
     }
 }
 
-impl Named for ThresholdFheKeys {
+impl Named for FheKeys {
+    // The type was called `ThresholdFheKeys`. `safe_serialize` writes this name into the header
+    // of every stored key and `safe_deserialize` checks it, so it must not follow the Rust name.
     const NAME: &'static str = "ThresholdFheKeys";
 }
 
-impl std::fmt::Debug for ThresholdFheKeys {
+impl std::fmt::Debug for FheKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ThresholdFheKeys")
+        f.debug_struct("FheKeys")
             .field("private_keys", &"omitted")
             .field(
                 "public_material",
@@ -476,15 +478,11 @@ where
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // Peer configuration defines the default context until context management replaces it.
-    ensure_default_threshold_context_in_storage(
-        &mut private_storage,
-        threshold_config,
-        &base_kms.verf_key(),
-    )
-    .await?;
+    ensure_default_context_in_storage(&mut private_storage, threshold_config, &base_kms.verf_key())
+        .await?;
 
     // load keys from storage
-    let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
+    let key_info_versioned: HashMap<(RequestId, EpochId), FheKeys> =
         read_all_data_from_all_epochs_versioned(
             &private_storage,
             &PrivDataType::FheKeyInfo.to_string(),
@@ -1043,25 +1041,25 @@ mod tests {
             }
         }
 
-        impl Upgrade<ThresholdFheKeys> for PlaceholderV1 {
+        impl Upgrade<FheKeys> for PlaceholderV1 {
             type Error = Infallible;
 
-            fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+            fn upgrade(self) -> Result<FheKeys, Self::Error> {
                 unreachable!("placeholder variant is never serialized in this test")
             }
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
         #[expect(clippy::large_enum_variant)]
-        pub enum ThresholdFheKeysVersions {
+        pub enum FheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
-            V2(ThresholdFheKeys),
+            V2(FheKeys),
         }
 
         #[derive(Clone, Serialize, Deserialize, Versionize)]
-        #[versionize(ThresholdFheKeysVersions)]
-        pub struct ThresholdFheKeys {
+        #[versionize(FheKeysVersions)]
+        pub struct FheKeys {
             pub private_keys: Arc<
                 PrivateKeySet<
                     { <ResiduePolyF4Z128 as algebra::structure_traits::Ring>::EXTENSION_DEGREE },
@@ -1071,12 +1069,12 @@ mod tests {
             pub meta_data: KeyGenMetadata,
         }
 
-        impl Named for ThresholdFheKeys {
+        impl Named for FheKeys {
             const NAME: &'static str = "ThresholdFheKeys";
         }
     }
 
-    impl ThresholdFheKeys {
+    impl FheKeys {
         /// Initializes a dummy private keyset with the given parameters and returns it along with a public key set.
         /// The keyset is *not* meant to be used for any computation or protocol,
         /// it's only used during testing with a mocked decryption protocol that does not actually load the keys.
@@ -1156,7 +1154,7 @@ mod tests {
         assert!(matches!(v3, PublicKeyMaterial::Compressed { .. }));
     }
 
-    /// Verify that a V3 ThresholdFheKeys with Compressed keys can roundtrip through
+    /// Verify that a V3 FheKeys with Compressed keys can roundtrip through
     /// safe_serialize / safe_deserialize, and that lazy decompression works after.
     #[test]
     fn roundtrip_v3_compressed_and_lazy_decompress() {
@@ -1164,7 +1162,7 @@ mod tests {
         let (_keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
 
-        let original = ThresholdFheKeys::new(
+        let original = FheKeys::new(
             Arc::new(PrivateKeySet::init_dummy(TEST_PARAM)),
             PublicKeyMaterial::new(compressed_keyset),
             KeyGenMetadata::new(
@@ -1199,7 +1197,7 @@ mod tests {
         // Roundtrip through safe_serialize / safe_deserialize
         let mut buf = Vec::new();
         safe_serialize(&original, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
-        let deserialized: ThresholdFheKeys =
+        let deserialized: FheKeys =
             safe_deserialize(&mut std::io::Cursor::new(&buf), SAFE_SER_SIZE_LIMIT).unwrap();
 
         assert!(deserialized.is_compressed());
@@ -1235,7 +1233,7 @@ mod tests {
             .map(|key| bc2wrap::serialize(key).unwrap());
 
         // V2
-        let legacy = v2_legacy::ThresholdFheKeys {
+        let legacy = v2_legacy::FheKeys {
             private_keys: Arc::new(PrivateKeySet::init_dummy(TEST_PARAM)),
             public_material: v2_legacy::PublicKeyMaterial::Compressed {
                 compressed_keyset: Arc::new(compressed_keyset),
@@ -1257,7 +1255,7 @@ mod tests {
         let mut v2_bytes = Vec::new();
         safe_serialize(&legacy, &mut v2_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let upgraded: ThresholdFheKeys =
+        let upgraded: FheKeys =
             safe_deserialize(&mut std::io::Cursor::new(&v2_bytes), SAFE_SER_SIZE_LIMIT).unwrap();
 
         assert!(upgraded.is_compressed());

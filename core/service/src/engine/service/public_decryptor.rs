@@ -66,7 +66,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::ThresholdFheKeys;
+use super::FheKeys;
 
 #[tonic::async_trait]
 pub trait NoiseFloodDecryptor: Send + Sync {
@@ -153,7 +153,7 @@ impl<
         ct: Bytes,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
-        fhe_keys: ThresholdFheKeys,
+        fhe_keys: FheKeys,
         dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
     where
@@ -860,8 +860,7 @@ mod tests {
         let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) =
-            ThresholdFheKeys::init_dummy(param, key_id.into(), rng);
+        let (threshold_fhe_keys, fhe_key_set) = FheKeys::init_dummy(param, key_id.into(), rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());

@@ -80,7 +80,7 @@ use crate::{
             retrieve_parameters, stored_scheme_signatures_to_proto,
         },
         service::{
-            PublicKeyMaterial, ThresholdFheKeys,
+            FheKeys, PublicKeyMaterial,
             reshare_utils::{
                 FheKeyDigestMode, VerifiedCrsMaterial, VerifiedPublicMaterial,
                 ensure_verified_reshare_public_bytes, get_verified_crs_material,
@@ -851,7 +851,7 @@ impl<
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
                         fhe_pubkeys.server_key.into_raw_parts();
 
-                    let threshold_fhe_keys = ThresholdFheKeys::new(
+                    let threshold_fhe_keys = FheKeys::new(
                         Arc::new(new_private_keyset),
                         PublicKeyMaterial::new_uncompressed(
                             Arc::new(integer_server_key),
@@ -909,11 +909,8 @@ impl<
 
                     let public_material = PublicKeyMaterial::new(compressed_keyset);
 
-                    let threshold_fhe_keys = ThresholdFheKeys::new(
-                        Arc::new(new_private_keyset),
-                        public_material,
-                        info.clone(),
-                    );
+                    let threshold_fhe_keys =
+                        FheKeys::new(Arc::new(new_private_keyset), public_material, info.clone());
 
                     storage_tasks.push(
                         async move {
@@ -3019,14 +3016,14 @@ pub(crate) mod tests {
 
     /// Builds key material whose metadata records `preproc_id`. Cheap enough for a unit test
     /// because it pairs the small `TEST_PARAM` keyset with a dummy private keyset.
-    fn make_threshold_keys_with_preproc_id(
+    fn make_fhe_keys_with_preproc_id(
         key_id: &RequestId,
         preproc_id: &RequestId,
         rng: &mut AesRng,
-    ) -> ThresholdFheKeys {
+    ) -> FheKeys {
         let (_keyset, compressed_keyset) =
             gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), rng).unwrap();
-        ThresholdFheKeys::new(
+        FheKeys::new(
             Arc::new(PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)),
             PublicKeyMaterial::new(compressed_keyset),
             KeyGenMetadata::new(
@@ -3046,7 +3043,7 @@ pub(crate) mod tests {
         crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        keys: &ThresholdFheKeys,
+        keys: &FheKeys,
     ) {
         let private_storage = crypto_storage.get_private_storage();
         let mut guard = private_storage.lock().await;
@@ -3102,7 +3099,7 @@ pub(crate) mod tests {
         let stored_preproc_id = derive_request_id("validate_preproc_stored").unwrap();
         let wrong_preproc_id = derive_request_id("validate_preproc_wrong").unwrap();
 
-        let keys = make_threshold_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
+        let keys = make_fhe_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
         store_previous_epoch_keys(
             &epoch_manager.crypto_storage,
             &key_id,
@@ -3231,7 +3228,7 @@ pub(crate) mod tests {
         let stored_preproc_id = derive_request_id("new_epoch_preproc_stored").unwrap();
         let wrong_preproc_id = derive_request_id("new_epoch_preproc_wrong").unwrap();
 
-        let keys = make_threshold_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
+        let keys = make_fhe_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
         store_previous_epoch_keys(
             &epoch_manager.crypto_storage,
             &key_id,
@@ -4008,7 +4005,7 @@ pub(crate) mod tests {
     ) -> anyhow::Result<()> {
         let private_storage = crypto_storage.get_private_storage();
         let private_guard = private_storage.lock().await;
-        let key_infos: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
+        let key_infos: HashMap<(RequestId, EpochId), FheKeys> =
             read_all_data_from_all_epochs_versioned(
                 &*private_guard,
                 &PrivDataType::FheKeyInfo.to_string(),

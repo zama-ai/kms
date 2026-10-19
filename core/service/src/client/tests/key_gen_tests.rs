@@ -35,7 +35,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::engine::service::ThresholdFheKeys;
+use crate::engine::service::FheKeys;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::TestMaterialSpec;
 use crate::testing::setup::environment::TestEnv;
@@ -264,7 +264,7 @@ pub(crate) async fn run_keygen(
     insecure: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
-) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
+) -> (TestKeyGenResult, Option<HashMap<Role, FheKeys>>) {
     let domain = dummy_domain();
 
     let req_keygen = internal_client
@@ -339,7 +339,7 @@ async fn wait_for_keygen_result(
     extra_data: Vec<u8>,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
-) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
+) -> (TestKeyGenResult, Option<HashMap<Role, FheKeys>>) {
     let domain = dummy_domain();
 
     // Poll each party independently until it returns a result. Keygen is slow,
@@ -1038,7 +1038,7 @@ async fn poll_key_gen_preproc_result(
 fn try_reconstruct_shares(
     param: DKGParams,
     threshold: usize,
-    all_threshold_fhe_keys: HashMap<Role, crate::engine::service::ThresholdFheKeys>,
+    all_threshold_fhe_keys: HashMap<Role, crate::engine::service::FheKeys>,
 ) -> (
     tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
@@ -1254,7 +1254,7 @@ pub(crate) async fn verify_keygen_responses(
     total_num_parties: usize,
     read_key_at_epoch: Option<kms_grpc::EpochId>,
     compressed: bool,
-) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
+) -> Option<(TestKeyGenResult, HashMap<Role, FheKeys>)> {
     use itertools::Itertools;
 
     let mut verification_bytes_ref = Vec::new();
@@ -1308,7 +1308,7 @@ pub(crate) async fn verify_keygen_responses(
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         //Need to read at the correct epoch id
-        let threshold_fhe_keys = ThresholdFheKeys::read_from_storage_at_epoch(
+        let threshold_fhe_keys = FheKeys::read_from_storage_at_epoch(
             &priv_storage,
             &key_id,
             &read_key_at_epoch.unwrap_or(*DEFAULT_EPOCH_ID),
@@ -2015,7 +2015,7 @@ async fn run_compressed_keygen_from_existing(
                 StorageType::PRIV,
                 PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[(party_id as usize) - 1].as_deref(),
             )?;
-            let threshold_keys: crate::engine::service::ThresholdFheKeys =
+            let threshold_keys: crate::engine::service::FheKeys =
                 read_versioned_at_request_and_epoch_id(
                     &priv_storage,
                     &keygen_id_2,
@@ -2023,7 +2023,7 @@ async fn run_compressed_keygen_from_existing(
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await?;
-            let threshold_keys_old: crate::engine::service::ThresholdFheKeys =
+            let threshold_keys_old: crate::engine::service::FheKeys =
                 read_versioned_at_request_and_epoch_id(
                     &priv_storage,
                     &keygen_id_1,
@@ -2234,7 +2234,7 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
             tag,
         );
 
-        let threshold_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+        let threshold_keys: FheKeys = read_versioned_at_request_and_epoch_id(
             &priv_storage,
             key_id,
             &DEFAULT_EPOCH_ID,
@@ -2268,7 +2268,7 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
             &dummy_domain(),
             default_isolated_extra_data(),
         )?;
-        let updated_threshold_keys = ThresholdFheKeys::new(
+        let updated_threshold_keys = FheKeys::new(
             Arc::new(private_keys),
             threshold_keys.public_material.clone(),
             metadata,
@@ -2305,7 +2305,7 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
 
         // Confirm that the persisted fixture really represents a legacy keyset before the
         // UseExisting flow is allowed to add the missing dedicated shares.
-        let stored_legacy_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+        let stored_legacy_keys: FheKeys = read_versioned_at_request_and_epoch_id(
             &priv_storage,
             key_id,
             &DEFAULT_EPOCH_ID,

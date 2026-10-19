@@ -80,7 +80,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::ThresholdFheKeys;
+use super::FheKeys;
 
 /// A serialized partial plaintext share kept behind a zeroizing guard.
 type PartialDecryption = (ZeroizingWriter, u32);
@@ -165,10 +165,7 @@ impl<
         link: Vec<u8>,
         signcryption_key: UnifiedSigncryptionKey,
         client_enc_key_bytes_orig: Vec<u8>,
-        fhe_keys: OwnedRwLockReadGuard<
-            HashMap<(RequestId, EpochId), ThresholdFheKeys>,
-            ThresholdFheKeys,
-        >,
+        fhe_keys: OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), FheKeys>, FheKeys>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
@@ -792,8 +789,7 @@ mod tests {
                 .await;
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) =
-            ThresholdFheKeys::init_dummy(param, key_id.into(), rng);
+        let (threshold_fhe_keys, fhe_key_set) = FheKeys::init_dummy(param, key_id.into(), rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());

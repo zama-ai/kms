@@ -11,7 +11,7 @@ use crate::vault::storage::{
 pub(super) async fn run_fhe_write_rollback(
     key_id: RequestId,
     epoch_id: EpochId,
-    private_data: ThresholdFheKeys,
+    private_data: FheKeys,
     public_keys: PublicKeySet,
     // The public artifact written before the pair: `ServerKey` for uncompressed keys or
     // `CompressedXofKeySet` for compressed keys.

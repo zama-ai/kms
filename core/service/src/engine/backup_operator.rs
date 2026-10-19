@@ -27,7 +27,7 @@ use crate::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PrivateSigKey, PublicSigKey},
     },
-    engine::{base::BaseKmsStruct, service::ThresholdFheKeys, validation::RequestIdParsingErr},
+    engine::{base::BaseKmsStruct, service::FheKeys, validation::RequestIdParsingErr},
     vault::{
         Vault, VaultDataType,
         keychain::KeychainProxy,
@@ -1262,7 +1262,7 @@ where
         match cur_type {
             // These types might have epoch-specific data
             PrivDataType::FheKeyInfo => {
-                restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                restore_data_type_for_all_epochs::<PrivS, FheKeys>(
                     priv_storage,
                     backup_vault,
                     cur_type,

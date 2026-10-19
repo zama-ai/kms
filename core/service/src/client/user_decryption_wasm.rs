@@ -163,7 +163,7 @@ impl Client {
         threshold: Option<usize>,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        self.threshold_user_decryption_resp(
+        self.user_decryption_resp(
             client_request,
             eip712_domain,
             enc_key,
@@ -184,11 +184,11 @@ impl Client {
         dec_key: &UnifiedPrivateEncKey,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        self.insecure_threshold_user_decryption_resp(agg_resp, dec_key)
+        self.insecure_user_decryption_resp(agg_resp, dec_key)
     }
 
     /// Decrypt the user decryption responses from the threshold KMS and verify that the signatures are valid
-    fn threshold_user_decryption_resp(
+    fn user_decryption_resp(
         &self,
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
@@ -295,17 +295,17 @@ impl Client {
             .collect()
     }
 
-    fn insecure_threshold_user_decryption_resp(
+    fn insecure_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                self.insecure_threshold_user_decryption_resp_z64(agg_resp, dec_key)
+                self.insecure_user_decryption_resp_z64(agg_resp, dec_key)
             }
             DecryptionMode::NoiseFloodSmall => {
-                self.insecure_threshold_user_decryption_resp_z128(agg_resp, dec_key)
+                self.insecure_user_decryption_resp_z128(agg_resp, dec_key)
             }
             e => Err(anyhow_error_and_log(format!(
                 "Unsupported decryption mode: {e}"
@@ -315,7 +315,7 @@ impl Client {
 
     #[expect(clippy::type_complexity)]
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
+    fn insecure_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
@@ -439,13 +439,13 @@ impl Client {
     }
 
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_z128(
+    fn insecure_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, dec_key)?;
+            Self::insecure_user_decryption_resp_to_blocks::<Z128>(agg_resp, dec_key)?;
 
         let mut out = vec![];
 
@@ -472,13 +472,13 @@ impl Client {
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_z64(
+    fn insecure_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
+            Self::insecure_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {

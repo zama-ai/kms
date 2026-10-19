@@ -64,7 +64,7 @@ message KeySetAddedInfo {
   // If true, after a compressed keygen from existing shares
   // (UseExisting + CompressedKeyConfig::All), copy the resulting
   // CompressedXofKeySet to the original key ID and replace the original
-  // ThresholdFheKeys with the migrated one. The CompactPublicKey is
+  // FheKeys with the migrated one. The CompactPublicKey is
   // preserved at both the original and the new key ID.
   //
   // Only used when KeyGenSecretKeyConfig::UseExisting is used with

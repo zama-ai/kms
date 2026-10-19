@@ -32,7 +32,7 @@ use crate::{
     dummy_domain,
     engine::{
         base::{DSEP_PUBDATA_KEY, derive_request_id},
-        service::ThresholdFheKeys,
+        service::FheKeys,
         validation::ResharingParams,
     },
     util::key_setup::{
@@ -378,7 +378,7 @@ async fn run_new_epoch(
     new_epoch_id: EpochId,
     resharing: Option<ResharingParams>,
     test_path: &std::path::Path,
-) -> Option<Vec<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)>> {
+) -> Option<Vec<(TestKeyGenResult, HashMap<Role, FheKeys>)>> {
     let num_keys = resharing
         .as_ref()
         .map_or(0, |r| r.previous_epoch.keys_info.len());

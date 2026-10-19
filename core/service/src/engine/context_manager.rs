@@ -609,9 +609,7 @@ enum RollbackScope {
 /// * `priv_storage` - The private storage to write the context to
 /// * `threshold_config` - The threshold party configuration containing peers, threshold, etc.
 /// * `verf_key` - The verification key of this party
-pub async fn ensure_default_threshold_context_in_storage<
-    PrivS: StorageExt + Sync + Send + 'static,
->(
+pub async fn ensure_default_context_in_storage<PrivS: StorageExt + Sync + Send + 'static>(
     priv_storage: &mut PrivS,
     threshold_config: &ThresholdPartyConf,
     verf_key: &PublicSigKey,

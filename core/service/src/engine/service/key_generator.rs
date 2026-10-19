@@ -59,7 +59,7 @@ use crate::{
         keyset_configuration::InternalKeySetConfig,
         material_integrity::verify_public_key_digest_from_bytes,
         service::{
-            PublicKeyMaterial, ThresholdFheKeys,
+            FheKeys, PublicKeyMaterial,
             session::{ImmutableSessionMaker, validate_context_and_epoch},
         },
         utils::{MetricedError, signing_identity_for},
@@ -94,7 +94,7 @@ struct DkgSessions {
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
 // It's ok to have a big enum here since the way this type is used is only temporary.
 #[expect(clippy::large_enum_variant)]
-enum ThresholdKeyGenResult {
+enum KeyGenOutput {
     /// Standard keygen result with full public key set
     Uncompressed(
         FhePubKeySet,
@@ -1342,7 +1342,7 @@ impl<
                                 req_id.into(),
                             )
                             .await
-                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                            .map(|(pk, sk)| KeyGenOutput::Uncompressed(pk, sk)),
                             // Insecure compressed keygen
                             (
                                 ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
@@ -1355,7 +1355,7 @@ impl<
                             )
                             .await
                             .map(|(compressed_keyset, sk)| {
-                                ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                                KeyGenOutput::Compressed(compressed_keyset, sk)
                             }),
                             // Insecure compressed keygen from an existing private keyset
                             // (the UseExisting migration flow). Party 1 reconstructs the
@@ -1394,7 +1394,7 @@ impl<
                                     )
                                     .await
                                     .map(|(compressed_keyset, sk)| {
-                                        ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                                        KeyGenOutput::Compressed(compressed_keyset, sk)
                                     })
                                 }
                                 .await
@@ -1426,7 +1426,7 @@ impl<
                             req_id.into(),
                         )
                         .await
-                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                        .map(|(pk, sk)| KeyGenOutput::Uncompressed(pk, sk)),
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                             ddec_keyset_config::ComputeKeyType::Cpu,
@@ -1439,7 +1439,7 @@ impl<
                         )
                         .await
                         .map(|(compressed_keyset, sk)| {
-                            ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                            KeyGenOutput::Compressed(compressed_keyset, sk)
                         }),
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
@@ -1460,7 +1460,7 @@ impl<
                                 tag,
                             )
                             .await
-                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+                            .map(|(pk, sk)| KeyGenOutput::Uncompressed(pk, sk))
                         }
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
@@ -1482,7 +1482,7 @@ impl<
                             )
                             .await
                             .map(|(compressed_keyset, sk)| {
-                                ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                                KeyGenOutput::Compressed(compressed_keyset, sk)
                             })
                         }
                     },
@@ -1523,7 +1523,7 @@ impl<
 
         // Handle both compressed and uncompressed keygen results
         match dkg_result {
-            ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
+            KeyGenOutput::Uncompressed(pub_key_set, private_keys) => {
                 //Compute all the info required for storing
                 let info = match compute_info_uncompressed_keygen(
                     &sk,
@@ -1570,7 +1570,7 @@ impl<
                     )
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys::new(
+                let threshold_fhe_keys = FheKeys::new(
                     Arc::new(private_keys),
                     PublicKeyMaterial::new_uncompressed(
                         Arc::new(integer_server_key),
@@ -1598,7 +1598,7 @@ impl<
                     return;
                 }
             }
-            ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
+            KeyGenOutput::Compressed(compressed_keyset, private_keys) => {
                 // When migrating from an existing keyset (UseExisting), preserve the OLD
                 // CompactPublicKey so that signatures and stored bytes stay stable for
                 // clients that already hold it. For a fresh keygen, use the public key
@@ -1635,7 +1635,7 @@ impl<
                     }
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys::new(
+                let threshold_fhe_keys = FheKeys::new(
                     Arc::new(private_keys),
                     PublicKeyMaterial::new(compressed_keyset),
                     info,
@@ -1746,7 +1746,7 @@ impl<
     }
 
     /// Reads the CompactPublicKey of an existing keyset in public storage and verifies its
-    /// digest against the old `ThresholdFheKeys.meta_data`. Generating a
+    /// digest against the old `FheKeys.meta_data`. Generating a
     /// `CompressedXofKeySet` from existing shares stays within the same epoch, so
     /// `epoch_id` must be the current epoch.
     ///
@@ -1772,14 +1772,14 @@ impl<
                     .cloned()
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Old ThresholdFheKeys for keyset {existing_keyset_id} has no \
+                            "Old FheKeys for keyset {existing_keyset_id} has no \
                              PubDataType::PublicKey digest; cannot preserve the old compact \
                              public key during UseExisting keygen."
                         )
                     })?,
                 KeyGenMetadata::LegacyV0(_) => {
                     anyhow::bail!(
-                        "Old ThresholdFheKeys for keyset {existing_keyset_id} uses legacy \
+                        "Old FheKeys for keyset {existing_keyset_id} uses legacy \
                          metadata format; cannot verify the old compact public key digest."
                     );
                 }
