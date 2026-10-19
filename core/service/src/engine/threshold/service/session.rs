@@ -1260,7 +1260,7 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::engine::{
-        context::{NodeInfo, SchemeDigests, SoftwareVersion},
+        context::{NodeInfo, SchemeDigests, SoftwareVersion, four_party_nodes},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
@@ -1719,7 +1719,7 @@ mod tests {
         pcr_values: Vec<threshold_networking::tls::ReleasePCRValues>,
     ) -> ContextInfo {
         ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: identity.to_string(),
                 party_id: 1,
                 external_url: format!("https://{identity}:8443"),
@@ -1728,7 +1728,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::new(),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1736,7 +1736,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values,
         }
     }

@@ -708,7 +708,7 @@ mod tests {
     use super::VerifiedCrsMaterial;
     use crate::engine::context::ContextInfo;
     use crate::engine::context::SoftwareVersion;
-    use crate::engine::context::{NodeInfo, SchemeDigests};
+    use crate::engine::context::{NodeInfo, SchemeDigests, four_party_nodes};
     use crate::engine::material_integrity::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::engine::public_material_sync::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::ensure_verified_reshare_public_bytes;
@@ -836,23 +836,11 @@ mod tests {
         );
 
         let context_info = ContextInfo {
-            mpc_nodes: [
-                vec![NodeInfo {
-                    mpc_identity: "Node1".to_string(),
-                    party_id: 1,
-                    external_url: "http://localhost:12345".to_string(),
-                    ca_cert: None,
-                    // the storage url does not matter as we're using the mock
-                    public_storage_url:
-                        "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
-                    public_storage_prefix: None,
-                    extra_signer_addresses: vec![],
-                    scheme_digests: SchemeDigests::new(),
-                }],
-                if two_nodes {
+            mpc_nodes: four_party_nodes(
+                [
                     vec![NodeInfo {
-                        mpc_identity: "Node2".to_string(),
-                        party_id: 2,
+                        mpc_identity: "Node1".to_string(),
+                        party_id: 1,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -862,12 +850,27 @@ mod tests {
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
                         scheme_digests: SchemeDigests::new(),
-                    }]
-                } else {
-                    vec![]
-                },
-            ]
-            .concat(),
+                    }],
+                    if two_nodes {
+                        vec![NodeInfo {
+                            mpc_identity: "Node2".to_string(),
+                            party_id: 2,
+                            external_url: "http://localhost:12345".to_string(),
+                            ca_cert: None,
+                            // the storage url does not matter as we're using the mock
+                            public_storage_url:
+                                "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
+                                    .to_string(),
+                            public_storage_prefix: None,
+                            extra_signer_addresses: vec![],
+                            scheme_digests: SchemeDigests::new(),
+                        }]
+                    } else {
+                        vec![]
+                    },
+                ]
+                .concat(),
+            ),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -875,7 +878,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
 
@@ -1260,23 +1263,11 @@ mod tests {
         );
 
         let context_info = ContextInfo {
-            mpc_nodes: [
-                vec![NodeInfo {
-                    mpc_identity: "Node1".to_string(),
-                    party_id: 1,
-                    external_url: "http://localhost:12345".to_string(),
-                    ca_cert: None,
-                    // the storage url does not matter as we're using the mock
-                    public_storage_url:
-                        "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
-                    public_storage_prefix: None,
-                    extra_signer_addresses: vec![],
-                    scheme_digests: SchemeDigests::new(),
-                }],
-                if two_nodes {
+            mpc_nodes: four_party_nodes(
+                [
                     vec![NodeInfo {
-                        mpc_identity: "Node2".to_string(),
-                        party_id: 2,
+                        mpc_identity: "Node1".to_string(),
+                        party_id: 1,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1286,12 +1277,27 @@ mod tests {
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
                         scheme_digests: SchemeDigests::new(),
-                    }]
-                } else {
-                    vec![]
-                },
-            ]
-            .concat(),
+                    }],
+                    if two_nodes {
+                        vec![NodeInfo {
+                            mpc_identity: "Node2".to_string(),
+                            party_id: 2,
+                            external_url: "http://localhost:12345".to_string(),
+                            ca_cert: None,
+                            // the storage url does not matter as we're using the mock
+                            public_storage_url:
+                                "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
+                                    .to_string(),
+                            public_storage_prefix: None,
+                            extra_signer_addresses: vec![],
+                            scheme_digests: SchemeDigests::new(),
+                        }]
+                    } else {
+                        vec![]
+                    },
+                ]
+                .concat(),
+            ),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1299,7 +1305,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
 

@@ -14,7 +14,7 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     cryptography::signing::seed::RootSigningSeed,
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
+        base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
     },
@@ -147,7 +147,6 @@ pub(in crate::vault::storage::crypto_material) enum BackupPolicy {
 pub(crate) trait PrivateMaterialUnderEpoch {}
 
 impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
-impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
 impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
 /// The public-key payload produced by an FHE keygen and consumed by the
@@ -1214,15 +1213,9 @@ where
                             )
                             .await?;
                         }
-                        PrivDataType::FhePrivateKey => {
-                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
+                        // Not backed up. No current code writes this type, a node that holds it
+                        // fails boot, and restore skips it.
+                        PrivDataType::FhePrivateKey => {}
                         // Non epoched types
                         #[expect(deprecated)]
                         PrivDataType::PrssSetupCombined => {

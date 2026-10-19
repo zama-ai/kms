@@ -86,7 +86,6 @@ use crate::{
             },
             threshold_kms::ThresholdKms,
         },
-        traits::PrivateKeyMaterialMetadata,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::meta_store::MetaStore,
@@ -246,12 +245,6 @@ pub struct ThresholdFheKeysV2 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
-}
-
-impl PrivateKeyMaterialMetadata for ThresholdFheKeys {
-    fn get_metadata(&self) -> &KeyGenMetadata {
-        &self.meta_data
-    }
 }
 
 /// V1: Original structure with separate fields for public keys.

@@ -825,7 +825,7 @@ message KeyMaterialAvailabilityResponse {
   // Key IDs for generated CRS
   repeated string crs_ids = 2;
 
-  // Key IDs for preprocessing material (threshold only)
+  // Key IDs for preprocessing material
   repeated string preprocessing_ids = 3;
 
   // Storage backend information
@@ -844,13 +844,14 @@ enum HealthStatus {
 // Node type for KMS deployment
 enum NodeType {
   NODE_TYPE_UNSPECIFIED = 0;
-  NODE_TYPE_CENTRALIZED = 1;
+  reserved 1;
+  reserved "NODE_TYPE_CENTRALIZED";
   NODE_TYPE_THRESHOLD = 2;
 }
 
 // Health information for a peer node
 message PeerHealth {
-  // Peer party ID (for threshold mode)
+  // Party ID of the peer in the context
   uint32 peer_id = 1;
   // Peer endpoint address
   string endpoint = 2;

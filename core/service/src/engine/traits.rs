@@ -6,7 +6,6 @@ use tonic::Request;
 use tonic::Response;
 
 use crate::cryptography::signatures::Signature;
-use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
 
 pub trait BaseKms {
@@ -113,8 +112,4 @@ pub trait BackupOperator {
         &self,
         request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError>;
-}
-
-pub trait PrivateKeyMaterialMetadata {
-    fn get_metadata(&self) -> &KeyGenMetadata;
 }

@@ -232,7 +232,7 @@ pub(super) fn context_info(
     verification_key: &PublicSigKey,
 ) -> ContextInfo {
     ContextInfo {
-        mpc_nodes: vec![NodeInfo {
+        mpc_nodes: four_party_nodes(vec![NodeInfo {
             mpc_identity: identity.to_string(),
             party_id: 1,
             external_url: "http://localhost:12345".to_string(),
@@ -241,7 +241,7 @@ pub(super) fn context_info(
             public_storage_prefix: None,
             extra_signer_addresses: vec![],
             scheme_digests: SchemeDigests::from_ecdsa_verification_key(verification_key),
-        }],
+        }]),
         context_id,
         software_version: SoftwareVersion {
             major: 0,
@@ -249,7 +249,7 @@ pub(super) fn context_info(
             patch: 0,
             tag: None,
         },
-        threshold: 0,
+        threshold: 1,
         pcr_values: vec![],
     }
 }

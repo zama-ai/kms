@@ -549,8 +549,7 @@ service CoreServiceEndpoint {
   // * `Response<KeyMaterialAvailabilityResponse>` containing:
   //   - List of FHE key IDs
   //   - List of CRS key IDs
-  //   - List of preprocessing IDs (threshold only)
-  //   - Total count of available keys
+  //   - List of preprocessing IDs
   //   - Storage backend information
   //
   // # Conditions
@@ -562,19 +561,17 @@ service CoreServiceEndpoint {
   //
   // This endpoint provides a complete health check by:
   // 1. Reporting the node's own key material availability
-  // 2. Checking connectivity to all configured peers (threshold mode)
-  // 3. Querying peer key material via GetKeyMaterialAvailability
-  // 4. Computing overall health status based on threshold requirements
+  // 2. Checking connectivity to the peers of every MPC context of the node
+  // 3. Computing the health status of every context based on threshold requirements
   //
   // # Parameters
   // * `request` - Empty request
   //
   // # Returns
   // * `Response<HealthStatusResponse>` containing:
-  //   - Overall health status ("healthy", "degraded", "unhealthy")
-  //   - Peer connectivity and key material information
-  //   - Self key material counts
-  //   - Runtime configuration details
+  //   - Per-context health status and peer connectivity
+  //   - Self key material IDs and storage information
+  //   - Node type
   //
   // # Conditions
   // ## Pre-condition: KMS service must be initialized

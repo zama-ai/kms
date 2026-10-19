@@ -321,9 +321,12 @@ pub enum PrivDataTypeVersions {
 pub enum PrivDataType {
     // WARNING: Do not reorder or remove variants; only append.
     SigningKey, // LEGACY ECDSA signing key
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    /// Legacy FHE private key material that no current code writes. The variant keeps the
+    /// discriminants of later variants stable and names the material that startup rejects as
+    /// foreign.
+    FhePrivateKey,
     #[deprecated(
         note = "Use EpochData instead, but this is still there to avoid semantic change in the storage format"
     )]
@@ -343,9 +346,9 @@ pub enum PrivDataType {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
 pub enum PrivDataTypeV1 {
     SigningKey,
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    FhePrivateKey, // Legacy only, see `PrivDataType::FhePrivateKey`
     #[deprecated(
         note = "Use PrssSetupCombined instead, but this is still there to avoid semantic change in the storage format"
     )]
@@ -357,9 +360,9 @@ pub enum PrivDataTypeV1 {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
 pub enum PrivDataTypeV0 {
     SigningKey,
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    FhePrivateKey, // Legacy only, see `PrivDataType::FhePrivateKey`
     PrssSetup,
     ContextInfo, // MPC context information
 }

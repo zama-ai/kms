@@ -913,7 +913,7 @@ impl PrivateLayout<'_> {
             ),
             PrivateLayout::Threshold { .. } => (
                 &[PrivDataType::FhePrivateKey, PrivDataType::PrssSetup],
-                "centralized or legacy threshold",
+                "legacy",
             ),
         }
     }
@@ -2811,7 +2811,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn centralized_key_material_on_threshold_node_fails_boot() {
+    async fn fhe_private_key_material_on_threshold_node_fails_boot() {
         let mut storage = RamStorage::new();
         let (epoch, context) = (test_epoch(1), test_context(1));
         let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;

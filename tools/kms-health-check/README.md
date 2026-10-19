@@ -208,6 +208,7 @@ enum HealthStatus {
 enum NodeType {
   NODE_TYPE_UNSPECIFIED = 0;
   reserved 1;
+  reserved "NODE_TYPE_CENTRALIZED";
   NODE_TYPE_THRESHOLD = 2;
 }
 

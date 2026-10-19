@@ -65,9 +65,6 @@ use strum::IntoEnumIterator;
 /// Compact public key for FHE operations
 pub type FhePublicKey = tfhe::CompactPublicKey;
 
-/// Client key for FHE operations (contains private parameters)
-pub type FhePrivateKey = tfhe::ClientKey;
-
 /// Generates and stores client signing and verification keys if they don't exist.
 ///
 /// This function handles the complete key setup workflow for clients:

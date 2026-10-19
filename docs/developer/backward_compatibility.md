@@ -503,6 +503,10 @@ impl Upgrade<PrivateSigKey> for PrivateSigKeyV0 {
 
 For more in-depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
 
+## Skipping the fixtures of a removed type
+
+Frozen data cannot change, so the fixtures of a type that the service no longer has stay in the `.ron` files and in `backward-compatibility/src/lib.rs`. The `run_test` arm for such a type returns `TestResult::Skipped(testcase.skip("<reason>"))`, and the loader prints the reason next to the test name. The `KmsFheKeyHandles` fixtures in [`core/service/tests/backward_compatibility_kms.rs`](../../core/service/tests/backward_compatibility_kms.rs) use this.
+
 ## Updating the test without testing backward compatibility
 
 If you want to update the test data _without_ actually testing for backward compatibility, you can follow these steps:

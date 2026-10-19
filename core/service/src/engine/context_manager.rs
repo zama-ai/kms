@@ -1159,7 +1159,7 @@ mod tests {
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
         },
-        engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
+        engine::context::{NodeInfo, SchemeDigests, SoftwareVersion, four_party_nodes},
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1272,7 +1272,7 @@ mod tests {
             if make_default_context {
                 // Setup dummy default MPC context
                 let context = ContextInfo {
-                    mpc_nodes: vec![NodeInfo {
+                    mpc_nodes: four_party_nodes(vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
                         external_url: "http://localhost:12345".to_string(),
@@ -1281,7 +1281,7 @@ mod tests {
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
                         scheme_digests: SchemeDigests::from_ecdsa_verification_key(&pk),
-                    }],
+                    }]),
                     context_id: *DEFAULT_MPC_CONTEXT,
                     software_version: SoftwareVersion {
                         major: 0,
@@ -1289,7 +1289,7 @@ mod tests {
                         patch: 0,
                         tag: None,
                     },
-                    threshold: 0,
+                    threshold: 1,
                     pcr_values: vec![],
                 };
                 store_versioned_at_request_id(
@@ -1312,7 +1312,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "http://localhost:12345".to_string(),
@@ -1321,7 +1321,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1329,7 +1329,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
 
@@ -1378,7 +1378,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 4);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
                 stored_context.mpc_nodes[0]
@@ -1421,7 +1421,7 @@ mod tests {
         // remaining context, so the target must not be the only one left.
         let keeper_context_id = ContextId::from_bytes([8u8; 32]);
         let keeper_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node2".to_string(),
                 party_id: 1,
                 external_url: "http://localhost:12345".to_string(),
@@ -1430,7 +1430,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id: keeper_context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1438,7 +1438,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
         let request = Request::new(NewMpcContextRequest {
@@ -1508,7 +1508,7 @@ mod tests {
         let last_context_id = ContextId::from_bytes([10u8; 32]);
         for id in [middle_context_id, last_context_id] {
             let context = ContextInfo {
-                mpc_nodes: vec![NodeInfo {
+                mpc_nodes: four_party_nodes(vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
                     external_url: "http://localhost:12345".to_string(),
@@ -1517,7 +1517,7 @@ mod tests {
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
                     scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-                }],
+                }]),
                 context_id: id,
                 software_version: SoftwareVersion {
                     major: 0,
@@ -1525,7 +1525,7 @@ mod tests {
                     patch: 0,
                     tag: None,
                 },
-                threshold: 0,
+                threshold: 1,
                 pcr_values: vec![],
             };
             let request = Request::new(NewMpcContextRequest {
@@ -1577,7 +1577,7 @@ mod tests {
             Arc::new(TaskTracker::new()),
         );
         let make_context = |context_id, pcr_values| ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "https://localhost:12345".to_string(),
@@ -1586,7 +1586,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1594,7 +1594,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values,
         };
 
@@ -1648,7 +1648,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
         let context_id = ContextId::from_bytes([34u8; 32]);
         let new_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "http://localhost:12345".to_string(),
@@ -1657,7 +1657,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1665,7 +1665,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
@@ -1712,7 +1712,7 @@ mod tests {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "http://localhost:12345".to_string(),
@@ -1721,7 +1721,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1729,7 +1729,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
 
@@ -1766,7 +1766,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 4);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
                 stored_context.mpc_nodes[0]
@@ -1809,7 +1809,7 @@ mod tests {
         let context_without_pcr_id = ContextId::from_bytes([32u8; 32]);
         let context_with_pcr_id = ContextId::from_bytes([33u8; 32]);
         let make_context = |context_id, pcr_values| ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "https://localhost:12345".to_string(),
@@ -1818,7 +1818,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -1826,7 +1826,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values,
         };
 
@@ -1922,7 +1922,7 @@ mod tests {
 
             for context_id in &context_ids {
                 let new_context = ContextInfo {
-                    mpc_nodes: vec![NodeInfo {
+                    mpc_nodes: four_party_nodes(vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
                         external_url: "http://localhost:12345".to_string(),
@@ -1933,7 +1933,7 @@ mod tests {
                         scheme_digests: SchemeDigests::from_ecdsa_verification_key(
                             &verification_key,
                         ),
-                    }],
+                    }]),
                     context_id: *context_id,
                     software_version: SoftwareVersion {
                         major: 0,
@@ -1941,7 +1941,7 @@ mod tests {
                         patch: 0,
                         tag: None,
                     },
-                    threshold: 0,
+                    threshold: 1,
                     pcr_values: vec![],
                 };
                 let request = Request::new(NewMpcContextRequest {
@@ -2013,7 +2013,7 @@ mod tests {
 
             for context_id in &context_ids {
                 let new_context = ContextInfo {
-                    mpc_nodes: vec![NodeInfo {
+                    mpc_nodes: four_party_nodes(vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
                         external_url: "http://localhost:12345".to_string(),
@@ -2024,7 +2024,7 @@ mod tests {
                         scheme_digests: SchemeDigests::from_ecdsa_verification_key(
                             &verification_key,
                         ),
-                    }],
+                    }]),
                     context_id: *context_id,
                     software_version: SoftwareVersion {
                         major: 0,
@@ -2032,7 +2032,7 @@ mod tests {
                         patch: 0,
                         tag: None,
                     },
-                    threshold: 0,
+                    threshold: 1,
                     pcr_values: vec![],
                 };
 
@@ -2055,7 +2055,7 @@ mod tests {
                 .unwrap();
             let corrupted_context = ContextInfo {
                 context_id: context_ids[1],
-                mpc_nodes: vec![NodeInfo {
+                mpc_nodes: four_party_nodes(vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
                     external_url: "http://localhost:12345".to_string(),
@@ -2064,14 +2064,14 @@ mod tests {
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
                     scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-                }],
+                }]),
                 software_version: SoftwareVersion {
                     major: 0,
                     minor: 1,
                     patch: 0,
                     tag: None,
                 },
-                threshold: 99, // invalid: single node requires threshold == 0
+                threshold: 99, // invalid: four nodes require threshold 1
                 pcr_values: vec![],
             };
             store_context_at_id(
@@ -2127,7 +2127,7 @@ mod tests {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_id = ContextId::from_bytes([5u8; 32]);
         let new_context = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
+            mpc_nodes: four_party_nodes(vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 external_url: "http://localhost:12345".to_string(),
@@ -2136,7 +2136,7 @@ mod tests {
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
                 scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
-            }],
+            }]),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -2144,7 +2144,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
 

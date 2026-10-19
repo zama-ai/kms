@@ -457,6 +457,9 @@ half-way and can be run again (entries that already exist are skipped), so the o
 intermediate state bootable: keysets never sit under an epoch the node does not know, which the
 [boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
 stays in recovery mode, where the restore can be repeated.
+The restore skips `FhePrivateKey` entries in the vault and logs a warning for them. No current code
+writes that type, and a node that holds it fails the boot-time checks. The backup update does not
+copy it into the vault either.
 
 A node without its signing key boots in **recovery mode**. It skips the
 boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
@@ -683,6 +686,11 @@ indexed by per-module `.ron` manifests. The loader in
 [backward-compatibility/src/](../backward-compatibility/src/) replays every
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
+
+The loader reports the frozen `KmsFheKeyHandles` fixtures as skipped, with the reason. The service
+has no `KmsFheKeyHandles` type. That material sits under `FhePrivateKey`, which the boot-time checks
+reject and restore skips. The fixtures and the `KmsFheKeyHandlesTest` metadata stay, because the
+frozen generators produce them.
 
 Custodian-backup fixtures exist for 0.15.0 and later. The feature ships first in 0.15 and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather than kept as a compatibility target.
 

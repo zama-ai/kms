@@ -21,8 +21,7 @@ use crate::{
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
 const ERR_DUPLICATE_SIGNERS: &str = "Duplicate signer addresses or digests found in context";
-const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
-const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
+const ERR_INVALID_THRESHOLD: &str = "Invalid threshold or node count in context";
 const ERR_CA_SUBJECT_MISMATCH: &str = "CA certificate subject does not match mpc_identity";
 
 #[derive(Clone, Debug, VersionsDispatch)]
@@ -566,26 +565,16 @@ impl ContextInfo {
                 })?;
         }
 
-        if self.mpc_nodes.len() == 1 {
-            // threshold must be 0 for single node context
-            if self.threshold != 0 {
-                return Err(anyhow::anyhow!(
-                    "{} {}",
-                    ERR_INVALID_THRESHOLD_SINGLE_NODE,
-                    self.context_id()
-                ));
-            }
-        } else {
-            // check that threshold is valid such that 3*threshold + 1 == mpc_nodes.len()
-            if self.mpc_nodes.len() != 3 * self.threshold as usize + 1 {
-                return Err(anyhow::anyhow!(
-                    "{} (context={}, threshold={}, nodes={})",
-                    ERR_INVALID_THRESHOLD_MULTI_NODE,
-                    self.context_id(),
-                    self.threshold,
-                    self.mpc_nodes.len()
-                ));
-            }
+        // The context needs a threshold of at least 1 and exactly 3*threshold + 1 nodes. The lower
+        // bound rules out one node with threshold 0, which satisfies the node count on its own.
+        if self.threshold < 1 || self.mpc_nodes.len() != 3 * self.threshold as usize + 1 {
+            return Err(anyhow::anyhow!(
+                "{} (context={}, threshold={}, nodes={})",
+                ERR_INVALID_THRESHOLD,
+                self.context_id(),
+                self.threshold,
+                self.mpc_nodes.len()
+            ));
         }
 
         // the mpc_nodes must have unique names
@@ -666,6 +655,30 @@ impl ContextInfo {
 
         Ok(my_node.map(|node| Role::indexed_from_one(node.party_id as usize)))
     }
+}
+
+/// Returns the nodes of a four-party context, threshold 1: `nodes` plus peers for the party IDs
+/// in 1..=4 that `nodes` does not use.
+///
+/// The added peers have no signing digests and no CA certificate, and record no public storage
+/// URL. So they never match the local signing key, and public material sync never fetches from
+/// them.
+#[cfg(test)]
+pub(crate) fn four_party_nodes(mut nodes: Vec<NodeInfo>) -> Vec<NodeInfo> {
+    let used: std::collections::HashSet<u32> = nodes.iter().map(|node| node.party_id).collect();
+    for party_id in (1..=4u32).filter(|party_id| !used.contains(party_id)) {
+        nodes.push(NodeInfo {
+            mpc_identity: format!("test-peer{party_id}"),
+            party_id,
+            external_url: format!("http://localhost:{}", 40000 + party_id),
+            ca_cert: None,
+            public_storage_url: String::new(),
+            public_storage_prefix: None,
+            extra_signer_addresses: vec![],
+            scheme_digests: SchemeDigests::new(),
+        });
+    }
+    nodes
 }
 
 impl Named for ContextInfo {
@@ -1049,6 +1062,55 @@ mod tests {
         let err = context.verify(&storage).await.unwrap_err().to_string();
         assert!(err.contains(ERR_DUPLICATE_SIGNERS), "{err}");
         assert!(err.contains(&scheme.to_string()), "{err}");
+    }
+
+    /// One node with threshold 0 satisfies 3*threshold + 1 nodes, but is rejected.
+    #[tokio::test]
+    async fn test_context_info_rejects_single_node() {
+        let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut context = four_node_context([
+            SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+            SchemeDigests::new(),
+        ]);
+        context.mpc_nodes.truncate(1);
+        context.threshold = 0;
+        let storage = storage_with_signing_key(&sk).await;
+
+        let err = context.verify(&storage).await.unwrap_err().to_string();
+        assert!(err.contains(ERR_INVALID_THRESHOLD), "{err}");
+    }
+
+    /// Threshold 0 is rejected whatever the node count.
+    #[tokio::test]
+    async fn test_context_info_rejects_threshold_zero() {
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+        for nodes in 1..=4 {
+            let mut context = four_node_context(Default::default());
+            context.mpc_nodes.truncate(nodes);
+            context.threshold = 0;
+
+            let err = context.verify(&storage).await.unwrap_err().to_string();
+            assert!(err.contains(ERR_INVALID_THRESHOLD), "{nodes} nodes: {err}");
+        }
+    }
+
+    /// A node count other than 3*threshold + 1 is rejected.
+    #[tokio::test]
+    async fn test_context_info_rejects_node_count_mismatch() {
+        let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let storage = storage_with_signing_key(&sk).await;
+        let mut context = four_node_context(Default::default());
+        context.threshold = 2;
+        let err = context.verify(&storage).await.unwrap_err().to_string();
+        assert!(err.contains(ERR_INVALID_THRESHOLD), "{err}");
+
+        let mut context = four_node_context(Default::default());
+        context.mpc_nodes.truncate(3);
+        let err = context.verify(&storage).await.unwrap_err().to_string();
+        assert!(err.contains(ERR_INVALID_THRESHOLD), "{err}");
     }
 
     const ALL_SCHEMES: [SigningSchemeType; 5] = [

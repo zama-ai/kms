@@ -503,6 +503,14 @@ mod tests {
         }
     }
 
+    /// The nodes of a four-party context in which only party 1 records a public storage URL, so
+    /// the sync skips the other three.
+    fn nodes_with_one_reachable_peer() -> Vec<NodeInfo> {
+        (1..=4)
+            .map(|party_id| make_node(party_id, if party_id == 1 { NODE_URL } else { "" }))
+            .collect()
+    }
+
     fn getter_with(storages: Vec<RamStorage>) -> DummyReadOnlyS3StorageGetter {
         DummyReadOnlyS3StorageGetter {
             counter: RefCell::new(0),
@@ -711,7 +719,7 @@ mod tests {
 
         let mut private_storage = RamStorage::new();
         let context = ContextInfo {
-            mpc_nodes: vec![make_node(1, NODE_URL)],
+            mpc_nodes: nodes_with_one_reachable_peer(),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -719,7 +727,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
         store_context_at_id(&mut private_storage, &context_id, &context)
@@ -964,7 +972,7 @@ mod tests {
         });
         let mut private_storage = RamStorage::new();
         let context = ContextInfo {
-            mpc_nodes: vec![make_node(1, NODE_URL)],
+            mpc_nodes: nodes_with_one_reachable_peer(),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -972,7 +980,7 @@ mod tests {
                 patch: 0,
                 tag: None,
             },
-            threshold: 0,
+            threshold: 1,
             pcr_values: vec![],
         };
         store_context_at_id(&mut private_storage, &context_id, &context)

@@ -288,6 +288,8 @@ impl TestType for PrivDataTypeTest {
 }
 
 // KMS test
+/// Metadata of the frozen `KmsFheKeyHandles` fixtures. The frozen generators still produce them,
+/// but the service has no such type, so its loader reports these cases as skipped.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KmsFheKeyHandlesTest {
     pub test_filename: Cow<'static, str>,
@@ -1433,10 +1435,12 @@ impl<T: Display> Testcase<T> {
         min_version.matches(&kms_core_version)
     }
 
-    pub fn skip(&self) -> load::TestSkipped {
+    /// Returns the result of a testcase that is not replayed, with the `reason` why.
+    pub fn skip(&self, reason: impl Into<String>) -> load::TestSkipped {
         load::TestSkipped {
             module: self.kms_core_module.to_string(),
             test_name: self.metadata.to_string(),
+            reason: reason.into(),
         }
     }
 }
