@@ -34,8 +34,9 @@ pub struct CoreConfig {
     pub backup_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub bandwidth_benchmark: Option<BandwidthBenchmarkConfig>,
+    /// Settings of this threshold party. A config without a `[threshold]` section fails to load.
     #[validate(nested)]
-    pub threshold: Option<ThresholdPartyConf>,
+    pub threshold: ThresholdPartyConf,
     #[validate(nested)]
     pub internal_config: Option<InternalConfig>,
     #[validate(nested)]
@@ -47,11 +48,7 @@ pub struct CoreConfig {
 impl CoreConfig {
     /// Whether MPC contexts must contain trusted PCR values.
     pub(crate) fn requires_pcr_allowlist(&self) -> bool {
-        let uses_auto_tls = self
-            .threshold
-            .as_ref()
-            .and_then(|threshold| threshold.tls.as_ref())
-            .is_some_and(TlsConf::is_auto);
+        let uses_auto_tls = self.threshold.tls.as_ref().is_some_and(TlsConf::is_auto);
 
         #[cfg(feature = "insecure")]
         if self.mock_enclave.is_some_and(|mock_enclave| mock_enclave) {
@@ -417,8 +414,6 @@ mod tests {
         let mut zero_interval = config.clone();
         zero_interval
             .threshold
-            .as_mut()
-            .expect("threshold section required for threshold config")
             .core_to_core_net
             .keepalive_interval_secs = Some(0);
         assert!(zero_interval.validate().is_err());
@@ -426,8 +421,6 @@ mod tests {
         let mut zero_timeout = config;
         zero_timeout
             .threshold
-            .as_mut()
-            .expect("threshold section required for threshold config")
             .core_to_core_net
             .keepalive_timeout_secs = Some(0);
         assert!(zero_timeout.validate().is_err());
@@ -441,10 +434,7 @@ mod tests {
             .validate()
             .expect("default_2 config should validate");
 
-        let threshold_config = core_config
-            .threshold
-            .as_ref()
-            .expect("threshold section required for threshold config");
+        let threshold_config = &core_config.threshold;
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
         assert_eq!(core_config.service.listen_port, 50200);
         assert_eq!(threshold_config.listen_address, "0.0.0.0");
@@ -542,33 +532,33 @@ mod tests {
             .expect("baseline config must validate");
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().my_id = Some(0);
+        cc.threshold.my_id = Some(0);
         let s = cc.validate().unwrap_err().to_string();
         // the actual values are not ordered deterministically, so we just check for the generic error message
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().listen_port = 0;
+        cc.threshold.listen_port = 0;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().threshold = 0;
+        cc.threshold.threshold = 0;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().threshold = 42;
+        cc.threshold.threshold = 42;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Got t=42 but expected t=1 for n=4 parties"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().listen_address = "".to_string();
+        cc.threshold.listen_address = "".to_string();
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().peers.as_mut().unwrap()[2].party_id = 123;
+        cc.threshold.peers.as_mut().unwrap()[2].party_id = 123;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Peer party ID cannot be greater than the number of parties (4)."));
     }
@@ -578,7 +568,7 @@ mod tests {
         let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
         assert!(!core_config.requires_pcr_allowlist());
 
-        core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
+        core_config.threshold.tls = Some(TlsConf::Auto {
             eif_signing_cert: None,
             trusted_releases: vec![],
             attest_private_vault_root_key: None,
@@ -677,10 +667,7 @@ mod tests {
         );
 
         // Threshold section
-        let threshold = core_config
-            .threshold
-            .as_ref()
-            .expect("threshold section required");
+        let threshold = &core_config.threshold;
         assert_eq!(threshold.my_id, Some(1));
         assert_eq!(threshold.threshold, 1);
         assert_eq!(threshold.listen_port, 50001);

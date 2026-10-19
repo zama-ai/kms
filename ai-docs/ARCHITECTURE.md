@@ -529,9 +529,9 @@ entries is brought back up to date. Existing entries are not re-read or re-verif
 **Private storage is verified for internal consistency.** Private storage belongs to the node
 alone, so nothing legitimate lands there by accident. `verify_private_storage_layout` lists it
 and fails verification on inconsistent layouts. It deserializes contexts to verify that each
-context uses its declared ID as its storage handle. A threshold node with peer configuration
+context uses its declared ID as its storage handle. A node with peer configuration
 writes its default context before these checks. Everything else the current layout does not
-account for is logged as an error without stopping boot. On a threshold node the epoch registry
+account for is logged as an error without stopping boot. The epoch registry
 (`EpochData`) is read once before the checks, then handed to `SessionMaker::new_initialized`. In
 recovery mode, the private and public checks are skipped so that the node can repair storage.
 
@@ -539,7 +539,7 @@ recovery mode, the private and public checks are skipped so that the node can re
 authority on what is wrong: it names the offending entry, and it reads and hashes each
 published object exactly once, which is all a node with intact storage ever pays.
 
-**A failed verification is repaired from peers and verified again (threshold nodes only).**
+**A failed verification is repaired from peers and verified again.**
 Public storage can drift out of a consistent state: a misconfigured bucket or prefix can point
 a node at the wrong material, and writes across multiple entries are not atomic, so a crash
 mid-operation can leave material missing or stale. Private storage holds the digests and
@@ -583,7 +583,7 @@ What it verifies, and how failures are treated:
 
 | Check | On failure |
 |---|---|
-| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible; otherwise boot fails |
 | Current private keygen and CRS metadata with a stored domain pass `verify_response_signatures`, the check a client runs on a result, as if the client had requested the schemes the stored entries name and knew only the node's own keys | boot fails |
 | Current private keygen and CRS metadata without a stored domain carry no entry beyond ECDSA, since they predate per-scheme signatures; nothing else of them can be checked | boot fails |
 | Current private keygen and CRS metadata list their per-scheme `signatures` in canonical order without repeats, and carry an `external_signature` when they carry a domain | boot fails |
@@ -604,7 +604,7 @@ or both. A node that predates the seed has only the key. Neither type is epoch-s
 holds a second entry. The layout check accepts every combination with at least one of the two.
 The current loader requires the ECDSA key and attaches the seed when one is present.
 
-On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
+A flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
 until the 0.16 migration removes them.
 The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
@@ -669,6 +669,8 @@ versioned types: `BackupCiphertextVersions`,
 `InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
 **Startup migrations.** The service moves material when a release changes its storage path. The
+0.13 key migrations move `FheKeyInfo` entries only. They leave a `FhePrivateKey` entry in place,
+and the boot-time checks reject it as foreign material. The
 v0.15 migration moves legacy private `CrsInfo` into `DEFAULT_EPOCH_ID` after the other startup migrations succeed.
 It accepts the copy kept by v0.14 or creates one for an older installation. It removes the non-epoched entry only after the two
 copies match, and it stops startup if they differ or if the legacy entry remains after deletion. If

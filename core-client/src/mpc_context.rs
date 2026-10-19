@@ -49,10 +49,7 @@ pub async fn create_test_context_info_from_core_config(
 
         // For testing, we only support the mocked trusted release mode
         // this requires the "mock_enclave = true" attribute in the kms-server config toml files.
-        let threshold_config = core_config
-            .threshold
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Threshold config not set for core {}", c.party_id))?;
+        let threshold_config = core_config.threshold;
         match threshold_config
             .tls
             .ok_or_else(|| anyhow::anyhow!("TLS config not set for core {}", c.party_id))?

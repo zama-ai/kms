@@ -25,7 +25,6 @@ use kms_grpc::kms::v1::{
     TypedSignature, UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::CrsGenMetadataV0;
-use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
@@ -962,7 +961,6 @@ where
 }
 
 pub struct BaseKmsStruct {
-    kms_type: KMSType,
     signing_identity: Option<Arc<NodeSigningIdentity>>,
     verf_key: Arc<PublicSigKey>,
     rng_source: Arc<RngSource>,
@@ -971,13 +969,11 @@ pub struct BaseKmsStruct {
 impl BaseKmsStruct {
     /// Constructs a service with an explicitly supplied seed source.
     pub fn new(
-        kms_type: KMSType,
         signing_identity: impl Into<NodeSigningIdentity>,
         rng_source: Arc<RngSource>,
     ) -> Self {
         let signing_identity = signing_identity.into();
         BaseKmsStruct {
-            kms_type,
             verf_key: Arc::new(signing_identity.verf_key()),
             signing_identity: Some(Arc::new(signing_identity)),
             rng_source,
@@ -985,24 +981,15 @@ impl BaseKmsStruct {
     }
 
     /// Constructs a recovery service with an explicitly supplied seed source.
-    pub fn new_no_signing_key(
-        kms_type: KMSType,
-        verf_key: PublicSigKey,
-        rng_source: Arc<RngSource>,
-    ) -> Self {
+    pub fn new_no_signing_key(verf_key: PublicSigKey, rng_source: Arc<RngSource>) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
         BaseKmsStruct {
-            kms_type,
             signing_identity: None,
             verf_key: Arc::new(verf_key),
             rng_source,
         }
-    }
-
-    pub fn kms_type(&self) -> KMSType {
-        self.kms_type
     }
 
     /// The identity this KMS signs with, or an error in recovery mode, where it
@@ -1022,7 +1009,6 @@ impl BaseKmsStruct {
     // This method is cloning `BaseKmsStruct` but we prefer not to impl `Clone` to avoid accidental misuse.
     pub fn new_instance(&self) -> Self {
         Self {
-            kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
             signing_identity: self.signing_identity.as_ref().map(Arc::clone),
             rng_source: Arc::clone(&self.rng_source),

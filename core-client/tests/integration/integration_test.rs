@@ -137,7 +137,7 @@ fn build_test_core_config(
         }),
         backup_vault: None,
         bandwidth_benchmark: None,
-        threshold: Some(ThresholdPartyConf {
+        threshold: ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
             listen_port: mpc_port,
             tls: Some(TlsConf::Auto {
@@ -159,7 +159,7 @@ fn build_test_core_config(
             peers: Some(peers),
             core_to_core_net: CoreToCoreNetworkConfig::default(),
             decryption_mode: DecryptionMode::NoiseFloodSmall,
-        }),
+        },
         internal_config: None,
         mock_enclave: Some(true),
         migration: Some(MigrationConfig {
@@ -376,9 +376,7 @@ fn generate_threshold_cli_config(
                     party_id: j,
                     address: "127.0.0.1".to_string(),
                     mpc_identity: Some(format!("kms-core-{j}.local")),
-                    port: peer_server
-                        .mpc_port
-                        .expect("MPC port should be set for threshold server"),
+                    port: peer_server.mpc_port,
                     tls_cert: None,
                     verification_address: None,
                 }
@@ -387,7 +385,7 @@ fn generate_threshold_cli_config(
 
         let core_config = build_test_core_config(
             server.service_port,
-            server.mpc_port.expect("MPC port should be set"),
+            server.mpc_port,
             i,
             threshold_value,
             i,
@@ -687,7 +685,7 @@ async fn setup_party_resharing_servers(
                     party_id: peer.party_id,
                     address: "127.0.0.1".to_string(),
                     mpc_identity: Some(format!("kms-core-{peer_server_id}.local")),
-                    port: peer_server.mpc_port.expect("MPC port should be set"),
+                    port: peer_server.mpc_port,
                     tls_cert: None,
                     verification_address: None,
                 }
@@ -696,7 +694,7 @@ async fn setup_party_resharing_servers(
 
         let core_config = build_test_core_config(
             server.service_port,
-            server.mpc_port.expect("MPC port should be set"),
+            server.mpc_port,
             my_party_id,
             threshold_value as u8,
             server_id,

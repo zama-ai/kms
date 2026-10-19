@@ -308,7 +308,6 @@ mod tests {
     async fn service_instances_and_session_maker_share_one_source() {
         use crate::cryptography::signatures::gen_sig_keys;
         use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
-        use kms_grpc::rpc_types::KMSType;
         use threshold_networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
         use tokio::sync::RwLock;
 
@@ -317,7 +316,7 @@ mod tests {
             AesRng::seed_from_u64(42),
             ChaCha20Rng::seed_from_u64(43),
         )));
-        let base = BaseKmsStruct::new(KMSType::Threshold, sk, Arc::clone(&source));
+        let base = BaseKmsStruct::new(sk, Arc::clone(&source));
         let sibling = base.new_instance();
         assert!(Arc::ptr_eq(&base.rng_source(), &sibling.rng_source()));
         let networking = Arc::new(RwLock::new(

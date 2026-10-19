@@ -567,7 +567,7 @@ mod tests {
     use algebra::structure_traits::Ring;
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
+        rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use rstest::rstest;
@@ -680,11 +680,7 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            NodeSigningIdentity::ecdsa_only(sk),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(NodeSigningIdentity::ecdsa_only(sk), test_rng_source());
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let epoch_id = *DEFAULT_EPOCH_ID;

@@ -1182,7 +1182,7 @@ mod tests {
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
             NewMpcContextRequest,
         },
-        rpc_types::{KMSType, PrivDataType},
+        rpc_types::PrivDataType,
     };
     use rand::{SeedableRng, rngs::OsRng};
     use rand_chacha::ChaCha20Rng;
@@ -1309,7 +1309,7 @@ mod tests {
     #[tokio::test]
     async fn test_kms_context() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             mpc_nodes: four_party_nodes(vec![NodeInfo {
@@ -1566,7 +1566,7 @@ mod tests {
     #[tokio::test]
     async fn test_new_mpc_context_requires_pcr_allowlist_for_enclave_deployment() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -1645,7 +1645,7 @@ mod tests {
     #[tokio::test]
     async fn concurrent_duplicate_context_creation_preserves_the_created_context() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let context_id = ContextId::from_bytes([34u8; 32]);
         let new_context = ContextInfo {
             mpc_nodes: four_party_nodes(vec![NodeInfo {
@@ -1739,8 +1739,7 @@ mod tests {
 
         // create the context manager and store the new context
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -1779,8 +1778,7 @@ mod tests {
         // recreate another new context manager that's initially empty
         // and then we should have nothing in the session maker.
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -1833,8 +1831,7 @@ mod tests {
         // Persist both contexts without enforcing enclave PCR policy, as could happen before an
         // existing deployment enables automatic attested TLS.
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -1860,7 +1857,7 @@ mod tests {
             }
         }
 
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -1908,8 +1905,7 @@ mod tests {
 
         // Store 3 contexts
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -1966,8 +1962,7 @@ mod tests {
 
         // Recreate an empty context manager and load all 3 from storage
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -1999,8 +1994,7 @@ mod tests {
 
         // Store 3 valid contexts
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -2097,8 +2091,7 @@ mod tests {
         // Recreate an empty context manager and load from storage:
         // the corrupted context should be skipped, loading only 2
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -2150,8 +2143,7 @@ mod tests {
 
         // Store a context using a fully-initialized context manager
         {
-            let base_kms =
-                BaseKmsStruct::new(KMSType::Threshold, sig_key.clone(), test_rng_source());
+            let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -2187,11 +2179,7 @@ mod tests {
         // Create a new context manager without a signing key (recovery mode)
         // and attempt to load contexts from storage
         {
-            let base_kms = BaseKmsStruct::new_no_signing_key(
-                KMSType::Threshold,
-                verification_key,
-                test_rng_source(),
-            );
+            let base_kms = BaseKmsStruct::new_no_signing_key(verification_key, test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let context_manager = ThresholdContextManager::new(
                 base_kms,
@@ -2221,7 +2209,7 @@ mod tests {
         let identity = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
         let verification_keys =
             VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, identity, test_rng_source());
+        let base_kms = BaseKmsStruct::new(identity, test_rng_source());
         // Generate custodian keys
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
@@ -2434,7 +2422,7 @@ mod tests {
     #[tokio::test]
     async fn test_new_custodian_context_rejects_duplicate_cryptographic_identities() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let custodian_meta_store = MetaStore::new(100, 10);
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
@@ -2607,11 +2595,7 @@ mod tests {
     #[tokio::test]
     async fn test_custodian_context_fails_on_backup_update_failure() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(sig_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(sig_key), test_rng_source());
 
         // Store corrupt data in private storage under ContextInfo type.
         {
@@ -2760,11 +2744,7 @@ mod tests {
         use crate::vault::storage::Storage;
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(sig_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(sig_key), test_rng_source());
         let previous_id = RequestId::from_bytes([6u8; 32]);
         let context_id = RequestId::from_bytes([7u8; 32]);
         // The keychain holds a previous context, so a restore and a reset differ.
@@ -2833,11 +2813,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(sig_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(sig_key), test_rng_source());
         let context_id = RequestId::from_bytes([9u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -2877,11 +2853,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_survives_a_dropped_request() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(sig_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(sig_key), test_rng_source());
         let context_id = RequestId::from_bytes([8u8; 32]);
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
@@ -2941,11 +2913,7 @@ mod tests {
         use crate::vault::storage::{Storage, StorageReader};
 
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(sig_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(sig_key), test_rng_source());
         let context_id = RequestId::from_bytes([7u8; 32]);
 
         // Make `write_backup_keys` report a duplicate.

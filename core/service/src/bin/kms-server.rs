@@ -5,7 +5,7 @@ use algebra::{
 use anyhow::Context;
 use clap::Parser;
 use futures_util::future::OptionFuture;
-use kms_grpc::rpc_types::{KMSType, PubDataType};
+use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     conf::{
         CoreConfig, init_conf, init_conf_kms_core_telemetry,
@@ -299,7 +299,7 @@ fn main() -> anyhow::Result<()> {
     // we read it again in [main_exec] to set up the rest of the server
     let core_config = init_conf::<CoreConfig>(&args.config_file).with_context(|| {
         format!(
-            "failed to load kms-server config file {}; expected a [service] section",
+            "failed to load kms-server config file {}; expected [service] and [threshold] sections",
             args.config_file
         )
     })?;
@@ -325,17 +325,11 @@ async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     let (mut core_config, tracer_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
-    let Some(threshold_config) = core_config.threshold.as_mut() else {
-        anyhow::bail!(
-            "kms-server config file {} is missing the required [threshold] section",
-            args.config_file
-        );
-    };
     if args.ignore_peerlist {
         tracing::warn!("Ignoring peerlist from configuration file as per command line argument");
-        threshold_config.peers = None;
+        core_config.threshold.peers = None;
     };
-    let threshold_config = threshold_config.clone();
+    let threshold_config = core_config.threshold.clone();
 
     // Initialize the rayon pool used inside MPC protocols
     let num_rayon_threads = init_rayon_thread_pool(
@@ -520,7 +514,6 @@ async fn main_exec() -> anyhow::Result<()> {
     migrate_to_0_15_x(
         &mut public_vault,
         &mut private_vault,
-        KMSType::Threshold,
         core_config.migration.as_ref(),
     )
     .await
@@ -588,7 +581,6 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // load key
     let base_kms = boot_base_kms(
-        KMSType::Threshold,
         &private_vault,
         &public_storage,
         backup_vault.as_ref(),

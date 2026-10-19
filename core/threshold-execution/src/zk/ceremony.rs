@@ -587,8 +587,8 @@ pub(crate) fn make_partial_proof_deterministic(
 /// without using any threshold protocol, so the caller must be
 /// trusted to delete the toxic waste before returning the public parameter.
 ///
-/// This is used in the centralized KMS as well as the insecure
-/// version of the threshold KMS.
+/// This is used in the insecure version of the threshold KMS
+/// and to generate test material.
 pub fn public_parameters_by_trusted_setup<R: Rng + CryptoRng>(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,

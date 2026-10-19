@@ -159,7 +159,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         key_id: &RequestId,
         epoch_id: &EpochId,
     ) -> Result<bool, StorageError> {
-        self.inner.fhe_keys_exists(key_id, epoch_id, true).await
+        self.inner.fhe_keys_exists(key_id, epoch_id).await
     }
 
     #[expect(clippy::too_many_arguments)]

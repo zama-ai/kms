@@ -75,8 +75,7 @@ use crate::{
         prepare_shutdown_signals,
         public_material_sync::sync_public_material_from_peers,
         storage_material_verification::{
-            PrivateLayout, verify_private_metadata, verify_private_storage_layout,
-            verify_storage_material,
+            verify_private_metadata, verify_private_storage_layout, verify_storage_material,
         },
         threshold::{
             service::{
@@ -522,9 +521,7 @@ where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     let require_pcr_allowlist = config.requires_pcr_allowlist();
-    let threshold_config = config.threshold.as_ref().ok_or_else(|| {
-        anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
-    })?;
+    let threshold_config = &config.threshold;
     let telemetry_conf = config
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
@@ -596,13 +593,7 @@ where
     // Recovery mode skips storage verification, the peer sync, and adopts no custodian context.
     match base_kms.signing_identity() {
         Ok(signing_key) => {
-            verify_private_storage_layout(
-                &private_storage,
-                PrivateLayout::Threshold {
-                    epoch_contexts: &epoch_contexts,
-                },
-            )
-            .await?;
+            verify_private_storage_layout(&private_storage, &epoch_contexts).await?;
             // Validate the metadata before it becomes the authority for public-storage repair.
             let key_metadata_versioned: HashMap<(RequestId, EpochId), KeyGenMetadata> =
                 key_info_versioned
@@ -1358,14 +1349,10 @@ mod tests {
         let mut config: CoreConfig =
             init_conf(&format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"))).unwrap();
         // No peers, so no default context to seed.
-        config.threshold.as_mut().unwrap().peers = None;
+        config.threshold.peers = None;
         let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
         // Without a signing key, the constructor skips the storage checks.
-        let base_kms = BaseKmsStruct::new_no_signing_key(
-            kms_grpc::rpc_types::KMSType::Threshold,
-            verf_key,
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new_no_signing_key(verf_key, test_rng_source());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (kms, _, _) = new_real_threshold_kms(
             config,
@@ -1400,16 +1387,12 @@ mod tests {
 
         let mut config: CoreConfig =
             init_conf(&format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let threshold_config = config.threshold.as_mut().unwrap();
+        let threshold_config = &mut config.threshold;
         threshold_config.my_id = Some(1);
         // No peers, so no default context to seed.
         threshold_config.peers = None;
         let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
-        let base_kms = BaseKmsStruct::new_no_signing_key(
-            kms_grpc::rpc_types::KMSType::Threshold,
-            verf_key,
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new_no_signing_key(verf_key, test_rng_source());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let _booted = new_real_threshold_kms(
             config,

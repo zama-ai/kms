@@ -705,7 +705,10 @@ path = "/tmp"
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("expected a [service] section"));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("expected [service] and [threshold] sections")
+        );
     }
 
     /// A config without a `[threshold]` section is rejected before any storage is touched.
@@ -746,7 +749,7 @@ path = "{storage}"
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("missing the required [threshold] section"),
+            stderr.contains(r#"missing configuration field "threshold""#),
             "the failure does not name the missing section: {stderr}"
         );
         assert_eq!(

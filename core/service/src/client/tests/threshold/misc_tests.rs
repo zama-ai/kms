@@ -110,7 +110,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     }
 
     // Get health client for main server 1
-    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
+    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
         .await
         .expect("Failed to get threshold health client");
     let threshold_service_name = <GrpcServer as NamedService>::NAME;
@@ -188,7 +188,7 @@ async fn test_threshold_close_after_drop() -> Result<()> {
     > as NamedService>::NAME;
 
     // Get health client for MPC threshold service on server 1
-    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
+    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
         .await
         .expect("Failed to get threshold health client");
     let threshold_service_name = <GrpcServer as NamedService>::NAME;
@@ -264,7 +264,7 @@ async fn test_threshold_shutdown() -> Result<()> {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }
 
-    let mpc_port = servers.get(&1).unwrap().mpc_port.unwrap();
+    let mpc_port = servers.get(&1).unwrap().mpc_port;
     let service_port = servers.get(&1).unwrap().service_port;
 
     // Get health clients for server 1
@@ -350,19 +350,13 @@ async fn test_threshold_mpc_server_stop_on_signal_is_not_a_fault() -> Result<()>
         .await?;
     let _material_dir = env.material_dir; // keep alive for temp dir cleanup
     let mut servers = env.servers;
-    let server_handle = servers.get_mut(&1).unwrap();
-    let mpc_port = server_handle
-        .mpc_port
-        .expect("a threshold server has an MPC port");
+    // The rest of the handle stays alive until the end of the test, so only the MPC server stops.
+    let server_handle = servers.remove(&1).unwrap();
+    let mpc_port = server_handle.mpc_port;
     let health = server_handle.health.clone();
     assert!(health.is_live());
 
-    server_handle
-        .mpc_shutdown_tx
-        .take()
-        .expect("a threshold server has an MPC shutdown signal")
-        .send(())
-        .unwrap();
+    server_handle.mpc_shutdown_tx.send(()).unwrap();
     check_port_is_closed(mpc_port).await;
     assert!(
         std::net::TcpListener::bind((crate::consts::DEFAULT_URL, mpc_port)).is_ok(),

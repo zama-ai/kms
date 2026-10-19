@@ -4,7 +4,7 @@ use crate::engine::base::BaseKmsStruct;
 use crate::vault::storage::StorageExt;
 use aws_smithy_types::base64;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
-use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
@@ -63,6 +63,9 @@ pub(crate) fn format_handle(handle: &[u8]) -> String {
     }
 }
 
+/// Prefix of the `storage_info` string in [`query_key_material_availability`] responses.
+const STORAGE_INFO_PREFIX: &str = "Threshold KMS";
+
 /// Query key material availability from private storage
 ///
 /// This shared utility function queries FHE keys, CRS keys, and optionally preprocessing keys
@@ -70,41 +73,26 @@ pub(crate) fn format_handle(handle: &[u8]) -> String {
 ///
 /// # Arguments
 /// * `priv_storage` - Private storage instance to query FHE and CRS keys from
-/// * `kms_type` - The KMS type (centralized or threshold)
 /// * `preprocessing_ids` - Vector of preprocessing IDs, may be empty (used for threshold KMS with metastore)
 pub async fn query_key_material_availability<S>(
     priv_storage: &S,
-    kms_type: KMSType,
     preprocessing_ids: Vec<String>,
 ) -> Result<KeyMaterialAvailabilityResponse, MetricedError>
 where
     S: StorageExt + Sync + Send,
 {
     // Query FHE key IDs
-    let fhe_key_ids_set = match kms_type {
-        KMSType::Centralized => priv_storage
-            .all_data_ids_from_all_epochs(&PrivDataType::FhePrivateKey.to_string())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_KEY_MATERIAL_AVAILABILITY,
-                    None,
-                    anyhow::anyhow!("Failed to query centralized FHE keys: {}", e),
-                    tonic::Code::Internal,
-                )
-            })?,
-        KMSType::Threshold => priv_storage
-            .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_KEY_MATERIAL_AVAILABILITY,
-                    None,
-                    anyhow::anyhow!("Failed to query threshold FHE keys: {}", e),
-                    tonic::Code::Internal,
-                )
-            })?,
-    };
+    let fhe_key_ids_set = priv_storage
+        .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_KEY_MATERIAL_AVAILABILITY,
+                None,
+                anyhow::anyhow!("Failed to query FHE keys: {}", e),
+                tonic::Code::Internal,
+            )
+        })?;
 
     // Query CRS IDs. Must span all epochs, like the FHE keys above: CRS metadata is stored
     // epoch-scoped, and `all_data_ids` deliberately excludes epoch-scoped entries.
@@ -128,8 +116,8 @@ where
 
     let crs_ids: Vec<String> = crs_ids_set.into_iter().map(|id| id.to_string()).collect();
 
-    // Get storage info - combine type info with backend info
-    let storage_info = format!("{} - {}", kms_type, priv_storage.info());
+    // Clients such as `kms-health-check` show this string, so its format stays fixed.
+    let storage_info = format!("{STORAGE_INFO_PREFIX} - {}", priv_storage.info());
 
     // Build response
     Ok(KeyMaterialAvailabilityResponse {
@@ -532,7 +520,7 @@ where
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
-    use crate::vault::storage::{Storage, ram::RamStorage};
+    use crate::vault::storage::{Storage, StorageReader, ram::RamStorage};
 
     use rand::SeedableRng;
     use threshold_types::rng::AesRng;
@@ -554,7 +542,7 @@ mod tests {
             .await
             .unwrap();
 
-        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+        let response = query_key_material_availability(&storage, vec![])
             .await
             .unwrap();
 
@@ -572,11 +560,59 @@ mod tests {
             .await
             .unwrap();
 
-        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+        let response = query_key_material_availability(&storage, vec![])
             .await
             .unwrap();
 
         assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
+
+    /// The `storage_info` string reaches gRPC clients, so its rendering is pinned.
+    #[tokio::test]
+    async fn storage_info_names_threshold_kms_and_backend() {
+        let storage = RamStorage::new();
+
+        let response = query_key_material_availability(&storage, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.storage_info,
+            format!("Threshold KMS - {}", storage.info())
+        );
+    }
+
+    /// The availability response lists FHE keys by their `FheKeyInfo` entries.
+    #[tokio::test]
+    async fn reports_fhe_keys_from_key_info() {
+        let key_id = RequestId::from_bytes([0x54; 32]);
+        let epoch_id = EpochId::from_bytes([0x55; 32]);
+        let legacy_id = RequestId::from_bytes([0x56; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes_at_epoch(
+                &[1, 2, 3],
+                &key_id,
+                &epoch_id,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        storage
+            .store_bytes(
+                &[1, 2, 3],
+                &legacy_id,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.fhe_key_ids, vec![key_id.to_string()]);
     }
 
     #[test]

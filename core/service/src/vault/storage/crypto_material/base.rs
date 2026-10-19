@@ -315,8 +315,8 @@ where
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
-    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
-    /// The `threshold` parameter is used to indicate if the check is for threshold or centralized keys.
+    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`). Each layout also needs the
+    /// private `FheKeyInfo` entry.
     ///
     /// Returns `Ok(true)` if either layout is fully present, `Ok(false)` if
     /// neither is, or `Err(StorageError)` on a storage backend failure.
@@ -324,13 +324,8 @@ where
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold: bool,
     ) -> Result<bool, StorageError> {
-        let priv_types = if threshold {
-            vec![PrivDataType::FheKeyInfo]
-        } else {
-            vec![PrivDataType::FhePrivateKey]
-        };
+        let priv_types = [PrivDataType::FheKeyInfo];
         // Try the compressed layout first.
         if self
             .data_exists_at_epoch(

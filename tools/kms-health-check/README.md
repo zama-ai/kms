@@ -39,7 +39,7 @@ HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 k
 
 The tool deals with two distinct kinds of configuration:
 
-- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `[threshold]` section is required: a config without it fails validation with `Missing required [threshold] section in config`. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
+- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `[threshold]` section is required: a config without it fails to parse with `missing configuration field "threshold"`. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
 - **Tool config (timeouts)** — there is no CLI flag for this; it is configured through a configuration file at a fixed location or environment variables, as described below.
 
 ### Health Check Configuration File

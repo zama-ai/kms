@@ -28,7 +28,7 @@ async fn non_epoched_fhe_cleanup_rejects_a_mismatched_replacement() {
     storage.clear_events();
     let before = storage.state();
 
-    let error = migrate_fhe_keys_after_0_13_x(&mut storage, KMSType::Threshold)
+    let error = migrate_fhe_keys_after_0_13_x(&mut storage)
         .await
         .unwrap_err();
 
@@ -55,9 +55,7 @@ async fn epoched_fhe_cleanup_rejects_a_mismatched_replacement() {
     storage.clear_events();
     let before = storage.state();
 
-    let error = remove_old_keys_for_0_13_20(&mut storage, KMSType::Threshold)
-        .await
-        .unwrap_err();
+    let error = remove_old_keys_for_0_13_20(&mut storage).await.unwrap_err();
 
     assert!(error.to_string().contains("does not match"));
     assert_eq!(storage.state(), before);
@@ -320,7 +318,7 @@ async fn failed_fhe_write_is_retryable() {
     storage.clear_events();
     storage.set_fail_store_after_mutation_at(target_entry.clone());
 
-    migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage, KMSType::Threshold)
+    migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage)
         .await
         .unwrap_err();
 
@@ -340,15 +338,13 @@ async fn failed_fhe_write_is_retryable() {
 
     // Retry skips the existing target, so no keys need copying and no write is attempted.
     assert_eq!(
-        migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage, KMSType::Threshold)
+        migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage)
             .await
             .unwrap(),
         0,
     );
     assert!(storage.events().is_empty());
-    remove_old_keys_for_0_13_20(&mut storage, KMSType::Threshold)
-        .await
-        .unwrap();
+    remove_old_keys_for_0_13_20(&mut storage).await.unwrap();
 
     expected_state.remove(&legacy_entry);
     assert_eq!(storage.state(), expected_state);
@@ -394,9 +390,7 @@ async fn failed_old_prss_cleanup_is_retryable(#[case] fault_outcome: StorageOutc
     }
     storage.clear_events();
 
-    remove_old_prss_data(&mut storage, KMSType::Threshold)
-        .await
-        .unwrap_err();
+    remove_old_prss_data(&mut storage).await.unwrap_err();
 
     let after_failure = storage.state();
     // A failed delete can stop cleanup before the other entry; a no-op delete lets it continue.
@@ -442,9 +436,7 @@ async fn failed_old_prss_cleanup_is_retryable(#[case] fault_outcome: StorageOutc
     storage.clear_fail_points();
     storage.clear_events();
 
-    remove_old_prss_data(&mut storage, KMSType::Threshold)
-        .await
-        .unwrap();
+    remove_old_prss_data(&mut storage).await.unwrap();
 
     let after_retry = storage.state();
     assert_same_events(storage.events(), &expected_retry);

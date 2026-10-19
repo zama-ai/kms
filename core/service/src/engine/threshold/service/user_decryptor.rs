@@ -669,7 +669,7 @@ mod tests {
     use crate::engine::rng_source::test_rng_source;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
-        rpc_types::{KMSType, alloy_to_protobuf_domain},
+        rpc_types::alloy_to_protobuf_domain,
     };
     use rand::SeedableRng;
     use tfhe::FheTypes;
@@ -770,7 +770,6 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
         let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );

@@ -737,10 +737,7 @@ mod tests {
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
     use kms_grpc::{RequestId, kms::v1::SigningSchemeType};
-    use kms_grpc::{
-        kms::v1::TypedCiphertext,
-        rpc_types::{KMSType, alloy_to_protobuf_domain},
-    };
+    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
     use threshold_execution::{
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
@@ -858,7 +855,6 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );

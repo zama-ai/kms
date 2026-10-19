@@ -705,10 +705,7 @@ mod tests {
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
-    use kms_grpc::{
-        kms::v1::FheParameter,
-        rpc_types::{KMSType, alloy_to_protobuf_domain},
-    };
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
     use threshold_execution::{
         malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
@@ -743,7 +740,6 @@ mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
             NodeSigningIdentity::ecdsa_only(sk.clone()),
             test_rng_source(),
         );

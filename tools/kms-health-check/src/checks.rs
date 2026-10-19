@@ -124,16 +124,8 @@ fn record_invalid_config(result: &mut HealthCheckResult, error: String) {
 }
 
 /// Checks a parsed KMS config and records the outcome in `result`.
-///
-/// The `[threshold]` section is required. A config without it is recorded as invalid.
 fn validate_parsed_config(config_type: &config::KmsConfig, result: &mut HealthCheckResult) {
-    let Some(threshold_conf) = &config_type.threshold else {
-        record_invalid_config(
-            result,
-            "Missing required [threshold] section in config".to_string(),
-        );
-        return;
-    };
+    let threshold_conf = &config_type.threshold;
 
     let storage_type = config_type
         .private_vault
@@ -586,21 +578,36 @@ mod tests {
         assert_ne!(result.overall_health, HealthStatus::Unhealthy);
     }
 
+    /// A config without a `[threshold]` section fails to parse, and the error names the section.
     #[tokio::test]
     async fn config_without_threshold_section_is_rejected() {
-        let mut config = config::parse_config(Path::new(THRESHOLD_CONFIG))
-            .await
-            .unwrap();
-        config.threshold = None;
+        let config_path = std::env::temp_dir().join(format!(
+            "kms-health-check-no-threshold-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &config_path,
+            r#"
+[service]
+listen_address = "127.0.0.1"
+listen_port = 50051
+timeout_secs = 360
+grpc_max_message_size = 104857600
+"#,
+        )
+        .unwrap();
 
-        let mut result = empty_result();
-        validate_parsed_config(&config, &mut result);
+        let result = run_config_validation(config_path.to_str().unwrap()).await;
+        std::fs::remove_file(&config_path).unwrap();
+        let result = result.unwrap();
 
         let validation = result.config_valid.unwrap();
         assert!(!validation.valid);
-        assert_eq!(
-            validation.errors,
-            vec!["Missing required [threshold] section in config".to_string()]
+        assert_eq!(validation.errors.len(), 1, "got: {:?}", validation.errors);
+        assert!(
+            validation.errors[0].contains(r#"missing configuration field "threshold""#),
+            "the error does not name the missing section: {:?}",
+            validation.errors
         );
         assert_eq!(result.overall_health, HealthStatus::Unhealthy);
     }

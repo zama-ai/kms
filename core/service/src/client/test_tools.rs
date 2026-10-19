@@ -22,7 +22,6 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::KMSType;
 use observability::health::HealthState;
 use std::collections::HashMap;
 use std::path::Path;
@@ -129,11 +128,7 @@ pub async fn setup_threshold_no_client<
         // Make a configuration based on the default, but customized with the needed changes for the test setup
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-        let mut core_to_core_net = core_config
-            .threshold
-            .as_ref()
-            .map(|t| t.core_to_core_net)
-            .unwrap_or_default();
+        let mut core_to_core_net = core_config.threshold.core_to_core_net;
         core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
@@ -150,11 +145,11 @@ pub async fn setup_threshold_no_client<
             core_to_core_net,
             decryption_mode,
         };
-        core_config.threshold = Some(threshold_party_config);
+        core_config.threshold = threshold_party_config;
 
         handles.spawn(async move {
             let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
+            let base_kms = BaseKmsStruct::new(sk, test_rng_source());
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
@@ -356,11 +351,7 @@ pub async fn setup_threshold_with_custom_peers<
 
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-        let mut core_to_core_net = core_config
-            .threshold
-            .as_ref()
-            .map(|t| t.core_to_core_net)
-            .unwrap_or_default();
+        let mut core_to_core_net = core_config.threshold.core_to_core_net;
         core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: ip_addr.to_string(),
@@ -375,13 +366,13 @@ pub async fn setup_threshold_with_custom_peers<
             core_to_core_net,
             decryption_mode,
         };
-        core_config.threshold = Some(threshold_party_config);
+        core_config.threshold = threshold_party_config;
 
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
             let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
+            let base_kms = BaseKmsStruct::new(sk, test_rng_source());
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
@@ -541,12 +532,12 @@ pub struct ServerHandle {
     pub server: Arc<dyn Shutdown + Send + Sync + 'static>,
     // The service port is the port that is used to connect to the core server
     pub service_port: u16,
-    // In the threshold setting the mpc port is the port that is used to connect to the other MPC parties
-    pub mpc_port: Option<u16>,
+    // The mpc port is the port that is used to connect to the other MPC parties
+    pub mpc_port: u16,
     // The handle to shut down the core service which is receiving the external requests
     pub service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
-    // The handle to shut down the optional MPC server
-    pub mpc_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    // The handle to shut down the MPC server
+    pub mpc_shutdown_tx: tokio::sync::oneshot::Sender<()>,
     // Liveness and readiness of the server. Tests read them here, because the gRPC health service
     // can be gone after the server shuts down.
     pub health: HealthState,
@@ -564,9 +555,9 @@ impl ServerHandle {
         Self {
             server,
             service_port,
-            mpc_port: Some(mpc_port),
+            mpc_port,
             service_shutdown_tx,
-            mpc_shutdown_tx: Some(mpc_shutdown_tx),
+            mpc_shutdown_tx,
             health,
         }
     }
@@ -575,7 +566,7 @@ impl ServerHandle {
         self.service_port
     }
 
-    pub fn mpc_port(&self) -> Option<u16> {
+    pub fn mpc_port(&self) -> u16 {
         self.mpc_port
     }
 
@@ -594,17 +585,14 @@ impl ServerHandle {
             .send(())
             .expect("Could not send shut down signal to  core server");
 
-        if let Some(chan) = self.mpc_shutdown_tx {
-            // Shut down MPC server
-            chan.send(())
-                .expect("Could not send shut down signal to the MPC server");
-        }
+        // Shut down MPC server
+        self.mpc_shutdown_tx
+            .send(())
+            .expect("Could not send shut down signal to the MPC server");
 
         // Validate that both the MPC and server are fully closed
         check_port_is_closed(self.service_port).await;
-        if let Some(mpc_port) = self.mpc_port {
-            check_port_is_closed(mpc_port).await;
-        }
+        check_port_is_closed(self.mpc_port).await;
     }
 }
 
@@ -744,7 +732,6 @@ pub async fn setup_recovery_mode<
     PublicSigKey,
 ) {
     let base_kms = boot_base_kms(
-        KMSType::Threshold,
         &priv_storage,
         &pub_storage,
         Some(&backup_vault),
@@ -769,10 +756,7 @@ pub async fn setup_recovery_mode<
     ));
     let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
-    let threshold_config = core_config
-        .threshold
-        .as_mut()
-        .expect("the threshold config must have a threshold section");
+    let threshold_config = &mut core_config.threshold;
     threshold_config.my_id = Some(party_id);
     // Without peers the default context stays as an earlier boot stored it.
     threshold_config.peers = None;

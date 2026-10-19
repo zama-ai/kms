@@ -1873,7 +1873,7 @@ mod tests {
     use crate::engine::rng_source::test_rng_source;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
+        rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use rstest::rstest;
@@ -1958,11 +1958,7 @@ mod tests {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            NodeSigningIdentity::ecdsa_only(sk),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(NodeSigningIdentity::ecdsa_only(sk), test_rng_source());
         let epoch_id = *DEFAULT_EPOCH_ID;
         let role = threshold_types::role::Role::indexed_from_one(1);
         let prss_setup_z128 = Some(

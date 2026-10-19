@@ -2206,7 +2206,7 @@ pub(crate) mod tests {
     use kms_grpc::{
         RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
+        rpc_types::{PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use std::collections::BTreeMap;
@@ -2518,11 +2518,7 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            NodeSigningIdentity::ecdsa_only(sk),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(NodeSigningIdentity::ecdsa_only(sk), test_rng_source());
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());

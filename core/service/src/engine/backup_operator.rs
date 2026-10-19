@@ -45,7 +45,6 @@ use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
-use kms_grpc::rpc_types::KMSType;
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
@@ -739,7 +738,6 @@ where
         // from the preprocessor service which has access to the metastore
         let response = query_key_material_availability(
             &*priv_guard,
-            self.base_kms.kms_type(),
             Vec::new(), // Will be populated by the endpoint from preprocessor
         )
         .await?;
@@ -848,14 +846,13 @@ pub async fn recovery_mode_verf_key<S: StorageReader>(
 /// boots in recovery mode, where only custodian backup recovery is possible, under the key
 /// [`recovery_mode_verf_key`] picks from `public_storage` or `backup_vault`.
 pub async fn boot_base_kms<PrivS: StorageReader, PubS: StorageReader>(
-    kms_type: KMSType,
     private_storage: &PrivS,
     public_storage: &PubS,
     backup_vault: Option<&Vault>,
     rng_source: Arc<RngSource>,
 ) -> anyhow::Result<BaseKmsStruct> {
     match get_core_signing_identity(private_storage).await {
-        Ok(identity) => Ok(BaseKmsStruct::new(kms_type, identity, rng_source)),
+        Ok(identity) => Ok(BaseKmsStruct::new(identity, rng_source)),
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -864,9 +861,7 @@ pub async fn boot_base_kms<PrivS: StorageReader, PubS: StorageReader>(
                 make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_key = recovery_mode_verf_key(public_storage, backup_vault).await?;
-            Ok(BaseKmsStruct::new_no_signing_key(
-                kms_type, verf_key, rng_source,
-            ))
+            Ok(BaseKmsStruct::new_no_signing_key(verf_key, rng_source))
         }
     }
 }
@@ -1852,15 +1847,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let base_kms = boot_base_kms(
-            KMSType::Threshold,
-            &private_storage,
-            &lost,
-            Some(&vault),
-            test_rng_source(),
-        )
-        .await
-        .unwrap();
+        let base_kms = boot_base_kms(&private_storage, &lost, Some(&vault), test_rng_source())
+            .await
+            .unwrap();
         let identity = base_kms
             .signing_identity()
             .expect("a node holding its signing key must not enter recovery mode");
@@ -1880,7 +1869,6 @@ mod tests {
         .await
         .unwrap();
         let base_kms = boot_base_kms(
-            KMSType::Threshold,
             &no_identity,
             &public_storage,
             Some(&vault),
@@ -1892,29 +1880,17 @@ mod tests {
         assert_eq!(*base_kms.verf_key(), published);
 
         // Once public storage is lost too, the key comes from the recovery material in the vault.
-        let base_kms = boot_base_kms(
-            KMSType::Threshold,
-            &no_identity,
-            &lost,
-            Some(&vault),
-            test_rng_source(),
-        )
-        .await
-        .unwrap();
+        let base_kms = boot_base_kms(&no_identity, &lost, Some(&vault), test_rng_source())
+            .await
+            .unwrap();
         assert!(base_kms.signing_identity().is_err());
         assert_eq!(*base_kms.verf_key(), backed_up.verf_key());
 
         // With neither public storage nor a backup vault, there is nothing to boot under.
         assert!(
-            boot_base_kms(
-                KMSType::Threshold,
-                &no_identity,
-                &lost,
-                None,
-                test_rng_source(),
-            )
-            .await
-            .is_err()
+            boot_base_kms(&no_identity, &lost, None, test_rng_source(),)
+                .await
+                .is_err()
         );
     }
 
@@ -2050,11 +2026,7 @@ mod tests {
         }
         let identity = NodeSigningIdentity::new(sig_key, seed);
         let operator = RealBackupOperator::new(
-            BaseKmsStruct::new(
-                kms_grpc::rpc_types::KMSType::Threshold,
-                identity.clone(),
-                test_rng_source(),
-            ),
+            BaseKmsStruct::new(identity.clone(), test_rng_source()),
             CryptoMaterialStorage::from(
                 RamStorage::new(),
                 priv_storage,

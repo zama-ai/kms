@@ -15,7 +15,7 @@ use crate::{
         test_support::{FaultPhase, StorageEntry, StorageEvent, StorageState},
     },
 };
-use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use rand::rngs::OsRng;
 use std::sync::Arc;
 use threshold_networking::{
@@ -139,11 +139,7 @@ impl ContextFixture {
     }
 
     pub(super) async fn manager(&self) -> TestContextManager {
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            self.signing_key.clone(),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(self.signing_key.clone(), test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let manager = ThresholdContextManager::new(
             base_kms,
