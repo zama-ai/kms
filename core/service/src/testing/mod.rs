@@ -41,7 +41,7 @@ pub mod prelude {
     pub use super::material::{KeyType, MaterialType, TestMaterialManager, TestMaterialSpec};
 
     // Setup utilities
-    pub use super::setup::threshold::{
+    pub use super::setup::environment::{
         TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
     };
 

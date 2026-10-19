@@ -38,7 +38,7 @@ use crate::engine::base::derive_request_id;
 use crate::engine::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::TestMaterialSpec;
-use crate::testing::setup::threshold::ThresholdTestEnv;
+use crate::testing::setup::environment::ThresholdTestEnv;
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};

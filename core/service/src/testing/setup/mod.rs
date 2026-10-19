@@ -23,9 +23,9 @@
 //!     Ok(())
 //! }
 //! ```
-pub mod threshold;
+pub mod environment;
 
 // Re-export for convenience
-pub use threshold::{
+pub use environment::{
     TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
 };
