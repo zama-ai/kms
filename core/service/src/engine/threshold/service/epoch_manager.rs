@@ -3395,8 +3395,12 @@ pub(crate) mod tests {
         }
 
         let mut rng = AesRng::seed_from_u64(42);
-        // Holds `DEFAULT_EPOCH_ID` as its only loaded epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        // `make_epoch_manager` loads no epoch, so load `DEFAULT_EPOCH_ID` as the only one.
+        epoch_manager
+            .session_maker
+            .add_epoch(*DEFAULT_EPOCH_ID, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
         let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         // The last loaded epoch is refused, and stays loaded.
@@ -3498,7 +3502,11 @@ pub(crate) mod tests {
             &[SigningSchemeType::Ecdsa256k1],
         );
         let epoch_id = EpochId::new_random(&mut rng);
+        // A "keeper" epoch so the target is not the last remaining one, which `destroy_epoch`
+        // refuses to remove for an unrelated reason.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
         seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, keeper_epoch_id, *DEFAULT_MPC_CONTEXT).await;
         let extra_data = vec![1, 2, 3];
 
         for _round in 0..2 {
@@ -3521,6 +3529,12 @@ pub(crate) mod tests {
             assert_eq!(party_id, 1);
             assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
         }
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
     }
 
     /// `destroy_mpc_epoch` refuses a malformed request, or one naming a scheme the node cannot
@@ -3829,9 +3843,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
-        // `DEFAULT_EPOCH_ID` of the default context stays loaded throughout, so no target is the
-        // last epoch.
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        // `make_epoch_manager` loads no epoch, so load `DEFAULT_EPOCH_ID` of the default context.
+        // It stays loaded throughout, so no target is the last epoch.
+        epoch_manager
+            .session_maker
+            .add_epoch(*DEFAULT_EPOCH_ID, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
         let private_storage = epoch_manager.crypto_storage.get_private_storage();
 
         let context_a = ContextId::new_random(&mut rng);
