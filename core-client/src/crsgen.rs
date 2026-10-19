@@ -146,8 +146,7 @@ pub(crate) async fn fetch_and_check_crsgen(
     // `None`, the CRS is still downloaded and request IDs checked, but the
     // external signature is not verified (an error is logged).
     verify: Option<SigVerificationMaterial>,
-    // The parameter set and `max_num_bits` of the request, when it is at hand. The
-    // CRS is then checked to have the requested size.
+    // The parameter set and `max_num_bits` of the request, when it is at hand.
     requested_size: Option<(FheParameter, u32)>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
@@ -254,8 +253,8 @@ pub(crate) async fn fetch_and_check_crsgen(
 
 /// Check that `crs` has the size requested with `max_num_bits` under `param`.
 ///
-/// The signatures cover whatever size the parties generated, so they do not show that it is the
-/// size the request asked for.
+/// The signatures cover whatever size the parties generated, so they do not show that it is
+/// exactly the size the request asked for.
 fn check_crs_size(
     crs: &CompactPkeCrs,
     param: FheParameter,

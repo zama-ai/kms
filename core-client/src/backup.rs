@@ -26,8 +26,7 @@ use crate::CoreConf;
 /// Fetch the operator public key of every core, as `(party_id, hex key)` sorted by party.
 ///
 /// Each key must come with an attestation document bound to it, and no two parties may
-/// return the same key or be attested by the same enclave. Every response is checked on its own,
-/// so a single party's attested key replayed in place of another party's would otherwise pass.
+/// return the same key or be attested by the same enclave.
 pub(crate) async fn do_get_operator_pub_keys(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<(usize, String)>> {
