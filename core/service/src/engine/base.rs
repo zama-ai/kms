@@ -20,7 +20,9 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_versioned, serialize_hash_element};
+use kms_grpc::ContextId;
 use kms_grpc::RequestId;
+use kms_grpc::kms;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
     TypedSignature, UserDecryptionResponsePayload,
@@ -365,6 +367,70 @@ pub(crate) fn preproc_payload(prep_id: &RequestId, extra_data: &[u8]) -> PrepKey
     PrepKeygenSignedPayload {
         prep_id: *prep_id,
         extra_data: extra_data.to_vec(),
+    }
+}
+
+/// The result payload that every non-ECDSA scheme signs for an context creation.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum NewMpcContextPayloadVersions {
+    V0(NewMpcContextPayload),
+}
+
+/// The confirmation that a context has been created, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(NewMpcContextPayloadVersions)]
+pub struct NewMpcContextPayload {
+    pub new_context_id: ContextId,
+    pub previous_context_id: ContextId,
+    pub node_config_hash: [u8; 32],
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for NewMpcContextPayload {
+    const NAME: &'static str = "NewMpcContextPayload";
+}
+
+impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::NewMpcContextPayload) -> Result<Self, Self::Error> {
+        let previous_context_id = value
+            .previous_context_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing previous_context_id"))?
+            .try_into()?;
+        let new_context_id = value
+            .new_context_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing context_id"))?
+            .try_into()?;
+        Ok(NewMpcContextPayload {
+            new_context_id,
+            previous_context_id,
+            node_config_hash: value
+                .node_config_hash
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl From<&NewMpcContextPayload> for kms::v1::NewMpcContextPayload {
+    fn from(value: &NewMpcContextPayload) -> Self {
+        kms::v1::NewMpcContextPayload {
+            new_context_id: Some(value.new_context_id.into()),
+            previous_context_id: Some(value.previous_context_id.into()),
+            node_config_hash: value
+                .node_config_hash
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?,
+            extra_data: value.extra_data.clone(),
+        }
     }
 }
 

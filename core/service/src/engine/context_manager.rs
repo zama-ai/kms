@@ -147,8 +147,7 @@ where
     async fn new_custodian_context(
         self: Arc<Self>,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::NewCustodianContextResponse>, MetricedError>
-    {
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
         let inner = request.into_inner();
         let mpc_context_id: ContextId = inner
             .mpc_context_id
@@ -273,13 +272,7 @@ where
             })?;
 
         //Always answer with Empty
-        Ok(Response::new(NewMpcContextResponse {
-            signatures: todo!(),
-            previous_context_id: todo!(),
-            new_context_id: todo!(),
-            node_config_hash: todo!(),
-            extra_data: todo!(),
-        }))
+        Ok(Response::new(Empty {}))
     }
 
     /// Removes a custodian context from disk storage and RAM (the meta-store).
@@ -385,13 +378,7 @@ where
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await;
-        Ok(Response::new(NewMpcContextResponse {
-            previous_context_id: todo!(),
-            new_context_id: todo!(),
-            node_config_hash: todo!(),
-            extra_data: todo!(),
-            signatures: todo!(),
-        }))
+        Ok(Response::new(Empty {}))
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
@@ -908,6 +895,7 @@ where
             new_context_id: todo!(),
             node_config_hash: todo!(),
             extra_data: todo!(),
+            signatures: todo!(),
         }))
     }
 
@@ -1009,7 +997,7 @@ where
     async fn new_custodian_context(
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
-    ) -> Result<Response<NewMpcContextResponses>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError> {
         Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
@@ -1264,7 +1252,7 @@ where
     async fn new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
+    ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
         let (my_role, new_context) = self
             .inner
             .verify_and_extract_new_mpc_context(request, self.require_pcr_allowlist)
@@ -1319,7 +1307,13 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(NewMpcContextResponse {
+            previous_context_id: todo!(),
+            new_context_id: todo!(),
+            node_config_hash: todo!(),
+            extra_data: todo!(),
+            signatures: todo!(),
+        }))
     }
 
     async fn destroy_mpc_context(

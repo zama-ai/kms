@@ -711,7 +711,7 @@ message NewMpcContextRequest {
   repeated SigningSchemeType signing_schemes = 7;
 }
 
-message NewMpcContextResponse {
+message NewMpcContextPayload {
   // Per-scheme KMS signatures, one per scheme requested in the request's
   // `signing_schemes`, on the following structure:
   // struct ContextCreationConfirmation {
@@ -725,12 +725,19 @@ message NewMpcContextResponse {
   // The ID of the new context.
   RequestId new_context_id = 2;
   // keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)) of the new context.
+  // Must be exactly 32 bytes
   bytes node_config_hash = 3;
   // Extra data signed as `extraData`.
   bytes extra_data = 4;
+}
+
+message NewMpcContextResponse {
+  // The payload signed as part of the context creation
+  NewMpcContextPayload payload = 1;
+
   // Per-scheme KMS signatures, one per scheme requested in the request's
   // `signing_schemes`.
-  repeated TypedSignature signatures = 5;
+  repeated TypedSignature signatures = 2;
 }
 
 // Request to destroy the MPC context.
