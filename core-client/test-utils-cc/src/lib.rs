@@ -8,16 +8,16 @@ use std::time::{Duration, Instant};
 
 pub struct DockerComposeCmd {
     pub root_path: PathBuf,
-    pub mode: KMSMode,
+    pub mode: ComposeProfile,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum KMSMode {
-    ThresholdDefaultParameter,
-    ThresholdTestParameter,
-    ThresholdTestParameterNoInit,
-    ThresholdTestParameterNoInitSixParty,
-    ThresholdCustodianTestParameter,
+pub enum ComposeProfile {
+    DefaultParameter,
+    TestParameter,
+    TestParameterNoInit,
+    TestParameterNoInitSixParty,
+    CustodianTestParameter,
 }
 
 // Wrapper struct for Output
@@ -80,7 +80,7 @@ fn wait_for_ports_free(ports: &[u16], timeout: Duration) {
 }
 
 impl DockerComposeCmd {
-    pub fn new(mode: KMSMode) -> Self {
+    pub fn new(mode: ComposeProfile) -> Self {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
         let err_parent_msg = "Failed to get parent directory";
         let root_path = PathBuf::from(manifest_dir)
@@ -90,15 +90,15 @@ impl DockerComposeCmd {
         DockerComposeCmd { root_path, mode }
     }
 
-    const fn ports_for_mode(mode: KMSMode) -> &'static [u16] {
+    const fn ports_for_mode(mode: ComposeProfile) -> &'static [u16] {
         match mode {
-            KMSMode::ThresholdTestParameterNoInitSixParty => &[
+            ComposeProfile::TestParameterNoInitSixParty => &[
                 50100, 50200, 50300, 50400, 50500, 50600, 50001, 50002, 50003, 50004, 50005, 50006,
             ],
-            KMSMode::ThresholdDefaultParameter
-            | KMSMode::ThresholdTestParameter
-            | KMSMode::ThresholdTestParameterNoInit
-            | KMSMode::ThresholdCustodianTestParameter => {
+            ComposeProfile::DefaultParameter
+            | ComposeProfile::TestParameter
+            | ComposeProfile::TestParameterNoInit
+            | ComposeProfile::CustodianTestParameter => {
                 &[50100, 50200, 50300, 50400, 50001, 50002, 50003, 50004]
             }
         }
@@ -113,13 +113,13 @@ impl DockerComposeCmd {
 
         // set the FHE params based on mode
         match self.mode {
-            KMSMode::ThresholdDefaultParameter => unsafe {
+            ComposeProfile::DefaultParameter => unsafe {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
             },
-            KMSMode::ThresholdTestParameter
-            | KMSMode::ThresholdTestParameterNoInit
-            | KMSMode::ThresholdTestParameterNoInitSixParty
-            | KMSMode::ThresholdCustodianTestParameter => unsafe {
+            ComposeProfile::TestParameter
+            | ComposeProfile::TestParameterNoInit
+            | ComposeProfile::TestParameterNoInitSixParty
+            | ComposeProfile::CustodianTestParameter => unsafe {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
             },
         }
@@ -146,21 +146,21 @@ impl DockerComposeCmd {
             .arg("-f");
 
         match self.mode {
-            KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+            ComposeProfile::DefaultParameter | ComposeProfile::TestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
             }
-            KMSMode::ThresholdTestParameterNoInit => {
+            ComposeProfile::TestParameterNoInit => {
                 build.arg("docker-compose-core-threshold.yml");
                 build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");
             }
             // six party variant used for testing context switching and resharing
             // basically it will support two sets of 4 party threshold networks
             // where there is an overlap of two partyes (parties 3 and 4) that are in both networks
-            KMSMode::ThresholdTestParameterNoInitSixParty => {
+            ComposeProfile::TestParameterNoInitSixParty => {
                 build.arg("docker-compose-core-threshold-6.yml");
                 build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");
             }
-            KMSMode::ThresholdCustodianTestParameter => {
+            ComposeProfile::CustodianTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
                 build.env("KMS_DOCKER_BACKUP_SECRET_SHARING", "true");
             }
@@ -209,13 +209,13 @@ impl DockerComposeCmd {
                 .arg("docker-compose-core-base.yml")
                 .arg("-f");
             match self.mode {
-                KMSMode::ThresholdDefaultParameter
-                | KMSMode::ThresholdTestParameter
-                | KMSMode::ThresholdTestParameterNoInit
-                | KMSMode::ThresholdCustodianTestParameter => {
+                ComposeProfile::DefaultParameter
+                | ComposeProfile::TestParameter
+                | ComposeProfile::TestParameterNoInit
+                | ComposeProfile::CustodianTestParameter => {
                     docker_logs.arg("docker-compose-core-threshold.yml");
                 }
-                KMSMode::ThresholdTestParameterNoInitSixParty => {
+                ComposeProfile::TestParameterNoInitSixParty => {
                     docker_logs.arg("docker-compose-core-threshold-6.yml");
                 }
             }
@@ -238,13 +238,13 @@ impl DockerComposeCmd {
                 .arg("docker-compose-core-base.yml")
                 .arg("-f");
             match self.mode {
-                KMSMode::ThresholdDefaultParameter
-                | KMSMode::ThresholdTestParameter
-                | KMSMode::ThresholdTestParameterNoInit
-                | KMSMode::ThresholdCustodianTestParameter => {
+                ComposeProfile::DefaultParameter
+                | ComposeProfile::TestParameter
+                | ComposeProfile::TestParameterNoInit
+                | ComposeProfile::CustodianTestParameter => {
                     docker_down.arg("docker-compose-core-threshold.yml");
                 }
-                KMSMode::ThresholdTestParameterNoInitSixParty => {
+                ComposeProfile::TestParameterNoInitSixParty => {
                     docker_down.arg("docker-compose-core-threshold-6.yml");
                 }
             }
@@ -269,11 +269,11 @@ impl DockerComposeCmd {
 
 pub struct DockerCompose {
     pub cmd: DockerComposeCmd,
-    pub mode: KMSMode,
+    pub mode: ComposeProfile,
 }
 
 impl DockerCompose {
-    pub fn new(mode: KMSMode) -> DockerCompose {
+    pub fn new(mode: ComposeProfile) -> DockerCompose {
         let cmd = DockerComposeCmd::new(mode);
         cmd.up();
         DockerCompose { cmd, mode }

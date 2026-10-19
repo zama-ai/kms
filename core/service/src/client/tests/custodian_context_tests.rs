@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
-use crate::testing::setup::ThresholdTestEnv;
+use crate::testing::setup::TestEnv;
 use crate::util::key_setup::test_tools::backup_exists;
 use crate::util::key_setup::test_tools::read_custodian_backup_files;
 use crate::{
@@ -40,7 +40,7 @@ async fn new_custodian_context(
     let dkg_param: WrappedDKGParams = parameter.into();
 
     let (material_dir, kms_servers, kms_clients, mut internal_client) = {
-        let env = ThresholdTestEnv::builder()
+        let env = TestEnv::builder()
             .with_party_count(amount_parties)
             .with_custodian_keychain()
             .with_prss()
@@ -107,7 +107,7 @@ async fn new_custodian_context(
     }
     drop(kms_clients);
     drop(internal_client);
-    let (_kms_servers, _kms_clients) = ThresholdTestEnv::builder()
+    let (_kms_servers, _kms_clients) = TestEnv::builder()
         .with_party_count(amount_parties)
         .with_custodian_keychain()
         .with_prss()

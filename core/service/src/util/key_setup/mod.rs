@@ -534,7 +534,7 @@ where
 /// Configuration for threshold signing key generation.
 ///
 /// Defines the signing participation model for the threshold system.
-pub enum ThresholdSigningKeyConfig {
+pub enum SigningKeyConfig {
     /// All parties participate in signing (requires list of party identifiers)
     AllParties(Vec<String>),
 }
@@ -558,7 +558,7 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     #[cfg(any(test, feature = "testing", feature = "insecure"))] deterministic: bool,
-    config: ThresholdSigningKeyConfig,
+    config: SigningKeyConfig,
     tls_wildcard: bool,
 ) -> anyhow::Result<()>
 where
@@ -576,7 +576,7 @@ where
         panic!("{}", msg);
     }
 
-    let ThresholdSigningKeyConfig::AllParties(parties) = config;
+    let SigningKeyConfig::AllParties(parties) = config;
 
     // Validate party indices
     for i in 1..=parties.len() {

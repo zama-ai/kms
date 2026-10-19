@@ -44,7 +44,7 @@ use tokio::task::JoinSet;
 #[tokio::test]
 async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("threshold_dkg_backup")
         .with_party_count(4)
         .with_prss()
@@ -171,13 +171,13 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
         }));
     }
 
-    let config = crate::testing::types::ThresholdTestConfig {
+    let config = crate::testing::types::TestConfig {
         decryption_mode: None,
         test_material_path: Some(material_dir.path()),
     };
 
     let (mut restarted_servers, mut restarted_clients) =
-        crate::client::test_tools::setup_threshold_isolated(
+        crate::client::test_tools::setup_servers_isolated(
             1, // threshold
             pub_storages,
             priv_storages,
@@ -252,7 +252,7 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
 #[tokio::test]
 async fn test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("threshold_autobackup")
         .with_party_count(4)
         .with_prss()
@@ -316,7 +316,7 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
     // Setup using builder pattern with backup vault
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("threshold_crs_backup")
         .with_party_count(4)
         .with_prss()

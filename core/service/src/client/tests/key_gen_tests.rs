@@ -16,7 +16,7 @@ cfg_if::cfg_if! {
 use crate::client::client_wasm::Client;
 use crate::client::key_gen::tests::check_conformance;
 #[cfg(feature = "slow_tests")]
-use crate::client::test_tools::setup_threshold;
+use crate::client::test_tools::setup_servers;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 use crate::client::tests::common::{PollConfig, retrying_poll};
@@ -38,7 +38,7 @@ use crate::engine::base::derive_request_id;
 use crate::engine::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::TestMaterialSpec;
-use crate::testing::setup::environment::ThresholdTestEnv;
+use crate::testing::setup::environment::TestEnv;
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
@@ -170,9 +170,9 @@ impl TestKeyGenResult {
 /// party 1 generates compressed keys locally and shares private key shares with other parties.
 // TODO(dp): the migrated tests in this file (and in mpc_context_tests.rs,
 // crs_gen_tests.rs, public_decryption_tests.rs, user_decryption_tests.rs)
-// share a heavy `ThresholdTestEnv::builder()...build()` + spec-construction
+// share a heavy `TestEnv::builder()...build()` + spec-construction
 // preamble. A second sweep should factor that out — e.g. a `with_test_setup!`
-// macro or a `ThresholdTestEnv::for_test(name, parties, spec_kind)` helper —
+// macro or a `TestEnv::for_test(name, parties, spec_kind)` helper —
 // to shrink each test back down to the part that actually varies.
 #[rstest::rstest]
 #[case(4)]
@@ -183,9 +183,9 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     ))?;
 
     // Test generates its own FHE keys; only signing material is needed pre-staged.
-    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let spec = TestMaterialSpec::signing_only(amount_parties);
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("test_insecure_compressed_dkg")
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
@@ -475,13 +475,13 @@ pub(crate) async fn run_threshold_decompression_keygen(
 
     let dkg_param: WrappedDKGParams = parameter.into();
     // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
-    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let mut spec = TestMaterialSpec::signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
 
     let (material_dir, kms_servers, kms_clients, internal_client) = {
-        let env = ThresholdTestEnv::builder()
+        let env = TestEnv::builder()
             .with_test_name(format!(
                 "decom_dkg_{amount_parties}_{parameter:?}_{insecure}"
             ))
@@ -689,13 +689,13 @@ pub(crate) async fn preproc_and_keygen(
     let dkg_param: WrappedDKGParams = parameter.into();
 
     // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
-    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let mut spec = TestMaterialSpec::signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
 
     let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
-        let env = ThresholdTestEnv::builder()
+        let env = TestEnv::builder()
             .with_test_name(format!(
                 "preproc_and_keygen_{amount_parties}_{parameter:?}_{compressed}_{insecure_key_gen}"
             ))
@@ -1388,7 +1388,7 @@ pub(crate) async fn verify_keygen_responses(
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
 async fn test_insecure_dkg() -> anyhow::Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("insecure_dkg")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
@@ -1443,9 +1443,9 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 async fn default_insecure_dkg() -> anyhow::Result<()> {
     // Use Default material spec for production-like keys.
     // The default epoch (PRSS) comes from the fixture via `with_prss()`.
-    let spec = TestMaterialSpec::threshold_default(4);
+    let spec = TestMaterialSpec::default_params(4);
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("default_insecure_dkg")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
@@ -1501,7 +1501,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen() -> anyhow::Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("secure_threshold_keygen")
         .with_party_count(4)
         .with_threshold(1)
@@ -1560,7 +1560,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("secure_keygen_crash_online")
         .with_party_count(4)
         .with_threshold(1)
@@ -1667,7 +1667,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("secure_keygen_crash_preproc")
         .with_party_count(4)
         .with_threshold(1)
@@ -1821,7 +1821,7 @@ async fn run_threshold_compressed_keygen_from_existing(
 
     const NUM_PARTIES: usize = 4;
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("compressed_from_existing_keygen")
         .with_party_count(NUM_PARTIES)
         .with_threshold(1)
@@ -2170,7 +2170,7 @@ async fn restart_threshold_servers_from_material(
     }
 
     let vaults: Vec<Option<crate::vault::Vault>> = (0..num_parties).map(|_| None).collect();
-    Ok(setup_threshold(1, pub_storages, priv_storages, vaults, None).await)
+    Ok(setup_servers(1, pub_storages, priv_storages, vaults, None).await)
 }
 
 #[cfg(feature = "slow_tests")]
@@ -2350,7 +2350,7 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("decompression_keygen")
         .with_party_count(4)
         .with_threshold(1)

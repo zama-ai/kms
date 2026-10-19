@@ -52,7 +52,7 @@ pub enum KeyType {
 
 impl TestMaterialSpec {
     /// Create specification for basic threshold test
-    pub fn threshold_basic(party_count: usize) -> Self {
+    pub fn basic(party_count: usize) -> Self {
         let mut required_keys = HashSet::new();
         required_keys.insert(KeyType::ClientKeys);
         required_keys.insert(KeyType::SigningKeys);
@@ -72,7 +72,7 @@ impl TestMaterialSpec {
     ///
     /// Use this for tests that generate FHE keys dynamically (e.g., party resharing tests)
     /// and only need signing keys for authentication.
-    pub fn threshold_signing_only(party_count: usize) -> Self {
+    pub fn signing_only(party_count: usize) -> Self {
         let mut required_keys = HashSet::new();
         required_keys.insert(KeyType::ClientKeys);
         required_keys.insert(KeyType::SigningKeys);
@@ -110,8 +110,8 @@ impl TestMaterialSpec {
     /// Uses production-like key sizes (MaterialType::Default).
     /// **Requires:** Pre-generated secure material, e.g.
     /// `generate-test-material --profile secure --parties 4`
-    pub fn threshold_default(party_count: usize) -> Self {
-        let mut spec = Self::threshold_basic(party_count);
+    pub fn default_params(party_count: usize) -> Self {
+        let mut spec = Self::basic(party_count);
         spec.material_type = MaterialType::Default;
         spec
     }
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_threshold_basic_spec() {
-        let spec = TestMaterialSpec::threshold_basic(4);
+        let spec = TestMaterialSpec::basic(4);
 
         assert_eq!(spec.material_type, MaterialType::Testing);
         assert_eq!(spec.party_count, 4);
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_threshold_default_spec() {
-        let spec = TestMaterialSpec::threshold_default(4);
+        let spec = TestMaterialSpec::default_params(4);
 
         assert_eq!(spec.material_type, MaterialType::Default);
         assert_eq!(spec.party_count, 4);
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let spec = TestMaterialSpec::threshold_basic(4);
+        let spec = TestMaterialSpec::basic(4);
         let serialized = serde_json::to_string(&spec).unwrap();
         let deserialized: TestMaterialSpec = serde_json::from_str(&serialized).unwrap();
 

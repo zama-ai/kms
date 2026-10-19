@@ -12,7 +12,7 @@
 //!
 //! #[tokio::test]
 //! async fn test_threshold() -> Result<()> {
-//!     let env = ThresholdTestEnv::builder()
+//!     let env = TestEnv::builder()
 //!         .with_test_name("my_test")
 //!         .with_party_count(4)
 //!         .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1
@@ -26,6 +26,4 @@
 pub mod environment;
 
 // Re-export for convenience
-pub use environment::{
-    TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
-};
+pub use environment::{TestConfig, TestEnv, TestEnvBuilder, TestMaterialGuard};

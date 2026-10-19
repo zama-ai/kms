@@ -3,9 +3,7 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
-use super::{
-    material_subdir, threshold_crs_id_name, threshold_key_id_name, threshold_material_subdir,
-};
+use super::{crs_id_name, key_id_name, material_subdir, party_material_subdir};
 use crate::consts::{DEFAULT_EPOCH_ID, KEY_PATH_PREFIX, SIGNING_KEY_ID, TMP_PATH_PREFIX};
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::all_verf_material_slots;
@@ -142,7 +140,7 @@ impl TestMaterialManager {
             )
         })?;
         let profile_path = source_path.join(material_subdir(spec.material_type));
-        Ok(profile_path.join(threshold_material_subdir(spec.party_count)))
+        Ok(profile_path.join(party_material_subdir(spec.party_count)))
     }
 
     /// Create the required directory structure
@@ -477,12 +475,12 @@ impl TestMaterialManager {
     fn get_key_ids_for_spec(&self, spec: &TestMaterialSpec) -> KeyIds {
         KeyIds {
             fhe_keys: vec![
-                derive_request_id(&threshold_key_id_name(spec.material_type, spec.party_count))
+                derive_request_id(&key_id_name(spec.material_type, spec.party_count))
                     .expect("threshold key fixture ID must derive")
                     .to_string(),
             ],
             crs_keys: vec![
-                derive_request_id(&threshold_crs_id_name(spec.material_type, spec.party_count))
+                derive_request_id(&crs_id_name(spec.material_type, spec.party_count))
                     .expect("threshold CRS fixture ID must derive")
                     .to_string(),
             ],
@@ -499,13 +497,13 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::{DEFAULT_EPOCH_ID, TEST_THRESHOLD_KEY_ID_4P};
+    use crate::consts::{DEFAULT_EPOCH_ID, TEST_KEY_ID_4P};
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
     async fn test_setup_threshold_material() {
         let manager = create_test_material_manager();
-        let spec = TestMaterialSpec::threshold_basic(4);
+        let spec = TestMaterialSpec::basic(4);
 
         let temp_dir = manager
             .setup_test_material_temp(&spec, "test_threshold")
@@ -521,7 +519,7 @@ mod tests {
             assert!(pub_path.exists());
             assert!(priv_path.exists());
 
-            let key_id = TEST_THRESHOLD_KEY_ID_4P.to_string();
+            let key_id = TEST_KEY_ID_4P.to_string();
             let epoch_id = DEFAULT_EPOCH_ID.to_string();
             assert!(
                 pub_path
@@ -551,7 +549,7 @@ mod tests {
             );
         }
 
-        let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))
+        let key_id = derive_request_id(&key_id_name(MaterialType::Testing, 4))
             .unwrap()
             .to_string();
         assert!(
@@ -567,7 +565,7 @@ mod tests {
     #[tokio::test]
     async fn signing_only_material_has_no_default_epoch() {
         let manager = create_test_material_manager();
-        let spec = TestMaterialSpec::threshold_signing_only(4);
+        let spec = TestMaterialSpec::signing_only(4);
 
         let temp_dir = manager
             .setup_test_material_temp(&spec, "test_signing_only")

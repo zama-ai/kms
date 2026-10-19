@@ -25,7 +25,7 @@
 //!
 //! ## Test Environments
 //!
-//! `ThresholdTestEnv` provides fully configured multi-party threshold KMS servers with clients.
+//! `TestEnv` provides fully configured multi-party threshold KMS servers with clients.
 //! It uses RAII for automatic cleanup.
 pub mod helpers;
 pub mod material;
@@ -41,9 +41,7 @@ pub mod prelude {
     pub use super::material::{KeyType, MaterialType, TestMaterialManager, TestMaterialSpec};
 
     // Setup utilities
-    pub use super::setup::environment::{
-        TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
-    };
+    pub use super::setup::environment::{TestConfig, TestEnv, TestEnvBuilder, TestMaterialGuard};
 
     // Helper functions
     pub use super::helpers::{create_test_material_manager, domain_to_msg};

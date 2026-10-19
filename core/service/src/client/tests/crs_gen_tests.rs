@@ -23,23 +23,23 @@ use tonic::transport::Channel;
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use std::sync::Arc;
-    use crate::testing::setup::ThresholdTestEnv;
+    use crate::testing::setup::TestEnv;
     use crate::testing::prelude::{MaterialType, TestMaterialSpec};
 }}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
-    use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
+    use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 
     let amount_parties = 4;
     let parameter = FheParameter::Test;
     let max_bits = Some(16);
 
     // Signing keys for request auth.
-    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let spec = TestMaterialSpec::signing_only(amount_parties);
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("insecure_crs_gen_threshold")
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -72,19 +72,19 @@ async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn secure_threshold_crs() -> anyhow::Result<()> {
     use crate::consts::DEFAULT_PARAM;
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+    use crate::testing::prelude::{KeyType, TestEnv, TestMaterialSpec};
 
     let amount_parties = 4;
     let parameter = FheParameter::Default;
     let max_bits = Some(2048);
 
     let spec = {
-        let mut s = TestMaterialSpec::threshold_default(amount_parties);
+        let mut s = TestMaterialSpec::default_params(amount_parties);
         s.required_keys.remove(&KeyType::FheKeys);
         s
     };
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("secure_threshold_crs")
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -117,15 +117,15 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
-    use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
+    use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 
     let amount_parties = 4;
     let parameter = FheParameter::Test;
     let max_bits = Some(2048);
 
-    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let spec = TestMaterialSpec::signing_only(amount_parties);
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("test_crs_gen_threshold")
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -167,12 +167,12 @@ pub(crate) async fn crs_gen(
 
     // CRS gen needs signing keys (for request auth) but not FHE keys. The default epoch
     // (PRSS) comes from the fixture via `.with_prss()` below.
-    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let mut spec = TestMaterialSpec::signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name(format!("crs_gen_{amount_parties}_{parameter:?}"))
         .with_party_count(amount_parties)
         .with_material_spec(spec)

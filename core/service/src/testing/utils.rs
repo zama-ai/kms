@@ -19,8 +19,8 @@ pub mod setup {
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };
     use crate::engine::base::derive_request_id;
-    use crate::testing::material::{MaterialType, threshold_crs_id_name, threshold_key_id_name};
-    use crate::util::key_setup::{ThresholdSigningKeyConfig, ensure_client_keys_exist};
+    use crate::testing::material::{MaterialType, crs_id_name, key_id_name};
+    use crate::util::key_setup::{SigningKeyConfig, ensure_client_keys_exist};
     use crate::{
         util::key_setup::{
             ensure_threshold_crs_exists, ensure_threshold_epoch_exists,
@@ -51,7 +51,7 @@ pub mod setup {
         }
     }
 
-    pub async fn generate_threshold_material_to_path(
+    pub async fn generate_material_to_path(
         material_type: MaterialType,
         path: Option<&Path>,
         party_count: usize,
@@ -67,12 +67,12 @@ pub mod setup {
             );
         }
 
-        let key_id = derive_request_id(&threshold_key_id_name(material_type, party_count))
-            .with_context(|| {
+        let key_id =
+            derive_request_id(&key_id_name(material_type, party_count)).with_context(|| {
                 format!("Failed to derive threshold key ID for {party_count} parties")
             })?;
-        let crs_id = derive_request_id(&threshold_crs_id_name(material_type, party_count))
-            .with_context(|| {
+        let crs_id =
+            derive_request_id(&crs_id_name(material_type, party_count)).with_context(|| {
                 format!("Failed to derive threshold CRS ID for {party_count} parties")
             })?;
         let params = match material_type {
@@ -124,7 +124,7 @@ pub mod setup {
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             true,
-            ThresholdSigningKeyConfig::AllParties(
+            SigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
             false,

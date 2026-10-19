@@ -217,7 +217,9 @@ async fn setup_isolated_threshold_cli_test_signing_only(
         false,
         false,
         FheParameter::Test,
-        Some(kms_lib::testing::material::TestMaterialSpec::threshold_signing_only(party_count)),
+        Some(kms_lib::testing::material::TestMaterialSpec::signing_only(
+            party_count,
+        )),
     )
     .await
 }
@@ -430,14 +432,14 @@ async fn setup_isolated_threshold_cli_test(
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     // Use builder pattern with full feature support
-    let mut builder = ThresholdTestEnv::builder()
+    let mut builder = TestEnv::builder()
         .with_test_name(test_name)
         .with_party_count(party_count);
 
     // These CLI tests either generate their own FHE material or do not use FHE material, so only
     // signing material is copied by default.
     let mut default_material_spec =
-        kms_lib::testing::material::TestMaterialSpec::threshold_signing_only(party_count);
+        kms_lib::testing::material::TestMaterialSpec::signing_only(party_count);
     if fhe_params == FheParameter::Default {
         default_material_spec.material_type = MaterialType::Default;
     }
@@ -511,8 +513,8 @@ async fn setup_party_resharing_servers(
 
     // Setup material for 4 parties (the test uses 6 servers but operates in 4-party contexts)
     // Servers 1-4 form context 1, servers 5,6,3,4 form context 2 (party resharing)
-    // Use threshold_signing_only since this test generates FHE keys dynamically
-    let spec = TestMaterialSpec::threshold_signing_only(4);
+    // Use signing_only since this test generates FHE keys dynamically
+    let spec = TestMaterialSpec::signing_only(4);
     let material_dir = manager.setup_test_material_temp(&spec, test_name).await?;
 
     // Create storage for each of the 6 servers
@@ -550,14 +552,12 @@ async fn setup_party_resharing_servers(
 
     // Ensure signing keys exist for all 6 servers
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
-    use kms_lib::util::key_setup::{
-        ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
-    };
+    use kms_lib::util::key_setup::{SigningKeyConfig, ensure_threshold_server_signing_keys_exist};
     ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
         true, // deterministic
-        ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
+        SigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists
     )
     .await
@@ -574,7 +574,7 @@ async fn setup_party_resharing_servers(
             party_id: i,
             address: "127.0.0.1".to_string(),
             mpc_identity: Some(format!("kms-core-{}.local", i)),
-            port: 0, // Will be updated by setup_threshold_with_custom_peers
+            port: 0, // Will be updated by setup_servers_with_custom_peers
             tls_cert: None,
             verification_address: None,
         })
@@ -641,7 +641,7 @@ async fn setup_party_resharing_servers(
     let vaults: Vec<Option<kms_lib::vault::Vault>> = (0..6).map(|_| None).collect();
 
     // Start servers with custom peer configurations
-    let servers = kms_lib::client::test_tools::setup_threshold_with_custom_peers(
+    let servers = kms_lib::client::test_tools::setup_servers_with_custom_peers(
         server_configs,
         pub_storages,
         priv_storages,
@@ -2917,7 +2917,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 mod docker_harness {
     use super::*;
     use test_context::{AsyncTestContext, test_context};
-    use test_utils_cc::{DockerCompose, KMSMode};
+    use test_utils_cc::{ComposeProfile, DockerCompose};
 
     trait DockerComposeManager {
         fn root_path(&self) -> PathBuf;
@@ -2948,7 +2948,7 @@ mod docker_harness {
     impl AsyncTestContext for DockerComposeThresholdTestNoInitSixParty {
         async fn setup() -> Self {
             Self {
-                cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInitSixParty),
+                cmd: DockerCompose::new(ComposeProfile::TestParameterNoInitSixParty),
             }
         }
 

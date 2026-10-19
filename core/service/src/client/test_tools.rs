@@ -55,7 +55,7 @@ async fn init_test_rayon_pool() {
     }
 }
 
-pub async fn setup_threshold_no_client<
+pub async fn setup_servers_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
@@ -213,7 +213,7 @@ pub async fn setup_threshold_no_client<
         });
         server_handles.insert(
             i as u32,
-            ServerHandle::new_threshold(
+            ServerHandle::new(
                 arc_server_clone,
                 service_ports[i - 1],
                 mpc_confs[i - 1].port,
@@ -263,7 +263,7 @@ pub async fn setup_threshold_no_client<
 ///     (2, 1, peers_ctx2.clone(), vec![4, 5, 2, 3]),  // Server 5: party 2
 /// ];
 /// ```
-pub async fn setup_threshold_with_custom_peers<
+pub async fn setup_servers_with_custom_peers<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
@@ -321,7 +321,7 @@ pub async fn setup_threshold_with_custom_peers<
         assert_eq!(
             peer_server_indices.len(),
             peers.len(),
-            "setup_threshold_with_custom_peers misconfiguration: \
+            "setup_servers_with_custom_peers misconfiguration: \
              peer_server_indices.len() = {} but peers.len() = {} for server id {:?}",
             peer_server_indices.len(),
             peers.len(),
@@ -332,7 +332,7 @@ pub async fn setup_threshold_with_custom_peers<
             let server_idx = peer_server_indices[peer_idx];
             assert!(
                 server_idx < num_servers,
-                "setup_threshold_with_custom_peers misconfiguration: \
+                "setup_servers_with_custom_peers misconfiguration: \
                  peer_server_indices[{}] = {} is out of range [0, {}) for server id {:?}",
                 peer_idx,
                 server_idx,
@@ -451,7 +451,7 @@ pub async fn setup_threshold_with_custom_peers<
         // Use server_idx+1 as the key (1-indexed physical server ID)
         server_handles.insert(
             (server_idx + 1) as u32,
-            ServerHandle::new_threshold(
+            ServerHandle::new(
                 arc_server_clone,
                 service_ports[server_idx],
                 mpc_ports[server_idx],
@@ -545,7 +545,7 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
-    pub fn new_threshold(
+    pub fn new(
         server: Arc<dyn Shutdown + Send + Sync + 'static>,
         service_port: u16,
         mpc_port: u16,
@@ -599,8 +599,8 @@ impl ServerHandle {
 
 /// Configuration for threshold test setup
 ///
-/// Used by `setup_threshold_isolated` to configure the threshold test environment.
-pub struct ThresholdTestConfig<'a> {
+/// Used by `setup_servers_isolated` to configure the threshold test environment.
+pub struct TestConfig<'a> {
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
 }
@@ -609,7 +609,7 @@ pub struct ThresholdTestConfig<'a> {
 /// Note: The test_material_path in config is kept for API compatibility but not used.
 /// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]
-pub async fn setup_threshold_isolated<
+pub async fn setup_servers_isolated<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
@@ -617,7 +617,7 @@ pub async fn setup_threshold_isolated<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    config: ThresholdTestConfig<'_>,
+    config: TestConfig<'_>,
 ) -> (
     HashMap<u32, ServerHandle>,
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -625,7 +625,7 @@ pub async fn setup_threshold_isolated<
     let num_parties = priv_storage.len();
 
     // Setup the threshold scheme
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_servers_no_client::<PubS, PrivS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -650,7 +650,7 @@ pub async fn setup_threshold_isolated<
     (server_handles, client_handles)
 }
 
-pub async fn setup_threshold<
+pub async fn setup_servers<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
@@ -665,7 +665,7 @@ pub async fn setup_threshold<
 ) {
     let num_parties = priv_storage.len();
     // Setup the threshold scheme
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_servers_no_client::<PubS, PrivS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -802,7 +802,7 @@ pub async fn setup_recovery_mode<
         .await
         .expect("Failed to start threshold server");
     });
-    let server_handle = ServerHandle::new_threshold(
+    let server_handle = ServerHandle::new(
         kms,
         service_port,
         mpc_port,

@@ -82,7 +82,7 @@ pub(crate) async fn run_insecure_preproc(
 ///
 /// This function first runs the insecure (dummy) preprocessing, then sends
 /// insecure_key_gen requests to all clients and waits for key generation to
-/// complete. It's designed for use with ThresholdTestEnv.
+/// complete. It's designed for use with TestEnv.
 ///
 /// # Arguments
 /// * `clients` - Map of party ID to gRPC client
@@ -163,7 +163,7 @@ pub async fn threshold_insecure_key_gen(
 /// Helper to generate threshold key using secure mode with preprocessing.
 ///
 /// This function runs the full preprocessing + key generation flow using secure mode.
-/// It's designed for use with ThresholdTestEnv when PRSS is enabled.
+/// It's designed for use with TestEnv when PRSS is enabled.
 ///
 /// # Arguments
 /// * `clients` - Map of party ID to gRPC client

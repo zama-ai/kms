@@ -4,14 +4,14 @@ use std::path::Path;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::client::tests::common::{PollConfig, retrying_poll};
+use crate::consts::DEFAULT_KEY_ID_4P;
 use crate::consts::DEFAULT_PARAM;
-use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+use crate::consts::TEST_KEY_ID_4P;
 use crate::consts::TEST_PARAM;
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -27,8 +27,8 @@ use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 async fn test_decryption_threshold_no_decompression(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -56,8 +56,8 @@ async fn test_decryption_threshold_no_decompression(
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 async fn test_decryption_threshold(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -85,7 +85,7 @@ async fn test_decryption_threshold(
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 async fn test_decryption_threshold_precompute_sns(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -113,8 +113,8 @@ async fn test_decryption_threshold_precompute_sns(
 }
 
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
@@ -140,7 +140,7 @@ async fn default_decryption_threshold(
 }
 
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_decryption_threshold_precompute_sns(
     #[case] msg: Vec<TestingPlaintext>,
@@ -166,7 +166,7 @@ async fn default_decryption_threshold_precompute_sns(
 }
 
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn default_decryption_threshold_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
@@ -207,12 +207,12 @@ pub async fn decryption_threshold(
     // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
     // default epoch (PRSS) comes from the fixture with the key shares.
     let spec = if dkg_params == TEST_PARAM {
-        TestMaterialSpec::threshold_basic(amount_parties)
+        TestMaterialSpec::basic(amount_parties)
     } else {
-        TestMaterialSpec::threshold_default(amount_parties)
+        TestMaterialSpec::default_params(amount_parties)
     };
 
-    let mut builder = ThresholdTestEnv::builder()
+    let mut builder = TestEnv::builder()
         .with_test_name(format!("decryption_threshold_{amount_parties}p"))
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
@@ -221,10 +221,7 @@ pub async fn decryption_threshold(
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);
     }
-    let env = builder
-        .build()
-        .await
-        .expect("ThresholdTestEnv setup failed");
+    let env = builder.build().await.expect("TestEnv setup failed");
 
     let mut internal_client = env
         .create_internal_client(&dkg_params, decryption_mode)

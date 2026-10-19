@@ -8,11 +8,11 @@ use crate::client::test_tools::{
 use crate::client::tests::common::send_dec_reqs;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{PollConfig, retrying_poll};
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
+use crate::consts::TEST_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::kms::Kms;
 use crate::engine::utils::make_extra_data;
-use crate::testing::material::{material_subdir, threshold_material_subdir};
+use crate::testing::material::{material_subdir, party_material_subdir};
 use crate::testing::prelude::*;
 use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
@@ -34,13 +34,13 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     // either: the boot-time layout check refuses shares under an epoch that has no `EpochData`.
     // The decryption request below encrypts against the public key in the pre-generated
     // material instead; the servers reject it because the epoch is missing.
-    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let spec = TestMaterialSpec::signing_only(amount_parties);
     let fixture_pub_path = create_test_material_manager()
         .source_path()
         .expect("pre-generated test material is required")
         .join(material_subdir(MaterialType::Testing))
-        .join(threshold_material_subdir(amount_parties));
-    let env = ThresholdTestEnv::builder()
+        .join(party_material_subdir(amount_parties));
+    let env = TestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -68,7 +68,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     // Validate that the core server is not ready
     let (dec_tasks, _req_id) = send_dec_reqs(
         1,
-        &TEST_THRESHOLD_KEY_ID_4P,
+        &TEST_KEY_ID_4P,
         None,
         &clients,
         &mut internal_client,
@@ -168,7 +168,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_close_after_drop() -> Result<()> {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("close_after_drop")
         .with_party_count(4)
         .with_threshold(1)
@@ -237,7 +237,7 @@ async fn test_threshold_shutdown() -> Result<()> {
     let pub_storage_prefixes =
         &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("shutdown")
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -293,7 +293,7 @@ async fn test_threshold_shutdown() -> Result<()> {
     // Keep the server occupied so it won't shut down immediately after dropping the handle
     let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         3,
-        &TEST_THRESHOLD_KEY_ID_4P,
+        &TEST_KEY_ID_4P,
         None,
         &clients,
         &mut internal_client,
@@ -338,11 +338,11 @@ async fn test_threshold_shutdown() -> Result<()> {
 #[tokio::test]
 async fn test_threshold_mpc_server_stop_on_signal_is_not_a_fault() -> Result<()> {
     let amount_parties = 4;
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("mpc_stop_on_signal")
         .with_party_count(amount_parties)
         .with_threshold(1)
-        .with_material_spec(TestMaterialSpec::threshold_signing_only(amount_parties))
+        .with_material_spec(TestMaterialSpec::signing_only(amount_parties))
         .build()
         .await?;
     let _material_dir = env.material_dir; // keep alive for temp dir cleanup
@@ -390,7 +390,7 @@ async fn test_complete_session_notification() -> Result<()> {
     use tokio::task::JoinSet;
 
     let amount_parties = 4;
-    let key_id = &TEST_THRESHOLD_KEY_ID_4P;
+    let key_id = &TEST_KEY_ID_4P;
     let enc_config = EncryptionConfig {
         compression: true,
         precompute_sns: true,
@@ -417,7 +417,7 @@ async fn test_complete_session_notification() -> Result<()> {
         );
     }
 
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("complete_session_notification")
         .with_party_count(amount_parties)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1

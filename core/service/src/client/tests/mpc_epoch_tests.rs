@@ -14,7 +14,7 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{Response, Status, transport::Channel};
 
-use crate::testing::prelude::{MaterialType, TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{MaterialType, TestEnv, TestMaterialSpec};
 
 use crate::{
     client::{
@@ -88,7 +88,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             .into();
 
     // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
-    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let mut spec = TestMaterialSpec::signing_only(amount_parties);
     if matches!(parameters, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
@@ -96,7 +96,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     // `.with_prss()` copies the default epoch, so the servers boot with the default context
     // and its PRSS setup.
     let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
-        let env = ThresholdTestEnv::builder()
+        let env = TestEnv::builder()
             .with_test_name(format!(
                 "new_epoch_with_reshare_{amount_parties}_{parameters:?}"
             ))

@@ -24,7 +24,7 @@ use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY};
 use crate::engine::context::{ContextInfo, SchemeDigests};
-use crate::testing::setup::ThresholdTestEnv;
+use crate::testing::setup::TestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use crate::util::key_setup::test_tools::{
@@ -86,7 +86,7 @@ impl ThresholdBackupTestEnv {
         let req_new_cus: RequestId = derive_request_id(test_name).unwrap();
 
         let (material_dir, servers, clients, mut internal_client) = {
-            let env = ThresholdTestEnv::builder()
+            let env = TestEnv::builder()
                 .with_test_name(test_name)
                 .with_party_count(Self::AMOUNT_PARTIES)
                 .with_custodian_keychain()
@@ -161,7 +161,7 @@ impl ThresholdBackupTestEnv {
         HashMap<u32, ServerHandle>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) {
-        ThresholdTestEnv::builder()
+        TestEnv::builder()
             .with_party_count(Self::AMOUNT_PARTIES)
             .with_custodian_keychain()
             .with_prss()

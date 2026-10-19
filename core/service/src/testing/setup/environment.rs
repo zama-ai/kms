@@ -2,7 +2,7 @@
 //!
 //! This module provides a builder pattern for setting up isolated threshold KMS
 //! test environments with automatic cleanup.
-use crate::client::test_tools::setup_threshold_isolated;
+use crate::client::test_tools::setup_servers_isolated;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -11,10 +11,10 @@ use crate::consts::{
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{KeyType, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
-pub use crate::testing::types::ThresholdTestConfig;
+pub use crate::testing::types::TestConfig;
 use crate::util::key_setup::{
-    ThresholdSigningKeyConfig, ensure_client_keys_exist,
-    ensure_threshold_server_signing_keys_exist, max_threshold,
+    SigningKeyConfig, ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist,
+    max_threshold,
 };
 use crate::vault::Vault;
 use crate::vault::keychain::make_keychain_proxy;
@@ -30,7 +30,7 @@ use tonic::transport::Channel;
 ///
 /// Provides an isolated multi-party KMS setup with automatic cleanup.
 /// The environment is automatically cleaned up when dropped.
-pub struct ThresholdTestEnv {
+pub struct TestEnv {
     /// Per-test isolated material directory (auto-deleted on drop)
     pub material_dir: TempDir,
     /// Running KMS server handles (keyed by party ID)
@@ -39,7 +39,7 @@ pub struct ThresholdTestEnv {
     pub clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
 }
 
-/// Lifetime guard returned by [`ThresholdTestEnv::into_parts`].
+/// Lifetime guard returned by [`TestEnv::into_parts`].
 ///
 /// Owns the tempdir handle. Must be held until the test body finishes — dropping it deletes the tempdir the servers
 /// were reading from.
@@ -47,10 +47,10 @@ pub struct TestMaterialGuard {
     _material_dir: TempDir,
 }
 
-impl ThresholdTestEnv {
+impl TestEnv {
     /// Create a new builder for threshold test environment
-    pub fn builder() -> ThresholdTestEnvBuilder {
-        ThresholdTestEnvBuilder::default()
+    pub fn builder() -> TestEnvBuilder {
+        TestEnvBuilder::default()
     }
 
     /// Iterate over all clients (more readable than `.clients.values()`)
@@ -78,7 +78,7 @@ impl ThresholdTestEnv {
         self.servers.into_iter()
     }
 
-    /// Destructure the [`ThresholdTestEnv`] into parts.
+    /// Destructure the [`TestEnv`] into parts.
     ///
     /// Returns `(clients, servers, material_path, guards)`. Tests that also need an `internal_client` should build it
     /// via [`create_internal_client`](Self::create_internal_client) before calling `into_parts`.
@@ -154,7 +154,7 @@ impl ThresholdTestEnv {
     ///
     /// # Example
     /// ```ignore
-    /// let env = ThresholdTestEnv::builder()
+    /// let env = TestEnv::builder()
     ///     .with_test_name("my_test")
     ///     .build()
     ///     .await?;
@@ -199,7 +199,7 @@ impl ThresholdTestEnv {
 }
 
 /// Builder for threshold test environments
-pub struct ThresholdTestEnvBuilder {
+pub struct TestEnvBuilder {
     test_name: Option<String>,
     party_count: usize,
     threshold: Option<u8>,
@@ -211,7 +211,7 @@ pub struct ThresholdTestEnvBuilder {
     decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
 }
 
-impl Default for ThresholdTestEnvBuilder {
+impl Default for TestEnvBuilder {
     fn default() -> Self {
         Self {
             test_name: None,
@@ -227,7 +227,7 @@ impl Default for ThresholdTestEnvBuilder {
     }
 }
 
-impl ThresholdTestEnvBuilder {
+impl TestEnvBuilder {
     /// Set the test name (used for logging and temp directory naming)
     pub fn with_test_name(mut self, name: impl Into<String>) -> Self {
         self.test_name = Some(name.into());
@@ -288,7 +288,7 @@ impl ThresholdTestEnvBuilder {
     }
 
     /// Build the test environment
-    pub async fn build(self) -> Result<ThresholdTestEnv> {
+    pub async fn build(self) -> Result<TestEnv> {
         let test_name = self
             .test_name
             .unwrap_or_else(|| "threshold_test".to_string());
@@ -297,7 +297,7 @@ impl ThresholdTestEnvBuilder {
             .unwrap_or_else(create_test_material_manager);
         let mut spec = self
             .material_spec
-            .unwrap_or_else(|| TestMaterialSpec::threshold_basic(self.party_count));
+            .unwrap_or_else(|| TestMaterialSpec::basic(self.party_count));
         if self.with_default_epoch {
             spec.required_keys.insert(KeyType::DefaultEpoch);
         }
@@ -343,7 +343,7 @@ impl ThresholdTestEnvBuilder {
             &mut pub_storages,
             &mut priv_storages,
             true, // deterministic
-            ThresholdSigningKeyConfig::AllParties(
+            SigningKeyConfig::AllParties(
                 (1..=self.party_count)
                     .map(|i| format!("party-{i}"))
                     .collect(),
@@ -366,15 +366,15 @@ impl ThresholdTestEnvBuilder {
             (0..self.party_count).map(|_| None).collect()
         };
 
-        let config = ThresholdTestConfig {
+        let config = TestConfig {
             decryption_mode: self.decryption_mode,
             test_material_path: Some(material_dir.path()),
         };
 
         let (servers, clients) =
-            setup_threshold_isolated(threshold, pub_storages, priv_storages, vaults, config).await;
+            setup_servers_isolated(threshold, pub_storages, priv_storages, vaults, config).await;
 
-        Ok(ThresholdTestEnv {
+        Ok(TestEnv {
             material_dir,
             servers,
             clients,
@@ -417,12 +417,12 @@ impl ThresholdTestEnvBuilder {
         let threshold = self
             .threshold
             .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
-        let config = ThresholdTestConfig {
+        let config = TestConfig {
             decryption_mode: self.decryption_mode,
             test_material_path: Some(path),
         };
 
-        Ok(setup_threshold_isolated(threshold, pub_storages, priv_storages, vaults, config).await)
+        Ok(setup_servers_isolated(threshold, pub_storages, priv_storages, vaults, config).await)
     }
 }
 

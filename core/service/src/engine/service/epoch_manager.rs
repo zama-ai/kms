@@ -2184,7 +2184,7 @@ pub(crate) mod tests {
             utils::make_extra_data,
         },
         util::key_setup::{
-            ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
+            SigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
             ensure_threshold_server_signing_keys_exist,
         },
         vault::storage::{
@@ -2374,15 +2374,15 @@ pub(crate) mod tests {
             vaults2.push(None);
         }
 
-        // `setup_threshold_no_client` unconditionally loads a core signing key
+        // `setup_servers_no_client` unconditionally loads a core signing key
         // from each private storage and panics if it's missing. Populate the
-        // tempdir with signing + client keys (same calls `ThresholdTestEnv`
+        // tempdir with signing + client keys (same calls `TestEnv`
         // makes internally via `setup_test_material_temp`).
         ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             true, // deterministic
-            ThresholdSigningKeyConfig::AllParties(
+            SigningKeyConfig::AllParties(
                 (1..=PRSS_AMOUNT_PARTIES)
                     .map(|i| format!("party-{i}"))
                     .collect(),
@@ -2408,7 +2408,7 @@ pub(crate) mod tests {
         );
 
         // create parties, which load the epoch from storage
-        let server_handles = test_tools::setup_threshold_no_client(
+        let server_handles = test_tools::setup_servers_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
@@ -2436,7 +2436,7 @@ pub(crate) mod tests {
         );
 
         // create parties again; the epoch is read from storage once more
-        let server_handles = test_tools::setup_threshold_no_client(
+        let server_handles = test_tools::setup_servers_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),

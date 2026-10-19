@@ -16,11 +16,11 @@ use crate::{
     },
     consts::{
         DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
+        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_KEY_ID_4P, TEST_PARAM,
     },
     cryptography::signatures::PublicSigKey,
     engine::context::SchemeDigests,
-    testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
+    testing::prelude::{TestEnv, TestMaterialSpec},
     util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
     vault::storage::{
         StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
@@ -51,9 +51,9 @@ async fn do_context_switch(
 
     // Decrypts a real ciphertext, so needs the full threshold-basic set
     // (client/signing/server-signing/FHE/PRSS).
-    let spec = TestMaterialSpec::threshold_basic(amount_parties);
+    let spec = TestMaterialSpec::basic(amount_parties);
 
-    let mut builder = ThresholdTestEnv::builder()
+    let mut builder = TestEnv::builder()
         .with_test_name(format!("context_switch_{amount_parties}p"))
         .with_party_count(amount_parties)
         .with_threshold(1)
@@ -62,10 +62,7 @@ async fn do_context_switch(
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);
     }
-    let env = builder
-        .build()
-        .await
-        .expect("ThresholdTestEnv setup failed");
+    let env = builder.build().await.expect("TestEnv setup failed");
 
     let mut internal_client = env
         .create_internal_client(&dkg_params, decryption_mode)
@@ -155,7 +152,7 @@ async fn do_context_switch(
         compression: true,
         precompute_sns: true,
     };
-    let key_id = &TEST_THRESHOLD_KEY_ID_4P;
+    let key_id = &TEST_KEY_ID_4P;
 
     // The new context owns no epoch, so it holds no key shares either.
     run_decryption_threshold_optionally_fail(
@@ -251,15 +248,15 @@ async fn do_context_switch(
 #[tokio::test(flavor = "multi_thread")]
 async fn test_destroy_only_context_is_rejected_4p() {
     let party_count = 4;
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("destroy_only_context_is_rejected_4p".to_string())
         .with_party_count(party_count)
         .with_threshold(1)
-        .with_material_spec(TestMaterialSpec::threshold_signing_only(party_count))
+        .with_material_spec(TestMaterialSpec::signing_only(party_count))
         .with_prss()
         .build()
         .await
-        .expect("ThresholdTestEnv setup failed");
+        .expect("TestEnv setup failed");
     let (kms_clients, kms_servers, material_path, _guards) = env.into_parts();
 
     let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];

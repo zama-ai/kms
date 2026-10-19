@@ -7,7 +7,7 @@ use super::support::{
 };
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM};
 use crate::engine::base::derive_request_id;
-use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 use kms_grpc::identifiers::EpochId;
 use tonic::Code;
 
@@ -15,11 +15,11 @@ use tonic::Code;
 /// files, and the remaining state loads after all four parties restart.
 #[tokio::test(flavor = "multi_thread")]
 async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
-    let env = ThresholdTestEnv::builder()
+    let env = TestEnv::builder()
         .with_test_name("epoch_destruction_changes_only_the_target_epoch_on_disk")
         .with_party_count(PARTY_COUNT)
         .with_threshold(1)
-        .with_material_spec(TestMaterialSpec::threshold_signing_only(PARTY_COUNT))
+        .with_material_spec(TestMaterialSpec::signing_only(PARTY_COUNT))
         .with_prss()
         .build()
         .await
@@ -62,7 +62,7 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     }
     drop(env.clients);
 
-    let (restarted_servers, restarted_clients) = ThresholdTestEnv::builder()
+    let (restarted_servers, restarted_clients) = TestEnv::builder()
         .with_party_count(PARTY_COUNT)
         .with_threshold(1)
         .from_path(&material_path)
