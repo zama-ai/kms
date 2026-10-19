@@ -1,9 +1,9 @@
 //! Solidity types used in EIP-712 signing and verification.
 //! WARNING: any changes to these structures is a breaking change.
 
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 
-use crate::RequestId;
+use crate::{ContextId, RequestId};
 
 alloy_sol_types::sol! {
     struct UserDecryptResponseVerification {
@@ -117,6 +117,37 @@ alloy_sol_types::sol! {
         KeyDigest[] keyDigests;
         /// @notice Extra data for client-specific context.
         bytes extraData;
+    }
+}
+
+// Struct needs to match `ContextCreationConfirmation` in the canonical
+// ProtocolConfig contract.
+alloy_sol_types::sol! {
+    struct ContextCreationConfirmation {
+        /// @notice The ID of the context that was active when the new context was defined.
+        uint256 previousContextId;
+        /// @notice The ID of the new context.
+        uint256 newContextId;
+        /// @notice keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)) of the new context.
+        bytes32 nodeConfigHash;
+        /// @notice Extra data for client-specific context.
+        bytes extraData;
+    }
+}
+
+impl ContextCreationConfirmation {
+    pub fn new(
+        previous_context_id: &ContextId,
+        new_context_id: &ContextId,
+        node_config_hash: B256,
+        extra_data: Vec<u8>,
+    ) -> Self {
+        Self {
+            previousContextId: U256::from_be_slice(previous_context_id.as_bytes()),
+            newContextId: U256::from_be_slice(new_context_id.as_bytes()),
+            nodeConfigHash: node_config_hash,
+            extraData: extra_data.into(),
+        }
     }
 }
 
@@ -250,5 +281,43 @@ alloy_sol_types::sol! {
         bytes decompressionUpgradeKeyDigest;
         /// @notice Extra data for client-specific context.
         bytes extraData;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolStruct;
+
+    use super::*;
+
+    #[test]
+    fn context_creation_confirmation_type_matches_rfc() {
+        assert_eq!(
+            ContextCreationConfirmation::eip712_encode_type(),
+            "ContextCreationConfirmation(uint256 previousContextId,uint256 newContextId,bytes32 nodeConfigHash,bytes extraData)"
+        );
+    }
+
+    #[test]
+    fn context_creation_confirmation_new() {
+        let mut previous = [0u8; 32];
+        previous[31] = 1;
+        let mut new = [0u8; 32];
+        new[0] = 2;
+        let previous_context_id = ContextId::from_bytes(previous);
+        let new_context_id = ContextId::from_bytes(new);
+        let node_config_hash = B256::repeat_byte(0xab);
+
+        let confirmation = ContextCreationConfirmation::new(
+            &previous_context_id,
+            &new_context_id,
+            node_config_hash,
+            vec![0x01, 0x02],
+        );
+
+        assert_eq!(confirmation.previousContextId, U256::from(1));
+        assert_eq!(confirmation.newContextId, U256::from(2) << 248);
+        assert_eq!(confirmation.nodeConfigHash, node_config_hash);
+        assert_eq!(confirmation.extraData.to_vec(), vec![0x01, 0x02]);
     }
 }
