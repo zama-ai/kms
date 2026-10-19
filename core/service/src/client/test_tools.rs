@@ -223,8 +223,8 @@ pub async fn setup_servers_no_client<
             ),
         );
         // Wait until MPC server is ready, this should happen as soon as the MPC server boots up
-        let threshold_service_name = <GrpcServer as NamedService>::NAME;
-        await_server_ready(threshold_service_name, mpc_confs[i - 1].port).await;
+        let service_name = <GrpcServer as NamedService>::NAME;
+        await_server_ready(service_name, mpc_confs[i - 1].port).await;
         // Observe that we don't check that the core server is ready here. The reason is that it depends on whether PRSS has been executed or loaded from disc.
         // Thus if requests are send to the core without PRSS being executed, then a failure will happen.
     }
@@ -461,8 +461,8 @@ pub async fn setup_servers_with_custom_peers<
             ),
         );
         // Wait until MPC server is ready
-        let threshold_service_name = <GrpcServer as NamedService>::NAME;
-        await_server_ready(threshold_service_name, mpc_ports[server_idx]).await;
+        let service_name = <GrpcServer as NamedService>::NAME;
+        await_server_ready(service_name, mpc_ports[server_idx]).await;
     }
     server_handles
 }
@@ -605,7 +605,7 @@ pub struct TestConfig<'a> {
     pub test_material_path: Option<&'a std::path::Path>,
 }
 
-/// Setup_threshold that supports isolated test material
+/// `setup_servers` variant that supports isolated test material.
 /// Note: The test_material_path in config is kept for API compatibility but not used.
 /// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]

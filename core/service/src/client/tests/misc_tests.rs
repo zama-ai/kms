@@ -109,13 +109,11 @@ async fn test_health_endpoint_availability() -> Result<()> {
     }
 
     // Get health client for main server 1
-    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
+    let mut health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
         .await
         .expect("Failed to get threshold health client");
-    let threshold_service_name = <GrpcServer as NamedService>::NAME;
-    let status = get_status(&mut threshold_health_client, threshold_service_name)
-        .await
-        .unwrap();
+    let service_name = <GrpcServer as NamedService>::NAME;
+    let status = get_status(&mut health_client, service_name).await.unwrap();
     assert_eq!(
         status,
         ServingStatus::Serving as i32,
@@ -159,7 +157,7 @@ async fn test_health_endpoint_availability() -> Result<()> {
         server.assert_shutdown().await;
     }
     // The MPC servers should be closed at this point
-    let status = get_status(&mut threshold_health_client, threshold_service_name).await;
+    let status = get_status(&mut health_client, service_name).await;
     assert!(status.is_err());
 
     Ok(())
@@ -186,10 +184,10 @@ async fn test_close_after_drop() -> Result<()> {
         <CoreServiceEndpointServer<Kms<FileStorage, FileStorage>> as NamedService>::NAME;
 
     // Get health client for MPC threshold service on server 1
-    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
+    let mut health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
         .await
         .expect("Failed to get threshold health client");
-    let threshold_service_name = <GrpcServer as NamedService>::NAME;
+    let service_name = <GrpcServer as NamedService>::NAME;
 
     // Check both services are serving
     let status = get_status(&mut core_health_client, core_service_name)
@@ -200,9 +198,7 @@ async fn test_close_after_drop() -> Result<()> {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
-    let status = get_status(&mut threshold_health_client, threshold_service_name)
-        .await
-        .unwrap();
+    let status = get_status(&mut health_client, service_name).await.unwrap();
     assert_eq!(
         status,
         ServingStatus::Serving as i32,
@@ -219,11 +215,7 @@ async fn test_close_after_drop() -> Result<()> {
             .await
             .is_err()
     );
-    assert!(
-        get_status(&mut threshold_health_client, threshold_service_name)
-            .await
-            .is_err()
-    );
+    assert!(get_status(&mut health_client, service_name).await.is_err());
 
     Ok(())
 }
@@ -277,13 +269,11 @@ async fn test_shutdown() -> Result<()> {
         "Service is not in SERVING status. Got status: {status}"
     );
 
-    let mut threshold_health_client = get_health_client(mpc_port)
+    let mut health_client = get_health_client(mpc_port)
         .await
         .expect("Failed to get threshold health client");
-    let threshold_service_name = <GrpcServer as NamedService>::NAME;
-    let status = get_status(&mut threshold_health_client, threshold_service_name)
-        .await
-        .unwrap();
+    let service_name = <GrpcServer as NamedService>::NAME;
+    let status = get_status(&mut health_client, service_name).await.unwrap();
     assert_eq!(
         status,
         ServingStatus::Serving as i32,

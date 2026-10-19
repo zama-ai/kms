@@ -1038,7 +1038,7 @@ async fn poll_key_gen_preproc_result(
 fn try_reconstruct_shares(
     param: DKGParams,
     threshold: usize,
-    all_threshold_fhe_keys: HashMap<Role, crate::engine::service::FheKeys>,
+    all_fhe_keys: HashMap<Role, crate::engine::service::FheKeys>,
 ) -> (
     tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
@@ -1053,7 +1053,7 @@ fn try_reconstruct_shares(
     };
 
     // Cast to Z64 before reconstruction
-    let lwe_shares = all_threshold_fhe_keys
+    let lwe_shares = all_fhe_keys
         .iter()
         .map(|(k, v)| {
             (
@@ -1070,7 +1070,7 @@ fn try_reconstruct_shares(
     let lwe_secret_key =
         tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
 
-    let lwe_enc_shares = all_threshold_fhe_keys
+    let lwe_enc_shares = all_fhe_keys
         .iter()
         .map(|(k, v)| {
             (
@@ -1086,7 +1086,7 @@ fn try_reconstruct_shares(
     _ = reconstruct_bit_vec(lwe_enc_shares, param.lwe_hat_dimension().0, threshold);
 
     // normal keygen should always give us a z128 glwe
-    let glwe_shares = all_threshold_fhe_keys
+    let glwe_shares = all_fhe_keys
         .iter()
         .map(|(k, v)| {
             (
@@ -1105,7 +1105,7 @@ fn try_reconstruct_shares(
         param.polynomial_size(),
     );
 
-    let sns_lwe_shares = all_threshold_fhe_keys
+    let sns_lwe_shares = all_fhe_keys
         .iter()
         .map(|(k, v)| (*k, v.private_keys.glwe_secret_key_share_sns_as_lwe.clone()))
         .filter_map(|(k, v)| match v {
@@ -1130,7 +1130,7 @@ fn try_reconstruct_shares(
         dkg_sns_param.sns_params().polynomial_size(),
     );
 
-    let sns_compression_key_shares = all_threshold_fhe_keys
+    let sns_compression_key_shares = all_fhe_keys
         .iter()
         .map(|(k, v)| (*k, v.private_keys.glwe_sns_compression_key_as_lwe.clone()))
         .filter_map(|(k, v)| match v {
@@ -1160,7 +1160,7 @@ fn try_reconstruct_shares(
             None
         };
 
-    let oprf_lwe_shares = all_threshold_fhe_keys
+    let oprf_lwe_shares = all_fhe_keys
         .iter()
         .filter_map(|(k, v)| {
             v.private_keys
@@ -1169,7 +1169,7 @@ fn try_reconstruct_shares(
                 .map(|share| (*k, share.convert_to_z64().data))
         })
         .collect::<HashMap<_, _>>();
-    let oprf_lwe_secret_key = if oprf_lwe_shares.len() == all_threshold_fhe_keys.len() {
+    let oprf_lwe_secret_key = if oprf_lwe_shares.len() == all_fhe_keys.len() {
         Some(
             tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
                 oprf_lwe_shares,
@@ -1181,7 +1181,7 @@ fn try_reconstruct_shares(
         None
     };
 
-    let transciphering_lwe_shares = all_threshold_fhe_keys
+    let transciphering_lwe_shares = all_fhe_keys
         .iter()
         .filter_map(|(k, v)| {
             v.private_keys
@@ -1190,21 +1190,20 @@ fn try_reconstruct_shares(
                 .map(|share| (*k, share.convert_to_z64().data))
         })
         .collect::<HashMap<_, _>>();
-    let transciphering_lwe_secret_key =
-        if transciphering_lwe_shares.len() == all_threshold_fhe_keys.len() {
-            Some(
-                tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
-                    transciphering_lwe_shares,
-                    param
-                        .transciphering_lwe_dimension()
-                        .expect("transciphering shares require transciphering parameters")
-                        .0,
-                    threshold,
-                )),
-            )
-        } else {
-            None
-        };
+    let transciphering_lwe_secret_key = if transciphering_lwe_shares.len() == all_fhe_keys.len() {
+        Some(
+            tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
+                transciphering_lwe_shares,
+                param
+                    .transciphering_lwe_dimension()
+                    .expect("transciphering shares require transciphering parameters")
+                    .0,
+                threshold,
+            )),
+        )
+    } else {
+        None
+    };
 
     (
         lwe_secret_key,
@@ -1258,7 +1257,7 @@ pub(crate) async fn verify_keygen_responses(
     use itertools::Itertools;
 
     let mut verification_bytes_ref = Vec::new();
-    let mut all_threshold_fhe_keys = HashMap::new();
+    let mut all_fhe_keys = HashMap::new();
     let mut final_keys: Option<RetrievedKeysForVerification> = None;
 
     for (idx, kg_res) in finished.into_iter().sorted_by_key(|(idx, _)| *idx) {
@@ -1308,15 +1307,15 @@ pub(crate) async fn verify_keygen_responses(
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         //Need to read at the correct epoch id
-        let threshold_fhe_keys = FheKeys::read_from_storage_at_epoch(
+        let fhe_keys = FheKeys::read_from_storage_at_epoch(
             &priv_storage,
             &key_id,
             &read_key_at_epoch.unwrap_or(*DEFAULT_EPOCH_ID),
         )
         .await
         .unwrap();
-        // Note: The sns_key is a part of threshold_fhe_keys, consider optimizing this if it uses too much memory
-        all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
+        // Note: The sns_key is a part of fhe_keys, consider optimizing this if it uses too much memory
+        all_fhe_keys.insert(role, fhe_keys);
 
         // Compare serialized keys across parties
         let verification_bytes = keys.to_bytes_for_verification();
@@ -1333,11 +1332,7 @@ pub(crate) async fn verify_keygen_responses(
 
     let threshold = total_num_parties.div_ceil(3) - 1;
     let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk, oprf_lwe_sk, transciphering_lwe_sk) =
-        try_reconstruct_shares(
-            internal_client.params,
-            threshold,
-            all_threshold_fhe_keys.clone(),
-        );
+        try_reconstruct_shares(internal_client.params, threshold, all_fhe_keys.clone());
     // `try_reconstruct_shares` only returns the dedicated key when *every* party holds its share,
     // so this also catches a keygen that produced the share on some parties only.
     assert_eq!(
@@ -1372,7 +1367,7 @@ pub(crate) async fn verify_keygen_responses(
     // All parties hold byte-identical keys (checked above), so the first party's keys stand for
     // all of them.
     result.sanity_check(req_get_keygen);
-    Some((result, all_threshold_fhe_keys))
+    Some((result, all_fhe_keys))
 }
 
 // =============================================================================
@@ -1508,7 +1503,7 @@ async fn secure_keygen() -> anyhow::Result<()> {
         .build()
         .await?;
 
-    let preproc_id = derive_request_id("secure_threshold_keygen_preproc")?;
+    let preproc_id = derive_request_id("secure_keygen_preproc")?;
     let keygen_id = derive_request_id("secure_keygen")?;
 
     // Run secure key generation with preprocessing
@@ -2015,15 +2010,14 @@ async fn run_compressed_keygen_from_existing(
                 StorageType::PRIV,
                 PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[(party_id as usize) - 1].as_deref(),
             )?;
-            let threshold_keys: crate::engine::service::FheKeys =
-                read_versioned_at_request_and_epoch_id(
-                    &priv_storage,
-                    &keygen_id_2,
-                    &DEFAULT_EPOCH_ID,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await?;
-            let threshold_keys_old: crate::engine::service::FheKeys =
+            let fhe_keys: crate::engine::service::FheKeys = read_versioned_at_request_and_epoch_id(
+                &priv_storage,
+                &keygen_id_2,
+                &DEFAULT_EPOCH_ID,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await?;
+            let fhe_keys_old: crate::engine::service::FheKeys =
                 read_versioned_at_request_and_epoch_id(
                     &priv_storage,
                     &keygen_id_1,
@@ -2031,16 +2025,13 @@ async fn run_compressed_keygen_from_existing(
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await?;
-            let old_oprf_share = &threshold_keys_old
-                .private_keys
-                .as_ref()
-                .oprf_secret_key_share;
-            let new_oprf_share = &threshold_keys.private_keys.as_ref().oprf_secret_key_share;
-            let old_transciphering_share = &threshold_keys_old
+            let old_oprf_share = &fhe_keys_old.private_keys.as_ref().oprf_secret_key_share;
+            let new_oprf_share = &fhe_keys.private_keys.as_ref().oprf_secret_key_share;
+            let old_transciphering_share = &fhe_keys_old
                 .private_keys
                 .as_ref()
                 .transciphering_secret_key_share;
-            let new_transciphering_share = &threshold_keys
+            let new_transciphering_share = &fhe_keys
                 .private_keys
                 .as_ref()
                 .transciphering_secret_key_share;
@@ -2063,7 +2054,7 @@ async fn run_compressed_keygen_from_existing(
                 old_transciphering_share, new_transciphering_share,
                 "Party {party_id}: migration must persist the transciphering private share at both key IDs"
             );
-            match &threshold_keys.meta_data {
+            match &fhe_keys.meta_data {
                 KeyGenMetadata::Current(inner) => {
                     let signed_pk_digest = inner
                         .key_digest_map
@@ -2234,14 +2225,14 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
             tag,
         );
 
-        let threshold_keys: FheKeys = read_versioned_at_request_and_epoch_id(
+        let fhe_keys: FheKeys = read_versioned_at_request_and_epoch_id(
             &priv_storage,
             key_id,
             &DEFAULT_EPOCH_ID,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await?;
-        let mut private_keys = threshold_keys.private_keys.as_ref().clone();
+        let mut private_keys = fhe_keys.private_keys.as_ref().clone();
         assert!(
             private_keys.oprf_secret_key_share.take().is_some(),
             "Party {party_id}: first keygen should store an OPRF private share before legacy rewrite"
@@ -2268,9 +2259,9 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
             &dummy_domain(),
             default_isolated_extra_data(),
         )?;
-        let updated_threshold_keys = FheKeys::new(
+        let updated_fhe_keys = FheKeys::new(
             Arc::new(private_keys),
-            threshold_keys.public_material.clone(),
+            fhe_keys.public_material.clone(),
             metadata,
         );
 
@@ -2298,7 +2289,7 @@ async fn remove_legacy_dedicated_keys_from_existing_keyset(
             &mut priv_storage,
             key_id,
             &DEFAULT_EPOCH_ID,
-            &updated_threshold_keys,
+            &updated_fhe_keys,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await?;

@@ -851,7 +851,7 @@ impl<
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
                         fhe_pubkeys.server_key.into_raw_parts();
 
-                    let threshold_fhe_keys = FheKeys::new(
+                    let fhe_keys = FheKeys::new(
                         Arc::new(new_private_keyset),
                         PublicKeyMaterial::new_uncompressed(
                             Arc::new(integer_server_key),
@@ -866,7 +866,7 @@ impl<
                             .resharing_fhe_write_no_backup(
                                 &key_info.key_id,
                                 &new_epoch_id,
-                                threshold_fhe_keys,
+                                fhe_keys,
                             )
                             .boxed(),
                     );
@@ -909,7 +909,7 @@ impl<
 
                     let public_material = PublicKeyMaterial::new(compressed_keyset);
 
-                    let threshold_fhe_keys =
+                    let fhe_keys =
                         FheKeys::new(Arc::new(new_private_keyset), public_material, info.clone());
 
                     storage_tasks.push(
@@ -919,7 +919,7 @@ impl<
                                 .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
                                     &new_epoch_id,
-                                    threshold_fhe_keys,
+                                    fhe_keys,
                                 )
                                 .await
                         }

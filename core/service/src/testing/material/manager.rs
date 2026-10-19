@@ -506,7 +506,7 @@ mod tests {
         let spec = TestMaterialSpec::basic(4);
 
         let temp_dir = manager
-            .setup_test_material_temp(&spec, "test_threshold")
+            .setup_test_material_temp(&spec, "test_setup_material")
             .await
             .unwrap();
 

@@ -5,7 +5,7 @@
 //! - `TestMaterialSpec` - declares what cryptographic material a test needs
 //! - `TestEnv` - builder for threshold KMS test environments
 //!
-//! For examples of how to write isolated tests, see `threshold/misc_tests.rs`.
+//! For examples of how to write isolated tests, see `misc_tests.rs`.
 
 use crate::testing::prelude::*;
 
@@ -18,7 +18,7 @@ async fn test_material_validation() -> Result<()> {
     let manager = TestMaterialManager::new(Some(nonexistent_path));
 
     let result = TestEnv::builder()
-        .with_test_name("threshold_validation_test")
+        .with_test_name("material_validation_test")
         .with_material_manager(manager)
         .build()
         .await;

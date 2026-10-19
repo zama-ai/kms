@@ -216,7 +216,7 @@ async fn test_user_decryption_no_compression(#[values(true, false)] secure: bool
 async fn test_user_decryption_largecipher() {
     let amount_parties = 4;
     let env = TestEnv::builder()
-        .with_test_name("user_decryption_threshold_largecipher")
+        .with_test_name("user_decryption_largecipher")
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(TestMaterialSpec::basic(amount_parties))
@@ -604,7 +604,7 @@ pub(crate) async fn user_decryption(
     };
 
     let mut builder = TestEnv::builder()
-        .with_test_name(format!("user_decryption_threshold_{amount_parties}p"))
+        .with_test_name(format!("user_decryption_{amount_parties}p"))
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)

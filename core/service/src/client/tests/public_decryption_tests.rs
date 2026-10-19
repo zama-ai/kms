@@ -213,7 +213,7 @@ pub async fn public_decryption(
     };
 
     let mut builder = TestEnv::builder()
-        .with_test_name(format!("decryption_threshold_{amount_parties}p"))
+        .with_test_name(format!("decryption_{amount_parties}p"))
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)

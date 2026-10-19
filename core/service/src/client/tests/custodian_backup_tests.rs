@@ -236,7 +236,7 @@ async fn test_auto_update_backups(#[case] custodians: usize, #[case] threshold: 
 async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let mut env = BackupTestEnv::new(
-        &format!("auto_update_backups_threshold_{n}_{amount_custodians}_{threshold}"),
+        &format!("auto_update_backups_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
     )
@@ -284,7 +284,7 @@ async fn test_planted_public_recovery_material_ignored() {
     use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
 
     let n = BackupTestEnv::AMOUNT_PARTIES;
-    let mut env = BackupTestEnv::new("planted_public_recovery_threshold", 5, 2).await;
+    let mut env = BackupTestEnv::new("planted_public_recovery", 5, 2).await;
     env.shutdown().await;
 
     // Signed by each party, as a replayed retired context is, so a refused foreign signature
@@ -359,13 +359,13 @@ async fn test_backup_after_crs(#[case] custodians: usize, #[case] threshold: u32
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let mut env = BackupTestEnv::new(
-        &format!("backup_after_crs_threshold_{n}_{amount_custodians}_{threshold}"),
+        &format!("backup_after_crs_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
     )
     .await;
     let crs_req: RequestId = derive_request_id(&format!(
-        "backup_after_crs_threshold_crs_{n}_{amount_custodians}_{threshold}"
+        "backup_after_crs_crs_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
 
@@ -496,17 +496,17 @@ async fn test_decrypt_after_recovery(#[case] custodians: usize, #[case] threshol
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let mut env = BackupTestEnv::new(
-        &format!("decrypt_after_recovery_threshold_{n}_{amount_custodians}_{threshold}"),
+        &format!("decrypt_after_recovery_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
     )
     .await;
     let req_key_id: RequestId = derive_request_id(&format!(
-        "decrypt_after_recovery_threshold_key_{n}_{amount_custodians}_{threshold}"
+        "decrypt_after_recovery_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
     let preproc_id: RequestId = derive_request_id(&format!(
-        "decrypt_after_recovery_threshold_preproc_{n}_{amount_custodians}_{threshold}"
+        "decrypt_after_recovery_preproc_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
 
@@ -635,15 +635,9 @@ async fn test_recovery_names_the_context_after_rotation() {
 
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let (amount_custodians, threshold) = (3, 1);
-    let mut env = BackupTestEnv::new(
-        "recovery_names_context_threshold",
-        amount_custodians,
-        threshold,
-    )
-    .await;
-    let key_id: RequestId = derive_request_id("recovery_names_context_threshold_key").unwrap();
-    let preproc_id: RequestId =
-        derive_request_id("recovery_names_context_threshold_preproc").unwrap();
+    let mut env = BackupTestEnv::new("recovery_names_context", amount_custodians, threshold).await;
+    let key_id: RequestId = derive_request_id("recovery_names_context_key").unwrap();
+    let preproc_id: RequestId = derive_request_id("recovery_names_context_preproc").unwrap();
     let (keyset_config, keyset_added_info) = keygen_config();
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
@@ -662,7 +656,7 @@ async fn test_recovery_names_the_context_after_rotation() {
     )
     .await;
     // The rotation re-encrypts every backup under the second context.
-    let second_id: RequestId = derive_request_id("recovery_names_context_threshold_2").unwrap();
+    let second_id: RequestId = derive_request_id("recovery_names_context_2").unwrap();
     let second_mnemonics = run_new_cus_context(
         env.kms_clients.as_ref().unwrap(),
         env.internal_client.as_mut().unwrap(),
@@ -778,15 +772,14 @@ async fn test_recovery_without_signing_material() {
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let (amount_custodians, threshold) = (3, 1);
     let mut env = BackupTestEnv::new(
-        "recovery_without_signing_material_threshold",
+        "recovery_without_signing_material",
         amount_custodians,
         threshold,
     )
     .await;
-    let key_id: RequestId =
-        derive_request_id("recovery_without_signing_material_threshold_key").unwrap();
+    let key_id: RequestId = derive_request_id("recovery_without_signing_material_key").unwrap();
     let preproc_id: RequestId =
-        derive_request_id("recovery_without_signing_material_threshold_preproc").unwrap();
+        derive_request_id("recovery_without_signing_material_preproc").unwrap();
     let (keyset_config, keyset_added_info) = keygen_config();
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
@@ -945,17 +938,17 @@ fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecov
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
     let n = BackupTestEnv::AMOUNT_PARTIES;
     let mut env = BackupTestEnv::new(
-        &format!("decrypt_after_recovery_threshold_negative_{n}_{amount_custodians}_{threshold}"),
+        &format!("decrypt_after_recovery_negative_{n}_{amount_custodians}_{threshold}"),
         amount_custodians,
         threshold,
     )
     .await;
     let req_key_id: RequestId = derive_request_id(&format!(
-        "decrypt_after_recovery_threshold_negative_key_{n}_{amount_custodians}_{threshold}"
+        "decrypt_after_recovery_negative_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
     let preproc_id: RequestId = derive_request_id(&format!(
-        "decrypt_after_recovery_threshold_negative_preproc_{n}_{amount_custodians}_{threshold}"
+        "decrypt_after_recovery_negative_preproc_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
 
@@ -1089,10 +1082,8 @@ async fn test_epoch_in_custodian_backup() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_keygen_backup_presence() {
     let mut env = BackupTestEnv::new("test_keygen_backup_presence", 3, 1).await;
-    let req_key_id: RequestId =
-        derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
-    let preproc_id: RequestId =
-        derive_request_id("test_keygen_backup_presence_threshold_preproc").unwrap();
+    let req_key_id: RequestId = derive_request_id("test_keygen_backup_presence_key").unwrap();
+    let preproc_id: RequestId = derive_request_id("test_keygen_backup_presence_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
@@ -1141,13 +1132,10 @@ async fn test_keygen_backup_presence() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_custodian_reencryption_with_existing_data() {
     // env already creates the first custodian context (env.req_new_cus)
-    let mut env = BackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
-    let req_cus_b: RequestId =
-        derive_request_id("test_custodian_reencryption_threshold_cus_b").unwrap();
-    let req_key_id: RequestId =
-        derive_request_id("test_custodian_reencryption_threshold_key").unwrap();
-    let preproc_id: RequestId =
-        derive_request_id("test_custodian_reencryption_threshold_preproc").unwrap();
+    let mut env = BackupTestEnv::new("test_custodian_reencryption", 3, 1).await;
+    let req_cus_b: RequestId = derive_request_id("test_custodian_reencryption_cus_b").unwrap();
+    let req_key_id: RequestId = derive_request_id("test_custodian_reencryption_key").unwrap();
+    let preproc_id: RequestId = derive_request_id("test_custodian_reencryption_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
@@ -1313,12 +1301,10 @@ async fn test_mpc_context_backup() {
 async fn test_backup_after_reshare() {
     let mut env = BackupTestEnv::new("test_backup_after_reshare", 3, 1).await;
     let n = BackupTestEnv::AMOUNT_PARTIES;
-    let req_key_id: RequestId =
-        derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
-    let preproc_id: RequestId =
-        derive_request_id("test_backup_after_reshare_threshold_preproc").unwrap();
-    let crs_req: RequestId = derive_request_id("test_backup_after_reshare_threshold_crs").unwrap();
-    let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_threshold_epoch")
+    let req_key_id: RequestId = derive_request_id("test_backup_after_reshare_key").unwrap();
+    let preproc_id: RequestId = derive_request_id("test_backup_after_reshare_preproc").unwrap();
+    let crs_req: RequestId = derive_request_id("test_backup_after_reshare_crs").unwrap();
+    let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_epoch")
         .unwrap()
         .into();
 

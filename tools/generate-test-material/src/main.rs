@@ -158,8 +158,8 @@ async fn generate_profile_material(
     fs::create_dir_all(&profile_dir).await?;
 
     for party_count in parties.iter().copied().collect::<BTreeSet<_>>() {
-        let threshold_dir = profile_dir.join(party_material_subdir(party_count));
-        generate_material_to_path(material_type, Some(&threshold_dir), party_count).await?;
+        let party_dir = profile_dir.join(party_material_subdir(party_count));
+        generate_material_to_path(material_type, Some(&party_dir), party_count).await?;
     }
 
     info!(

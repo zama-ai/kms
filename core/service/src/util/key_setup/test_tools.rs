@@ -27,16 +27,16 @@ pub async fn purge(
     priv_storage_prefixes: &[Option<String>],
 ) {
     for storage_prefix in public_storage_prefixes.iter() {
-        let mut threshold_pub =
+        let mut pub_storage =
             FileStorage::new(pub_path, StorageType::PUB, storage_prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut threshold_pub, id)
+        delete_all_at_request_id(&mut pub_storage, id)
             .await
             .unwrap();
     }
     for storage_prefix in priv_storage_prefixes.iter() {
-        let mut threshold_priv =
+        let mut priv_storage =
             FileStorage::new(priv_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut threshold_priv, id)
+        delete_all_at_request_id(&mut priv_storage, id)
             .await
             .unwrap();
 
@@ -44,10 +44,10 @@ pub async fn purge(
         use PrivDataType::*;
         for data_type in [FhePrivateKey, FheKeyInfo, CrsInfo] {
             let data_type_str = data_type.to_string();
-            if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
+            if let Ok(epoch_ids) = priv_storage.all_epoch_ids_for_data(&data_type_str).await {
                 for epoch_id in epoch_ids {
                     let _ = delete_at_request_and_epoch_id(
-                        &mut threshold_priv,
+                        &mut priv_storage,
                         id,
                         &epoch_id,
                         &data_type_str,

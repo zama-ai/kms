@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests -- threshold` |
+| **Native (slow tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 
 ## Folder Layout
@@ -16,7 +16,7 @@
 ## Feature flags (what they enable)
 
 - `testing`
-  - Enables test helper code used by integration tests. Most threshold tests
+  - Enables test helper code used by integration tests. Most integration tests
     (preproc+keygen, reshare, MPC context init/switch) run under this feature.
 - `insecure`
   - Enables the client-side `InsecureKeyGen*` and `InsecureCrsGen*` CLI commands.
@@ -25,7 +25,7 @@
   - Enables the full native/K8s e2e surface, including insecure-only fast-path commands.
 - `slow_tests`
   - Implies `testing`.
-  - Compiles&runs the threshold tests that are too slow to run locally.
+  - Compiles&runs the integration tests that are too slow to run locally.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
   - Implies `e2e`.
@@ -42,7 +42,7 @@
 
 ### Test gating patterns
 
-- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow threshold tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_cli_test_with_prss`).
+- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow integration tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_cli_test_with_prss`).
 - **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
 
 ### Test naming conventions (CI skip rules)
@@ -100,8 +100,8 @@ async fn test_my_feature() -> Result<()> {
 }
 ```
 
-**Threshold setup variants** (all take `party_count: usize`):
-- `setup_isolated_cli_test` — basic threshold test
+**Setup variants** (all take `party_count: usize`):
+- `setup_isolated_cli_test` — basic setup
 - `setup_isolated_cli_test_signing_only` — signing without pre-loaded PRSS
 - `setup_isolated_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
 - `setup_isolated_cli_test_with_prss_with_backup` — with backup vault

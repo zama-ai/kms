@@ -29,14 +29,10 @@ async fn new_custodian_context(
     threshold: u32,
 ) {
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let req_new_cus: RequestId = derive_request_id(&format!(
-        "test_new_custodian_context_threshold_{amount_parties}"
-    ))
-    .unwrap();
-    let req_new_cus2: RequestId = derive_request_id(&format!(
-        "test_new_custodian_context_threshold_2_{amount_parties}"
-    ))
-    .unwrap();
+    let req_new_cus: RequestId =
+        derive_request_id(&format!("test_new_custodian_context_{amount_parties}")).unwrap();
+    let req_new_cus2: RequestId =
+        derive_request_id(&format!("test_new_custodian_context_2_{amount_parties}")).unwrap();
     let dkg_param: WrappedDKGParams = parameter.into();
 
     let (material_dir, kms_servers, kms_clients, mut internal_client) = {

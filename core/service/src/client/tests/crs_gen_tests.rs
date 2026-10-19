@@ -40,7 +40,7 @@ async fn test_insecure_crs_gen() -> anyhow::Result<()> {
     let spec = TestMaterialSpec::signing_only(amount_parties);
 
     let env = TestEnv::builder()
-        .with_test_name("insecure_crs_gen_threshold")
+        .with_test_name("insecure_crs_gen")
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
@@ -52,7 +52,7 @@ async fn test_insecure_crs_gen() -> anyhow::Result<()> {
     let (clients, _servers, material_path, _guards) = env.into_parts();
 
     let crs_req_id: RequestId = derive_request_id(&format!(
-        "insecure_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+        "insecure_crs_gen_{amount_parties}_{max_bits:?}_{parameter:?}"
     ))?;
 
     let _ = run_crs(
@@ -97,7 +97,7 @@ async fn secure_crs() -> anyhow::Result<()> {
     let (clients, _servers, material_path, _guards) = env.into_parts();
 
     let crs_req_id: RequestId = derive_request_id(&format!(
-        "secure_threshold_crs_{amount_parties}_{max_bits:?}_{parameter:?}"
+        "secure_crs_{amount_parties}_{max_bits:?}_{parameter:?}"
     ))?;
 
     let _ = run_crs(
@@ -138,7 +138,7 @@ async fn test_crs_gen() -> anyhow::Result<()> {
     let (clients, _servers, material_path, _guards) = env.into_parts();
 
     let crs_req_id: RequestId = derive_request_id(&format!(
-        "test_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+        "test_crs_gen_{amount_parties}_{max_bits:?}_{parameter:?}"
     ))?;
 
     let _ = run_crs(

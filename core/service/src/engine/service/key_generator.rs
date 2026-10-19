@@ -816,10 +816,10 @@ impl<
         })?;
 
         let private_compression_share = {
-            let threshold_keys = crypto_storage
+            let fhe_keys = crypto_storage
                 .read_guarded_fhe_keys(&from_key_id, epoch_id)
                 .await?;
-            let compression_sk_share = threshold_keys
+            let compression_sk_share = fhe_keys
                 .private_keys
                 .glwe_secret_key_share_compression
                 .clone()
@@ -832,10 +832,10 @@ impl<
             }
         };
         let private_glwe_compute_share = {
-            let threshold_keys = crypto_storage
+            let fhe_keys = crypto_storage
                 .read_guarded_fhe_keys(&to_key_id, epoch_id)
                 .await?;
-            match threshold_keys.private_keys.glwe_secret_key_share.clone() {
+            match fhe_keys.private_keys.glwe_secret_key_share.clone() {
                 GlweSecretKeyShareEnum::Z64(_share) => {
                     anyhow::bail!("expected glwe secret shares to be in z128")
                 }
@@ -1191,10 +1191,10 @@ impl<
             + ?Sized,
     {
         let existing_private_keys = {
-            let threshold_keys = crypto_storage
+            let fhe_keys = crypto_storage
                 .read_guarded_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
-            threshold_keys.private_keys.as_ref().clone()
+            fhe_keys.private_keys.as_ref().clone()
         };
 
         // First we need to do bit-lift
@@ -1248,10 +1248,10 @@ impl<
             + ?Sized,
     {
         let existing_private_keys = {
-            let threshold_keys = crypto_storage
+            let fhe_keys = crypto_storage
                 .read_guarded_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
-            threshold_keys.private_keys.as_ref().clone()
+            fhe_keys.private_keys.as_ref().clone()
         };
 
         // First we need to do bit-lift
@@ -1570,7 +1570,7 @@ impl<
                     )
                 };
 
-                let threshold_fhe_keys = FheKeys::new(
+                let fhe_keys = FheKeys::new(
                     Arc::new(private_keys),
                     PublicKeyMaterial::new_uncompressed(
                         Arc::new(integer_server_key),
@@ -1586,7 +1586,7 @@ impl<
                     .write_fhe_keys(
                         req_id,
                         epoch_id,
-                        threshold_fhe_keys,
+                        fhe_keys,
                         PublicKeySet::Uncompressed(Arc::new(pub_key_set)),
                         meta_store,
                         meta_permit,
@@ -1635,14 +1635,14 @@ impl<
                     }
                 };
 
-                let threshold_fhe_keys = FheKeys::new(
+                let fhe_keys = FheKeys::new(
                     Arc::new(private_keys),
                     PublicKeyMaterial::new(compressed_keyset),
                     info,
                 );
                 // Share the material's keyset allocation with the public-storage
                 // set below — the keyset is multi-GiB.
-                let compressed_keyset = threshold_fhe_keys
+                let compressed_keyset = fhe_keys
                     .public_material
                     .compressed_keyset()
                     .expect("material was just built compressed");
@@ -1653,7 +1653,7 @@ impl<
                     .write_fhe_keys(
                         req_id,
                         epoch_id,
-                        threshold_fhe_keys,
+                        fhe_keys,
                         PublicKeySet::Compressed {
                             compact_public_key: Arc::new(compact_public_key),
                             compressed_keyset,
@@ -1762,10 +1762,10 @@ impl<
         epoch_id: &EpochId,
     ) -> anyhow::Result<tfhe::CompactPublicKey> {
         let expected_digest = {
-            let threshold_keys = crypto_storage
+            let fhe_keys = crypto_storage
                 .read_guarded_fhe_keys(existing_keyset_id, epoch_id)
                 .await?;
-            match &threshold_keys.meta_data {
+            match &fhe_keys.meta_data {
                 KeyGenMetadata::Current(inner) => inner
                     .key_digest_map
                     .get(&PubDataType::PublicKey)

@@ -131,7 +131,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: FheKeys,
+        keys: FheKeys,
     ) -> Result<(), StorageError> {
         let res = self
             .inner
@@ -139,7 +139,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 key_id,
                 Some(epoch_id),
                 None, // No public data is made when refreshing keys
-                Some((&threshold_fhe_keys, PrivDataType::FheKeyInfo)),
+                Some((&keys, PrivDataType::FheKeyInfo)),
                 false,
                 OP_NEW_EPOCH,
             )
@@ -147,7 +147,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::Backup) {
             // Add the new data to the cache
             let mut guarded_fhe_keys = self.fhe_keys.write().await;
-            let _ = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
+            let _ = guarded_fhe_keys.insert((*key_id, *epoch_id), keys);
         }
         res
     }
@@ -167,19 +167,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: FheKeys,
+        keys: FheKeys,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         permit: MetaStorePermit<KeyGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        let meta_res = threshold_fhe_keys.meta_data.clone();
+        let meta_res = keys.meta_data.clone();
         let res = self
             .inner
             .handle_fhe_keys(
                 key_id,
                 epoch_id,
-                threshold_fhe_keys,
+                keys,
                 PrivDataType::FheKeyInfo,
                 fhe_key_set,
                 Arc::clone(&self.fhe_keys),

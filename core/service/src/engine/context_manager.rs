@@ -981,6 +981,7 @@ where
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
     ) -> Result<(), MetricedError> {
+        // Observe that this needs to be linked to a call to destroy associated epochs, hence the method does not return a Response type
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)

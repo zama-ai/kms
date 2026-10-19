@@ -45,7 +45,7 @@ use tokio::task::JoinSet;
 async fn test_insecure_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = TestEnv::builder()
-        .with_test_name("threshold_dkg_backup")
+        .with_test_name("dkg_backup")
         .with_party_count(4)
         .with_prss()
         .with_backup_vault()
@@ -253,7 +253,7 @@ async fn test_insecure_dkg_backup() -> Result<()> {
 async fn test_insecure_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = TestEnv::builder()
-        .with_test_name("threshold_autobackup")
+        .with_test_name("autobackup")
         .with_party_count(4)
         .with_prss()
         .with_backup_vault()
@@ -317,7 +317,7 @@ async fn test_insecure_crs_backup() -> Result<()> {
 
     // Setup using builder pattern with backup vault
     let env = TestEnv::builder()
-        .with_test_name("threshold_crs_backup")
+        .with_test_name("crs_backup")
         .with_party_count(4)
         .with_prss()
         .with_backup_vault()

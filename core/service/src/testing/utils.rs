@@ -108,21 +108,21 @@ pub mod setup {
             private_storage_prefixes.len()
         );
         let amount_parties = public_storage_prefixes.len();
-        let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
+        let mut pub_storages = Vec::with_capacity(amount_parties);
         for storage_prefix in public_storage_prefixes.iter() {
-            threshold_pub_storages
+            pub_storages
                 .push(FileStorage::new(path, StorageType::PUB, storage_prefix.as_deref()).unwrap());
         }
-        let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
+        let mut priv_storages = Vec::with_capacity(amount_parties);
         for storage_prefix in private_storage_prefixes.iter() {
-            threshold_priv_storages.push(
+            priv_storages.push(
                 FileStorage::new(path, StorageType::PRIV, storage_prefix.as_deref()).unwrap(),
             );
         }
 
         ensure_server_signing_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+            &mut pub_storages,
+            &mut priv_storages,
             true,
             SigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
@@ -132,8 +132,8 @@ pub mod setup {
         .await
         .unwrap();
         ensure_fhe_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+            &mut pub_storages,
+            &mut priv_storages,
             params.to_owned(),
             fhe_key_id,
             epoch_id,
@@ -141,8 +141,8 @@ pub mod setup {
         )
         .await;
         ensure_crs_exists(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+            &mut pub_storages,
+            &mut priv_storages,
             params.to_owned(),
             crs_id,
             epoch_id,
@@ -151,7 +151,7 @@ pub mod setup {
         .await;
         // The key shares and CRS metadata above live under `epoch_id`, so the fixture carries
         // that epoch as well; a node refuses to boot on shares whose epoch it does not know.
-        ensure_epoch_exists(&mut threshold_priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
+        ensure_epoch_exists(&mut priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
             .await
             .unwrap();
     }

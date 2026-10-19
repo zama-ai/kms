@@ -621,8 +621,7 @@ where
         .await;
     let mpc_server_health = health.clone();
 
-    let (threshold_health_reporter, threshold_health_service) =
-        tonic_health::server::health_reporter();
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
 
     let networking_server = networking_manager
         .write()
@@ -631,7 +630,7 @@ where
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)
-        .add_service(threshold_health_service);
+        .add_service(health_service);
 
     tracing::info!(
         "Starting core-to-core server on address {:?} with initial party ID {:?}.",
@@ -647,7 +646,7 @@ where
         let shutdown_requested = AtomicBool::new(false);
         let graceful_shutdown_signal = async {
             // Set the server to be serving when we boot
-            threshold_health_reporter.set_serving::<GrpcServer>().await;
+            health_reporter.set_serving::<GrpcServer>().await;
             // await is the same as recv on a oneshot channel. A dropped sender means that the
             // signal task ended without a signal, for example after a panic. That is no shutdown
             // request, so the stop of the server that follows counts as a fault.
@@ -665,9 +664,7 @@ where
                 "Starting graceful shutdown of core/experiments {}",
                 mpc_socket_addr
             );
-            threshold_health_reporter
-                .set_not_serving::<GrpcServer>()
-                .await;
+            health_reporter.set_not_serving::<GrpcServer>().await;
         };
 
         // this looks somewhat hairy but there doesn't seem to be an easier way

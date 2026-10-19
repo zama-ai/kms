@@ -288,9 +288,7 @@ impl TestEnvBuilder {
 
     /// Build the test environment
     pub async fn build(self) -> Result<TestEnv> {
-        let test_name = self
-            .test_name
-            .unwrap_or_else(|| "threshold_test".to_string());
+        let test_name = self.test_name.unwrap_or_else(|| "kms_test".to_string());
         let manager = self
             .material_manager
             .unwrap_or_else(create_test_material_manager);

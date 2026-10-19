@@ -174,7 +174,7 @@ fn generate_compressed_fhe_keys(
         1,
     )
     .unwrap();
-    let threshold_fhe_keys = fhe_keys_for_compressed_keyset(
+    let fhe_keys = fhe_keys_for_compressed_keyset(
         key_id,
         prep_id,
         Arc::new(key_shares[0].to_owned()),
@@ -184,7 +184,7 @@ fn generate_compressed_fhe_keys(
         &compressed_keyset,
         vec![],
     );
-    (compressed_keyset, compact_pk, threshold_fhe_keys)
+    (compressed_keyset, compact_pk, fhe_keys)
 }
 
 const TEST_METRIC: &str = "test";
@@ -299,7 +299,7 @@ async fn read_public_key_from_storage() {
     let client_key = tfhe::ClientKey::generate(config);
     let public_key = CompactPublicKey::new(&client_key);
 
-    let req_id = derive_request_id("read_keys_threshold").unwrap();
+    let req_id = derive_request_id("read_keys").unwrap();
     store_versioned_at_request_id(
         &mut *pub_storage.lock().await,
         &req_id,
@@ -317,10 +317,10 @@ async fn read_public_key_from_storage() {
 async fn write_fhe_keys_failed_storage_sets_terminal_error() {
     let req_id = derive_request_id("write_fhe_keys_failed_storage_sets_terminal_error").unwrap();
     let epoch_id: EpochId =
-        derive_request_id("write_threshold_keys_failed_storage_sets_terminal_error_epoch")
+        derive_request_id("write_fhe_keys_failed_storage_sets_terminal_error_epoch")
             .unwrap()
             .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+    let (crypto_storage, fhe_keys, fhe_key_set) =
         setup_cached_store(&req_id, FailingRamStorage::new());
     let public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
 
@@ -345,7 +345,7 @@ async fn write_fhe_keys_failed_storage_sets_terminal_error() {
         .write_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys,
+            fhe_keys,
             public_key_set,
             meta_store.clone(),
             permit,
@@ -374,12 +374,11 @@ async fn write_fhe_keys_failed_storage_sets_terminal_error() {
 
 #[tokio::test]
 async fn write_fhe_keys_sunshine() {
-    let req_id = derive_request_id("write_threshold_empty_update").unwrap();
-    let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
+    let req_id = derive_request_id("write_empty_update").unwrap();
+    let epoch_id = derive_request_id("write_empty_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_cached_store(&req_id, RamStorage::new());
+    let (crypto_storage, fhe_keys, fhe_key_set) = setup_cached_store(&req_id, RamStorage::new());
     let meta_store = MetaStore::new_unlimited();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set.clone()));
 
@@ -391,7 +390,7 @@ async fn write_fhe_keys_sunshine() {
         .write_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
             permit,
@@ -412,11 +411,10 @@ async fn write_fhe_keys_meta_update() {
     // `MetaStore::insert` refuses to mint a second permit for an existing
     // entry, so write_fhe_keys cannot be called twice for the same req_id.
     let req_id = derive_request_id("write_fhe_keys_meta_update").unwrap();
-    let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
+    let epoch_id: EpochId = derive_request_id("write_fhe_keys_meta_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_cached_store(&req_id, RamStorage::new());
+    let (crypto_storage, fhe_keys, fhe_key_set) = setup_cached_store(&req_id, RamStorage::new());
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let meta_store = MetaStore::new_unlimited();
 
@@ -428,7 +426,7 @@ async fn write_fhe_keys_meta_update() {
         .write_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
             permit,
@@ -546,10 +544,10 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
 #[tokio::test]
 async fn write_fhe_keys_failed_storage() {
     let req_id = derive_request_id("write_fhe_keys_failed_storage").unwrap();
-    let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
+    let epoch_id: EpochId = derive_request_id("write_fhe_keys_failed_storage_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+    let (crypto_storage, fhe_keys, fhe_key_set) =
         setup_cached_store(&req_id, FailingRamStorage::new());
     let meta_store = MetaStore::new_unlimited();
 
@@ -563,7 +561,7 @@ async fn write_fhe_keys_failed_storage() {
         .write_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
             permit,
@@ -580,7 +578,7 @@ async fn write_fhe_keys_failed_storage() {
         assert!(guard.has_existed(&req_id));
     }
 
-    let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
+    let new_req_id = derive_request_id("write_fhe_keys_failed_storage_2").unwrap();
     // write on a failed storage device should fail
     {
         let mut storage_guard = pub_storage.lock().await;
@@ -598,7 +596,7 @@ async fn write_fhe_keys_failed_storage() {
         .write_fhe_keys(
             &new_req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            fhe_keys.clone(),
             boxed_public_key_set,
             meta_store.clone(),
             new_permit,
@@ -622,7 +620,7 @@ async fn write_fhe_keys_failed_storage() {
 #[tokio::test]
 async fn read_guarded_fhe_keys_not_found() {
     let req_id = derive_request_id("read_guarded_fhe_keys_not_found").unwrap();
-    let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
+    let epoch_id: EpochId = derive_request_id("read_guarded_fhe_keys_not_found_epoch")
         .unwrap()
         .into();
 
@@ -656,14 +654,13 @@ async fn read_guarded_fhe_keys_not_found() {
 async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     let req_id =
         derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
-    let epoch_id: EpochId = derive_request_id(
-        "threshold_compressed_fhe_keys_exist_requires_standalone_public_key_epoch",
-    )
-    .unwrap()
-    .into();
+    let epoch_id: EpochId =
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key_epoch")
+            .unwrap()
+            .into();
 
     let crypto_storage = ram_cached_storage(None);
-    let (compressed_keyset, compact_pk, threshold_fhe_keys) =
+    let (compressed_keyset, compact_pk, fhe_keys) =
         generate_compressed_fhe_keys(&req_id, &req_id, 50);
 
     let meta_store = MetaStore::new_unlimited();
@@ -677,7 +674,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         .write_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys,
+            fhe_keys,
             PublicKeySet::Compressed {
                 compact_public_key: Arc::new(compact_pk),
                 compressed_keyset: Arc::new(compressed_keyset),
@@ -775,7 +772,7 @@ where
     let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
-    let threshold_fhe_keys = FheKeys::new(
+    let fhe_keys = FheKeys::new(
         Arc::new(key_shares[0].to_owned()),
         PublicKeyMaterial::new_uncompressed(
             Arc::new(integer_server_key),
@@ -784,7 +781,7 @@ where
         ),
         dummy_info(),
     );
-    (crypto_storage, threshold_fhe_keys, fhe_key_set)
+    (crypto_storage, fhe_keys, fhe_key_set)
 }
 
 fn make_unencrypted_backup_vault() -> Vault {
@@ -1148,13 +1145,13 @@ async fn write_all_updates_backup_vault() {
 #[tokio::test]
 async fn handle_fhe_keys_compressed_writes_and_caches() {
     // Compressed layout: stores CompressedXofKeySet + PublicKey, no ServerKey.
-    let req_id = derive_request_id("handle_threshold_fhe_keys_compressed").unwrap();
-    let epoch_id: EpochId = derive_request_id("handle_threshold_fhe_keys_compressed_epoch")
+    let req_id = derive_request_id("handle_fhe_keys_compressed").unwrap();
+    let epoch_id: EpochId = derive_request_id("handle_fhe_keys_compressed_epoch")
         .unwrap()
         .into();
     let storage = fresh_ram_storage();
 
-    let (compressed_keyset, compact_pk, threshold_fhe_keys) =
+    let (compressed_keyset, compact_pk, fhe_keys) =
         generate_compressed_fhe_keys(&req_id, &req_id, 7);
     let public_key_set = PublicKeySet::Compressed {
         compact_public_key: Arc::new(compact_pk),
@@ -1166,7 +1163,7 @@ async fn handle_fhe_keys_compressed_writes_and_caches() {
         .handle_fhe_keys(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys,
+            fhe_keys,
             PrivDataType::FheKeyInfo,
             public_key_set,
             cache.clone(),

@@ -955,7 +955,7 @@ where
                         return;
                     }
                 };
-                let threshold_fhe_keys = FheKeys::new(
+                let fhe_keys = FheKeys::new(
                     share,
                     PublicKeyMaterial::Compressed {
                         keyset: compressed_keyset.clone(),
@@ -1003,7 +1003,7 @@ where
                     priv_s,
                     key_id,
                     epoch_id,
-                    &threshold_fhe_keys,
+                    &fhe_keys,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await
