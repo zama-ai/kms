@@ -19,7 +19,7 @@ use std::task::Poll;
 use strum::IntoEnumIterator;
 
 type TestStorage = CryptoMaterialStorage<FailingRamStorage, RamStorage>;
-type TestManager = ThresholdContextManager<FailingRamStorage, RamStorage>;
+type TestManager = ContextManager<FailingRamStorage, RamStorage>;
 
 const RETIRED_CONTEXT_BYTE: u8 = 31;
 const CURRENT_CONTEXT_BYTE: u8 = 32;
@@ -52,7 +52,7 @@ impl CustodianFixture {
             &DEFAULT_EPOCH_ID,
             base_kms.new_rngs(),
         );
-        let manager = ThresholdContextManager::new(
+        let manager = ContextManager::new(
             base_kms,
             storage.clone(),
             MetaStore::new(100, 10),

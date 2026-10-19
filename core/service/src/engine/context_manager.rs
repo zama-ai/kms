@@ -10,7 +10,6 @@ use crate::cryptography::encryption::{
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::service::session::SessionMaker;
-use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -51,7 +50,7 @@ use tokio_util::task::TaskTracker;
 use tonic::Response;
 use tracing::Instrument;
 
-/// State of a [`ThresholdContextManager`], shared with the custodian-context setup tasks it spawns.
+/// State of a [`ContextManager`], shared with the custodian-context setup tasks it spawns.
 struct SharedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -705,7 +704,7 @@ pub async fn ensure_default_threshold_context_in_storage<
     Ok(())
 }
 
-pub struct ThresholdContextManager<
+pub struct ContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
@@ -714,7 +713,7 @@ pub struct ThresholdContextManager<
     require_pcr_allowlist: bool,
 }
 
-impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
+impl<PubS, PrivS> ContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -914,13 +913,12 @@ async fn delete_context_from_storage<PrivS: StorageExt + Sync + Send + 'static>(
     }
 }
 
-#[tonic::async_trait]
-impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
+impl<PubS, PrivS> ContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    async fn new_mpc_context(
+    pub async fn new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
@@ -981,7 +979,7 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_mpc_context(
+    pub async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
     ) -> Result<(), MetricedError> {
@@ -1052,21 +1050,21 @@ where
         Ok(())
     }
 
-    async fn new_custodian_context(
+    pub async fn new_custodian_context(
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
         Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
-    async fn destroy_custodian_context(
+    pub async fn destroy_custodian_context(
         &self,
         request: tonic::Request<DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
         self.inner.destroy_custodian_context(request).await
     }
 
-    async fn mpc_context_exists_and_consistent(
+    pub async fn mpc_context_exists_and_consistent(
         &self,
         context_id: &ContextId,
     ) -> anyhow::Result<bool> {
@@ -1081,7 +1079,7 @@ where
         }
     }
 
-    async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool {
+    pub async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool {
         self.session_maker.context_exists(context_id).await
     }
 }
@@ -1337,7 +1335,7 @@ mod tests {
             new_context: Some(new_context.clone().try_into().unwrap()),
         });
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
@@ -1568,7 +1566,7 @@ mod tests {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
@@ -1669,7 +1667,7 @@ mod tests {
             pcr_values: vec![],
         };
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
@@ -1741,7 +1739,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -1780,7 +1778,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -1833,7 +1831,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -1859,7 +1857,7 @@ mod tests {
 
         let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
@@ -1907,7 +1905,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -1964,7 +1962,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -1996,7 +1994,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -2093,7 +2091,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -2145,7 +2143,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new(sig_key.clone(), test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -2181,7 +2179,7 @@ mod tests {
         {
             let base_kms = BaseKmsStruct::new_no_signing_key(verification_key, test_rng_source());
             let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -2246,7 +2244,7 @@ mod tests {
             });
             let session_maker =
                 SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
-            let context_manager = ThresholdContextManager::new(
+            let context_manager = ContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
@@ -2425,7 +2423,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(sig_key, test_rng_source());
         let custodian_meta_store = MetaStore::new(100, 10);
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage.clone(),
             custodian_meta_store.clone(),
@@ -2648,7 +2646,7 @@ mod tests {
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         // Keep a handle on the backup vault so we can inspect the rollback after the failure.
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage,
             MetaStore::new(100, 10),
@@ -2782,7 +2780,7 @@ mod tests {
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage,
             MetaStore::new(100, 10),
@@ -2820,7 +2818,7 @@ mod tests {
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let private_storage = Arc::clone(&crypto_storage.private_storage);
         let tracker = Arc::new(TaskTracker::new());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage,
             MetaStore::new(100, 10),
@@ -2861,7 +2859,7 @@ mod tests {
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let private_storage = Arc::clone(&crypto_storage.private_storage);
         let tracker = Arc::new(TaskTracker::new());
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage,
             MetaStore::new(100, 10),
@@ -2965,7 +2963,7 @@ mod tests {
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
         let backup_vault = crypto_storage.get_backup_vault().unwrap();
-        let context_manager = ThresholdContextManager::new(
+        let context_manager = ContextManager::new(
             base_kms,
             crypto_storage,
             MetaStore::new(100, 10),

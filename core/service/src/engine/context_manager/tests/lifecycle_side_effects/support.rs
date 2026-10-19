@@ -35,7 +35,7 @@ pub(super) enum InitialTargetContextState {
     Stored,
 }
 
-pub(super) struct TestContextManager(ThresholdContextManager<RamStorage, FailingRamStorage>);
+pub(super) struct TestContextManager(ContextManager<RamStorage, FailingRamStorage>);
 
 impl TestContextManager {
     pub(super) async fn new_mpc_context(
@@ -141,7 +141,7 @@ impl ContextFixture {
     pub(super) async fn manager(&self) -> TestContextManager {
         let base_kms = BaseKmsStruct::new(self.signing_key.clone(), test_rng_source());
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-        let manager = ThresholdContextManager::new(
+        let manager = ContextManager::new(
             base_kms,
             self.storage.clone(),
             MetaStore::new(100, 10),

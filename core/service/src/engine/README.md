@@ -15,9 +15,6 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 - **server.rs**  
   Main server implementation for handling incoming gRPC requests.
 
-- **traits.rs**  
-  Common traits and interfaces used throughout the engine module.
-
 - **validation_non_wasm.rs / validation_wasm.rs**  
   Validation logic for different build targets (native and WASM). Observe that the WASM build is _only_ used for user decryption.
 

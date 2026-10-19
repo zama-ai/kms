@@ -1,17 +1,17 @@
 //! This file provides methods to manage epochs, which includes dealing with PRSS setups
 //! as well as resharing of the secret keys.
-//! The main struct is [`ThresholdEpochManager`].
+//! The main struct is [`EpochManager`].
 //!
 //! __PRSS__
 //!
 //! If the KMS core is started fresh, then the PRSS setups needs to be initialized
-//! via a protocol; this is done via the [`ThresholdEpochManager::init_epoch`] method.
+//! via a protocol; this is done via the [`EpochManager::init_epoch`] method.
 //! If the KMS core restarts, then the PRSS setups are loaded from storage,
-//! this is done via a call to [`ThresholdEpochManager::init_all_epochs_from_storage`].
+//! this is done via a call to [`EpochManager::init_all_epochs_from_storage`].
 //!
 //! __Resharing__
 //!
-//! If there was a previous epoch we need to reshare from, Resharing is done via [`ThresholdEpochManager::initiate_resharing`]
+//! If there was a previous epoch we need to reshare from, Resharing is done via [`EpochManager::initiate_resharing`]
 //! which blocks until the previous epoch has been verified and then returns the resharing task to be executed.
 //! The caller is responsible for spawning the returned task.
 //! The Reshare protocol is asymetric depending on whether the party is part of the set that reshares (_set 1_),
@@ -145,7 +145,7 @@ struct VerifiedKeyInfo {
     /// Preprocessing ID that was used to generate the key initially
     /// required for the EIP struct.
     /// Caller-supplied, so it is checked against the preprocessing ID stored for the key
-    /// by [`ThresholdEpochManager::validate_supplied_preproc_ids`] before it is used.
+    /// by [`EpochManager::validate_supplied_preproc_ids`] before it is used.
     pub preproc_id: kms_grpc::RequestId,
     /// Parameters of the key to be reshard
     pub key_parameters: DKGParams,
@@ -419,7 +419,7 @@ pub enum EpochOutput {
 }
 
 /// The Epoch Manager takes over the role of the Initiator and Resharer
-pub(crate) struct ThresholdEpochManager<
+pub(crate) struct EpochManager<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
@@ -445,7 +445,7 @@ impl<
         + Default
         + 'static,
     Reshare: ReshareSecretKeys + Default + 'static,
-> ThresholdEpochManager<PubS, PrivS, Init, Reshare>
+> EpochManager<PubS, PrivS, Init, Reshare>
 {
     /// Loads all stored epochs into the session maker.
     pub(crate) async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
@@ -2248,7 +2248,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// The inputs [`ThresholdEpochManager::initiate_resharing_and_crs_resign`]
+    /// The inputs [`EpochManager::initiate_resharing_and_crs_resign`]
     /// feeds into [`reshare_session_skews`] come from the round counts the production
     /// protocols declare. Pins the composed skews for two four-party committees, so a
     /// change in any protocol's declared count shows up here.
@@ -2314,7 +2314,7 @@ pub(crate) mod tests {
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
         Reshare: ReshareSecretKeys,
-    > ThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
+    > EpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
     {
         fn init_test(base_kms: BaseKmsStruct, session_maker: SessionMaker) -> Self {
             Self {
@@ -2510,14 +2510,14 @@ pub(crate) mod tests {
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
     >(
         rng: &mut AesRng,
-    ) -> ThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys> {
+    ) -> EpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(NodeSigningIdentity::ecdsa_only(sk), test_rng_source());
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
 
-        ThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
+        EpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,
             session_maker,
         )
@@ -3353,7 +3353,7 @@ pub(crate) mod tests {
 
         // Destroy the epoch
         let priv_storage = epoch_manager.crypto_storage.get_private_storage();
-        ThresholdEpochManager::<
+        EpochManager::<
             ram::RamStorage,
             ram::RamStorage,
             EmptyPrss,
@@ -3433,7 +3433,7 @@ pub(crate) mod tests {
         }
 
         let priv_storage = epoch_manager.crypto_storage.get_private_storage();
-        ThresholdEpochManager::<
+        EpochManager::<
             ram::RamStorage,
             ram::RamStorage,
             EmptyPrss,
@@ -3478,7 +3478,7 @@ pub(crate) mod tests {
 
         let nonexistent_epoch_id = EpochId::new_random(&mut rng);
 
-        let err = ThresholdEpochManager::<
+        let err = EpochManager::<
             ram::RamStorage,
             ram::RamStorage,
             EmptyPrss,
@@ -3623,7 +3623,7 @@ pub(crate) mod tests {
         }
 
         // First attempt: deletion fails, so the whole operation must fail.
-        let err = ThresholdEpochManager::<
+        let err = EpochManager::<
             ram::RamStorage,
             FailingRamStorage,
             EmptyPrss,
@@ -3662,7 +3662,7 @@ pub(crate) mod tests {
 
         // Now let deletes succeed and retry: the operation must now complete and clean everything up.
         priv_storage.lock().await.clear_fail_points();
-        ThresholdEpochManager::<
+        EpochManager::<
             ram::RamStorage,
             FailingRamStorage,
             EmptyPrss,
@@ -3825,7 +3825,7 @@ pub(crate) mod tests {
     /// mirroring what a real PRSS setup persists. This is the minimal state `destroy_epoch` needs
     /// to run its full cascade for the epoch.
     async fn seed_epoch(
-        epoch_manager: &ThresholdEpochManager<
+        epoch_manager: &EpochManager<
             ram::RamStorage,
             ram::RamStorage,
             EmptyPrss,
@@ -4088,7 +4088,7 @@ pub(crate) mod tests {
         ]);
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        let output = ThresholdEpochManager::<
+        let output = EpochManager::<
             RamStorage,
             RamStorage,
             EmptyPrss,
@@ -4184,7 +4184,7 @@ pub(crate) mod tests {
         ]);
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        let output = ThresholdEpochManager::<
+        let output = EpochManager::<
             RamStorage,
             RamStorage,
             EmptyPrss,
@@ -4268,7 +4268,7 @@ pub(crate) mod tests {
         let crs_digest = hashing::hash_element(&DSEP_PUBDATA_CRS, &crs_bytes);
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        ThresholdEpochManager::<
+        EpochManager::<
             RamStorage,
             RamStorage,
             EmptyPrss,
@@ -4357,7 +4357,7 @@ pub(crate) mod tests {
         );
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        let err = ThresholdEpochManager::<
+        let err = EpochManager::<
             FailingRamStorage,
             FailingRamStorage,
             EmptyPrss,
@@ -4438,7 +4438,7 @@ pub(crate) mod tests {
         );
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        ThresholdEpochManager::<
+        EpochManager::<
             FailingRamStorage,
             FailingRamStorage,
             EmptyPrss,
@@ -4544,7 +4544,7 @@ pub(crate) mod tests {
         let (keyset, _compressed_keyset) =
             gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        let err = ThresholdEpochManager::<
+        let err = EpochManager::<
             RamStorage,
             FailingRamStorage,
             EmptyPrss,
@@ -4652,7 +4652,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
 
         let other_reshare = epoch_manager.reshare_storage_lock.lock().await;
-        let mut store = Box::pin(ThresholdEpochManager::<
+        let mut store = Box::pin(EpochManager::<
             RamStorage,
             RamStorage,
             EmptyPrss,
@@ -4719,7 +4719,7 @@ pub(crate) mod tests {
             gen_key_set(params, tfhe::Tag::default(), &mut rng).unwrap();
 
         let sk = epoch_manager.base_kms.signing_identity().unwrap();
-        let err = ThresholdEpochManager::<
+        let err = EpochManager::<
             RamStorage,
             RamStorage,
             EmptyPrss,

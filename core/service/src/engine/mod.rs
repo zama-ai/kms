@@ -32,8 +32,6 @@ pub mod service;
 #[cfg(feature = "non-wasm")]
 pub(crate) mod storage_material_verification;
 #[cfg(feature = "non-wasm")]
-pub mod traits;
-#[cfg(feature = "non-wasm")]
 pub mod utils;
 
 #[cfg(feature = "non-wasm")]

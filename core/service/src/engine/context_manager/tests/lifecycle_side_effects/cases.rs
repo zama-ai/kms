@@ -443,7 +443,7 @@ async fn backup_failure_keeps_the_stored_context_registered() {
 
     let base_kms = BaseKmsStruct::new(signing_key, test_rng_source());
     let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-    let manager = ThresholdContextManager::new(
+    let manager = ContextManager::new(
         base_kms,
         storage.clone(),
         MetaStore::new(100, 10),
@@ -454,8 +454,8 @@ async fn backup_failure_keeps_the_stored_context_registered() {
     assert_backup_failure(&manager, &storage, &context).await;
 }
 
-async fn assert_backup_failure<M: ContextManager>(
-    manager: &M,
+async fn assert_backup_failure(
+    manager: &ContextManager<RamStorage, RamStorage>,
     storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     context: &ContextInfo,
 ) {

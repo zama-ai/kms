@@ -2,11 +2,11 @@ use crate::conf::BandwidthBenchmarkConfig;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::BackupOperator;
 use crate::engine::bandwidth_bench::new_bandwidth_bench_limiter;
-use crate::engine::context_manager::ThresholdContextManager;
+use crate::engine::context_manager::ContextManager;
 use crate::engine::service::crs_generator::CrsGenerator;
 #[cfg(feature = "insecure")]
 use crate::engine::service::crs_generator::InsecureCrsGenerator;
-use crate::engine::service::epoch_manager::ThresholdEpochManager;
+use crate::engine::service::epoch_manager::EpochManager;
 #[cfg(feature = "insecure")]
 use crate::engine::service::key_generator::InsecureKeyGenerator;
 use crate::engine::service::key_generator::KeyGenerator;
@@ -33,12 +33,9 @@ use tokio_util::task::TaskTracker;
 type KeyGen = SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>;
 
 /// The threshold KMS gRPC service: one party of the MPC network.
-pub struct ThresholdKms<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-> {
+pub struct Kms<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> {
     pub(crate) epoch_manager:
-        ThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
+        EpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
     pub(crate) user_decryptor: UserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     pub(crate) decryptor: PublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     pub(crate) key_generator: KeyGenerator<PubS, PrivS, KeyGen>,
@@ -48,7 +45,7 @@ pub struct ThresholdKms<
     pub(crate) crs_generator: CrsGenerator<PubS, PrivS, SecureCeremony>,
     #[cfg(feature = "insecure")]
     pub(crate) insecure_crs_generator: InsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    pub(crate) context_manager: ThresholdContextManager<PubS, PrivS>,
+    pub(crate) context_manager: ContextManager<PubS, PrivS>,
     pub(crate) backup_operator: BackupOperator<PubS, PrivS>,
     pub(crate) session_maker: ImmutableSessionMaker,
     /// Bounds concurrent `bandwidth_benchmark` runs.
@@ -60,19 +57,14 @@ pub struct ThresholdKms<
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
 }
 
-impl<PubS, PrivS> ThresholdKms<PubS, PrivS>
+impl<PubS, PrivS> Kms<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        epoch_manager: ThresholdEpochManager<
-            PubS,
-            PrivS,
-            RobustSecurePrssInit,
-            SecureReshareSecretKeys,
-        >,
+        epoch_manager: EpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
         user_decryptor: UserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
         decryptor: PublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
         key_generator: KeyGenerator<PubS, PrivS, KeyGen>,
@@ -88,7 +80,7 @@ where
             PrivS,
             SecureCeremony,
         >,
-        context_manager: ThresholdContextManager<PubS, PrivS>,
+        context_manager: ContextManager<PubS, PrivS>,
         backup_operator: BackupOperator<PubS, PrivS>,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
@@ -122,7 +114,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<PubS, PrivS> Shutdown for ThresholdKms<PubS, PrivS>
+impl<PubS, PrivS> Shutdown for Kms<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -166,7 +158,7 @@ where
     }
 }
 
-impl<PubS, PrivS> Drop for ThresholdKms<PubS, PrivS>
+impl<PubS, PrivS> Drop for Kms<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,

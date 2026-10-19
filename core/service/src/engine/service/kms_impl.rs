@@ -51,7 +51,7 @@ use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::service::epoch_manager::{EpochData, ThresholdEpochManager};
+use crate::engine::service::epoch_manager::{EpochData, EpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -64,8 +64,8 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
-        kms::ThresholdKms,
+        context_manager::{ContextManager, ensure_default_threshold_context_in_storage},
+        kms::Kms,
         prepare_shutdown_signals,
         public_material_sync::sync_public_material_from_peers,
         service::session::{ImmutableSessionMaker, SessionMaker},
@@ -459,7 +459,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    ThresholdKms<PubS, PrivS>,
+    Kms<PubS, PrivS>,
     (HealthState, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
@@ -619,7 +619,7 @@ where
     // We are only serving after initialization
     health
         .reporter()
-        .set_not_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
+        .set_not_serving::<CoreServiceEndpointServer<Kms<PubS, PrivS>>>()
         .await;
     let mpc_server_health = health.clone();
 
@@ -767,7 +767,7 @@ where
 
     let tracker = Arc::new(TaskTracker::new());
 
-    let epoch_manager = ThresholdEpochManager {
+    let epoch_manager = EpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance(),
@@ -781,7 +781,7 @@ where
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
-    let context_manager = ThresholdContextManager::new(
+    let context_manager = ContextManager::new(
         base_kms.new_instance(),
         crypto_storage.inner.clone(),
         custodian_meta_store,
@@ -885,7 +885,7 @@ where
         telemetry_conf.refresh_interval(),
     );
 
-    let kms = ThresholdKms::new(
+    let kms = Kms::new(
         epoch_manager,
         user_decryptor,
         public_decryptor,

@@ -10,7 +10,7 @@ use crate::client::tests::common::send_dec_reqs;
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::kms::ThresholdKms;
+use crate::engine::kms::Kms;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::{material_subdir, threshold_material_subdir};
 use crate::testing::prelude::*;
@@ -60,7 +60,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
 
     // Wait for all core servers to be ready before sending requests
     let core_service_name =
-        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        <CoreServiceEndpointServer<Kms<FileStorage, FileStorage>> as NamedService>::NAME;
     for cur_handle in servers.values() {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }
@@ -183,7 +183,7 @@ async fn test_threshold_close_after_drop() -> Result<()> {
         .await
         .expect("Failed to get core health client");
     let core_service_name =
-        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        <CoreServiceEndpointServer<Kms<FileStorage, FileStorage>> as NamedService>::NAME;
 
     // Get health client for MPC threshold service on server 1
     let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port)
@@ -256,7 +256,7 @@ async fn test_threshold_shutdown() -> Result<()> {
 
     // Ensure that the servers are ready
     let core_service_name =
-        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        <CoreServiceEndpointServer<Kms<FileStorage, FileStorage>> as NamedService>::NAME;
     for cur_handle in servers.values() {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }

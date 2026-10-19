@@ -1,6 +1,5 @@
 use crate::engine::bandwidth_bench::run_bandwidth_benchmark;
-use crate::engine::kms::ThresholdKms;
-use crate::engine::traits::ContextManager;
+use crate::engine::kms::Kms;
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::ContextId;
@@ -13,7 +12,7 @@ use tonic::{Request, Response, Status};
 
 // See the proto file for the documentation of each method.
 #[tonic::async_trait]
-impl<PubS, PrivS> CoreServiceEndpoint for ThresholdKms<PubS, PrivS>
+impl<PubS, PrivS> CoreServiceEndpoint for Kms<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
