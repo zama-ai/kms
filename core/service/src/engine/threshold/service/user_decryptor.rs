@@ -58,7 +58,6 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
         signing::SigningSchemeType,
-        signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
     },
     engine::{
@@ -76,12 +75,9 @@ use crate::{
             parse_optional_grpc_request_id, validate_user_decrypt_req,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+        update_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -141,7 +137,6 @@ pub struct RealUserDecryptor<
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
     pub(crate) _dec: std::marker::PhantomData<Dec>,
 }
@@ -172,7 +167,6 @@ impl<
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
         signcryption_key: UnifiedSigncryptionKey,
-        identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
             HashMap<(RequestId, EpochId), ThresholdFheKeys>,
@@ -382,11 +376,11 @@ impl<
             .threshold(&context_id)
             .await
             .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
+        let identity = Arc::clone(&signcryption_key.identity);
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
-            verification_key: signcryption_key
-                .signing_key()
+            verification_key: identity
                 .verf_key()
                 .to_legacy_bytes()
                 .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
@@ -424,7 +418,6 @@ impl<
             ThresholdCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
 
         let tracker = Arc::new(TaskTracker::new());
-        let rate_limiter = RateLimiter::default();
 
         Self {
             base_kms,
@@ -432,19 +425,9 @@ impl<
             user_decrypt_meta_store: MetaStore::new_unlimited(),
             session_maker,
             tracker,
-            rate_limiter,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
             _dec: std::marker::PhantomData,
         }
-    }
-
-    #[cfg(test)]
-    fn set_bucket_size(&mut self, bucket_size: usize) {
-        let config = crate::util::rate_limiter::RateLimiterConfig {
-            bucket_size,
-            ..Default::default()
-        };
-        self.rate_limiter = RateLimiter::new(config);
     }
 }
 
@@ -471,10 +454,6 @@ impl<
         let admission_timer = metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::Admission);
         metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_user_decrypt().await?;
         // Start timing before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
@@ -548,7 +527,7 @@ impl<
             )
         })?;
         let signcryption_key =
-            UnifiedSigncryptionKey::new(identity.clone(), client_enc_key, client_address.to_vec());
+            UnifiedSigncryptionKey::new(identity, client_enc_key, client_address.to_vec());
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
@@ -577,7 +556,7 @@ impl<
         drop(admission_timer);
         let schedule_timer =
             metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::ScheduleDelay);
-        let inner_dec_future = move |_permit| async move {
+        let inner_dec_future = move || async move {
             drop(schedule_timer);
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
@@ -592,7 +571,6 @@ impl<
                 typed_ciphertexts,
                 link,
                 signcryption_key,
-                identity,
                 client_enc_key_bytes_orig,
                 fhe_keys_rlock,
                 dec_mode,
@@ -612,7 +590,7 @@ impl<
         self.tracker.spawn(async move {
             let _task_metrics = task_metrics;
             // Ignore the result since this is a background thread.
-            let _ = inner_dec_future(permit)
+            let _ = inner_dec_future()
                 .instrument(tracing::Span::current())
                 .await;
         });
@@ -704,7 +682,7 @@ mod tests {
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::gen_sig_keys,
+            signatures::{NodeSigningIdentity, gen_sig_keys},
         },
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
@@ -992,9 +970,13 @@ mod tests {
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(123);
         let (key_id, epoch_id, ct_buf, mut user_decryptor) = setup_user_decryptor(&mut rng).await;
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        // Set bucket size to zero, so no operations are allowed
-        user_decryptor.set_bucket_size(0);
+        user_decryptor.user_decrypt_meta_store = MetaStore::new(1, 0);
+        let _pending = user_decryptor
+            .user_decrypt_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
 
         let req_id = RequestId::new_random(&mut rng);
         let request = make_valid_request(&mut rng, req_id, key_id, epoch_id, ct_buf);
@@ -1003,16 +985,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // the sync endpoint is rate-limited the same way
         let err = user_decryptor
             .user_decrypt_sync(Request::new(request))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // finally reset the bucket size to a non-zero value
-        user_decryptor.set_bucket_size(100);
     }
 
     #[tokio::test]

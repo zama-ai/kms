@@ -23,7 +23,6 @@ METRICS = EXPECTED | frozenset(
     {
         "kms_active_sessions",
         "kms_inactive_sessions",
-        "kms_rate_limiter_usage",
         "kms_fhe_key_cache_size",
         "kms_meta_storage_user_decryptions",
         "kms_meta_storage_pub_decryptions",

@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
 use algebra::{
@@ -9,7 +9,7 @@ use algebra::{
 };
 use anyhow::anyhow;
 use bytes::Bytes;
-use itertools::Itertools;
+use futures_util::future::try_join_all;
 use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
@@ -26,7 +26,6 @@ use observability::{
     },
 };
 use tfhe::FheTypes;
-use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
         DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
@@ -62,12 +61,9 @@ use crate::{
             validate_public_decrypt_req,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_err_req_in_meta_store, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+        update_err_req_in_meta_store, update_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -134,7 +130,6 @@ pub struct RealPublicDecryptor<
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
     pub(crate) _dec: PhantomData<Dec>,
 }
@@ -176,10 +171,8 @@ impl<
             CiphertextFormat::SmallCompressed => keys.decompression_key(),
             _ => None,
         };
-        let low_level_ct = spawn_compute_bound(move || {
-            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
-        })
-        .await??;
+        let low_level_ct =
+            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -269,10 +262,6 @@ impl<
     ) -> Result<Response<Empty>, MetricedError> {
         metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .start();
@@ -548,7 +537,7 @@ impl<
                 // We don't update the error counter here but rather in the signature task
                 // so we only update it once even if there are multiple decryption task that fail
                 match res_plaintext {
-                    Ok(plaintext) => Ok((ctr, plaintext)),
+                    Ok(plaintext) => Ok(plaintext),
                     Result::Err(e) => Err(anyhow::anyhow!(
                         "Threshold decryption failed for ciphertext #{ctr} (handle {external_handle}): {e}"
                     )),
@@ -559,50 +548,37 @@ impl<
                     .spawn(decrypt_future().instrument(tracing::Span::current())),
             );
         }
-        let dec_sig_future = move |_permit| async move {
+        let dec_sig_future = move || async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
             // permit should be dropped at the end of this function
             let mut meta_permit = Some(meta_permit);
-            let mut decs = HashMap::new();
-
-            // Collect all results first, without holding any locks
-            while let Some(resp) = dec_tasks.pop() {
-                let err_msg = match resp.await {
-                    Ok(Ok((idx, plaintext))) => {
-                        decs.insert(idx, plaintext);
-                        // Everything is ok, no need to do error handling on this task
-                        continue;
-                    }
-                    Ok(Err(e)) => {
-                        format!("Failed inner decryption {req_id} with err: {e:?}")
-                    }
-                    Err(e) => {
-                        format!(
-                            "Failed join inner decryption threads on {req_id} with JoinError: {e:?}"
-                        )
-                    }
-                };
-                let _ = update_err_req_in_meta_store(
-                    &meta_store,
-                    meta_permit
-                        .take() // Ensure permit gets set to `None` after updating meta store with an errror
-                        .expect("permit must still be present on first error"),
-                    err_msg,
-                    OP_PUBLIC_DECRYPT_INNER,
-                )
-                .await;
-                return;
-            }
-            // All the inner decrypts succeeded ok...
-
-            // Prepare success data outside of lock
-            let pts: Vec<_> = decs
-                .keys()
-                .sorted()
-                .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
-                .collect();
+            let pts = try_join_all(dec_tasks.into_iter().map(|resp| async move {
+                match resp.await {
+                    Ok(Ok(plaintext)) => Ok(plaintext),
+                    Ok(Err(e)) => Err(format!("Failed inner decryption {req_id} with err: {e:?}")),
+                    Err(e) => Err(format!(
+                        "Failed join inner decryption threads on {req_id} with JoinError: {e:?}"
+                    )),
+                }
+            }))
+            .await;
+            let pts = match pts {
+                Ok(pts) => pts,
+                Err(err_msg) => {
+                    let _ = update_err_req_in_meta_store(
+                        &meta_store,
+                        meta_permit
+                            .take() // Ensure permit gets set to `None` after updating meta store with an error
+                            .expect("permit must still be present on first error"),
+                        err_msg,
+                        OP_PUBLIC_DECRYPT_INNER,
+                    )
+                    .await;
+                    return;
+                }
+            };
 
             // Assemble the full response payload here so it is signed once,
             // from one snapshot, rather than re-signed on every result fetch.
@@ -612,24 +588,15 @@ impl<
                 request_id: Some(req_id.into()),
             };
 
-            // Compute expensive signatures OUTSIDE the lock
-            let signed = spawn_compute_bound(move || {
-                sign_public_decryption_result(
-                    &sigkey,
-                    &signing_schemes,
-                    payload,
-                    &ext_handles_bytes,
-                    extra_data,
-                    &eip712_domain,
-                )
-            })
-            .await;
-            let res = match signed {
-                Ok(Ok(values)) => Ok(values),
-                Err(e) | Ok(Err(e)) => Err(format!(
-                    "Failed to sign decryption result for request {req_id}: {e:?}"
-                )),
-            };
+            let res = sign_public_decryption_result(
+                &sigkey,
+                &signing_schemes,
+                payload,
+                &ext_handles_bytes,
+                extra_data,
+                &eip712_domain,
+            )
+            .map_err(|e| format!("Failed to sign decryption result for request {req_id}: {e:?}"));
 
             update_req_in_meta_store(
                 &meta_store,
@@ -644,9 +611,7 @@ impl<
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
-            let _ = dec_sig_future(permit)
-                .instrument(tracing::Span::current())
-                .await;
+            let _ = dec_sig_future().instrument(tracing::Span::current()).await;
         });
         Ok(Response::new(Empty {}))
     }
@@ -759,6 +724,8 @@ fn format_public_request(request: &PublicDecryptionRequest) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::engine::rng_source::test_rng_source;
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
@@ -832,7 +799,6 @@ mod tests {
             );
 
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
 
             Self {
                 base_kms,
@@ -840,18 +806,9 @@ mod tests {
                 pub_dec_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
-                rate_limiter,
                 decryption_mode: DecryptionMode::NoiseFloodSmall,
                 _dec: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -980,15 +937,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+    async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(12);
-
         let (key_id, epoch_id, ct_buf, mut public_decryptor) =
             setup_public_decryptor(&mut rng).await;
-
-        // Set bucket size to zero, so no operations are allowed
-        public_decryptor.set_bucket_size(0);
+        public_decryptor.pub_dec_meta_store = MetaStore::new(1, 0);
+        let _pending = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
 
         let req_id = RequestId::new_random(&mut rng);
         let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
@@ -997,16 +956,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // the sync endpoint is rate-limited the same way
         let err = public_decryptor
             .public_decrypt_sync(Request::new(request))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // finally reset the bucket size to a non-zero value
-        public_decryptor.set_bucket_size(100);
     }
 
     #[tokio::test]

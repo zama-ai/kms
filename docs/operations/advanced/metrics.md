@@ -9,6 +9,7 @@
 ### Custom Health Check Timeouts
 
 **Timeout Configuration**:
+
 - **Connection timeout**: Default 5 seconds, configurable via `health-check.toml` or environment variables
 - **Request timeout**: Default 10 seconds, configurable via `health-check.toml` or environment variables
 - **Environment variables**: Use `HEALTH_CHECK__CONNECTION_TIMEOUT_SECS` and `HEALTH_CHECK__REQUEST_TIMEOUT_SECS`
@@ -17,12 +18,12 @@
 
 ### 13-Party Network Health Status
 
-| Status | Description (13-party network, t=4) | Action Required |
-|--------|-------------------------------------|-----------------|
-| **Optimal** | All 13 parties reachable | Normal operations |
-| **Healthy** | 9+ parties reachable | Monitor offline parties |
-| **Degraded** | 5-8 parties reachable | Check connectivity issues |
-| **Unhealthy** | < 5 parties reachable | Cannot perform threshold operations |
+| Status        | Description (13-party network, t=4) | Action Required                     |
+| ------------- | ----------------------------------- | ----------------------------------- |
+| **Optimal**   | All 13 parties reachable            | Normal operations                   |
+| **Healthy**   | 9+ parties reachable                | Monitor offline parties             |
+| **Degraded**  | 5-8 parties reachable               | Check connectivity issues           |
+| **Unhealthy** | < 5 parties reachable               | Cannot perform threshold operations |
 
 ## KMS Core Metrics
 
@@ -34,14 +35,16 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 ### Core Service Operations
 
-#### Metric Name: `kms_operations_total` 
+#### Metric Name: `kms_operations_total`
+
 - **Type**: Counter
 - **Description**: Total number of operations processed by the KMS core service.
 - **Alarm**: If the counter is a flat line over a period of time for critical operations.
 
-**Operation Types** (values of the `operation` label; values marked *(duration only)* appear on `kms_operation_duration_ms` — and some of them on `kms_operation_errors_total` when they fail — but not on this counter):
+**Operation Types** (values of the `operation` label; values marked _(duration only)_ appear on `kms_operation_duration_ms` — and some of them on `kms_operation_errors_total` when they fail — but not on this counter):
 
-*Key Generation Operations*:
+_Key Generation Operations_:
+
 - `keygen_request` - Key generation requests
 - `keygen_result` - Key generation result retrievals
 - `keygen_abort` - Key generation aborts
@@ -51,13 +54,14 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `standard_compressed_keygen` - Compressed key generation
 - `decompression_keygen` - Decompression key generation
 
-*Decryption Operations*:
+_Decryption Operations_:
+
 - `user_decrypt_request` - User decryption requests
 - `user_decrypt_result` - User decryption result retrievals
-- `user_decrypt_inner` - Individual user decryption operations *(duration only)*
+- `user_decrypt_inner` - Individual user decryption operations _(duration only)_
 - `public_decrypt_request` - Public decryption requests
 - `public_decrypt_result` - Public decryption result retrievals
-- `public_decrypt_inner` - Individual public decryption operations *(duration only)*
+- `public_decrypt_inner` - Individual public decryption operations _(duration only)_
 
 The synchronous decryption endpoints (`UserDecryptSync` / `PublicDecryptSync`) have no
 operations of their own: a sync call counts as one `*_decrypt_request` operation plus one
@@ -65,17 +69,20 @@ operations of their own: a sync call counts as one `*_decrypt_request` operation
 that sends the request and then polls `Get*DecryptionResult`. Dashboards and alerts built on
 these operations therefore work unchanged whether clients use the async or the sync endpoints.
 
-*CRS Operations*:
+_CRS Operations_:
+
 - `crs_gen_request` - CRS generation requests
 - `crs_gen_result` - CRS generation result retrievals
 - `crs_gen_abort` - CRS generation aborts
 
-*System Operations*:
+_System Operations_:
+
 - `system_startup` - Metrics-system sanity check, incremented once by every process at startup
 - `new_mpc_context` - MPC context creation
 - `destroy_mpc_context` - MPC context destruction
 
-*Custodian Operations*:
+_Custodian Operations_:
+
 - `new_custodian_context` - Custodian context creation
 - `destroy_custodian_context` - Custodian context destruction
 - `custodian_backup_recovery` - Backup recovery operations
@@ -83,22 +90,26 @@ these operations therefore work unchanged whether clients use the async or the s
 - `restore_from_backup` - Backup restoration operations
 - `key_material_availability` - Key material availability checks
 
-*Epoch Operations*:
+_Epoch Operations_:
+
 - `new_mpc_epoch` - MPC epoch creation
 - `destroy_mpc_epoch` - MPC epoch destruction
 - `get_mpc_epoch_result` - MPC epoch result retrievals
 
-*Other Operations*:
+_Other Operations_:
+
 - `fetch_pk` - Public key fetching operations
 
 #### Metric Name: `kms_operation_errors_total`
+
 - **Type**: Counter
 - **Description**: Total number of operation errors encountered by the KMS core service.
 - **Alarm**: If the counter increases over a period of time.
 
 **Common Error Types** (the `error` label; gRPC status codes are mapped to these via `map_tonic_code_to_metric_err_tag`):
+
 - `failed_precondition` - Precondition not met (tonic `FailedPrecondition`)
-- `resource_exhausted` - Resource limit hit, e.g. rate limiting (tonic `ResourceExhausted`)
+- `resource_exhausted` - Admission capacity is exhausted, for example when a meta store is full (tonic `ResourceExhausted`).
 - `cancelled` - Operation cancelled (tonic `Cancelled`)
 - `invalid_argument` - Invalid argument provided (tonic `InvalidArgument`)
 - `aborted` - Operation aborted (tonic `Aborted`)
@@ -110,6 +121,7 @@ these operations therefore work unchanged whether clients use the async or the s
 - `async_call_error` - Failure in an async worker thread, after the gRPC call already returned
 
 #### Metric Name: `kms_backup_errors_total`
+
 - **Type**: Counter
 - **Description**: Total number of backup errors, kept separate from `kms_operation_errors_total` because backup failures must never be drowned out by ordinary operation errors. Labels: `operation` (the operation whose backup-vault update failed, e.g. `boot` — service boot / PRSS initialization — `decompression_keygen`, or a custodian operation) and `error` (always `backup_error`).
 - **Alarm**: Any increase warrants investigation.
@@ -117,28 +129,32 @@ these operations therefore work unchanged whether clients use the async or the s
 ### Network Metrics
 
 #### Metric Name: `kms_network_rx_bytes_total`
+
 - **Type**: Counter
 - **Description**: Total number of bytes received over the network by KMS.
 - **Alarm**: If the counter stops increasing during expected traffic periods.
 
 #### Metric Name: `kms_network_tx_bytes_total`
+
 - **Type**: Counter
 - **Description**: Total number of bytes sent over the network by KMS.
 - **Alarm**: If the counter stops increasing during expected traffic periods.
 
 #### Threshold transport diagnostics
+
 - `kms_network_debug_events_total{event}` counts a fixed set of queue, session, send, retry,
   timeout, and late-message outcomes. Use it to diagnose transport backpressure.
 - `kms_network_sender_tasks` is the number of active sender tasks;
   `kms_network_sender_tasks_{spawned,completed}_total` make leaks or growing backlogs visible.
 - `kms_completed_sessions` counts completed MPC sessions retained so late peer messages are
   acknowledged as completed instead of reopening the session. Retention is controlled by
-  `session_cleanup_interval_secs` (24 hours by default), so this measures recent session churn
+  `session_cleanup_interval_secs` (6 hours by default), so this measures recent session churn
   over that window, not active work or a processing backlog.
 
 ### Performance Metrics
 
 #### Threshold user-decryption stages
+
 - `kms_user_decrypt_stage_duration_microseconds_total{stage}` and
   `kms_user_decrypt_stage_observations_total{stage}` expose cumulative wall time and observation
   count for admission, scheduler delay, deserialization, PRSS derivation, session creation,
@@ -149,12 +165,14 @@ these operations therefore work unchanged whether clients use the async or the s
   not finished.
 
 #### Metric Name: `kms_operation_duration_ms`
+
 - **Type**: Histogram
 - **Description**: Duration of KMS operations in milliseconds. Uses explicit buckets (1 ms → 5 min) because Prometheus defaults are tuned for seconds and would put most KMS measurements in `+Inf` (making p50/p95 meaningless).
 - **Tags**: The operation name is carried under `operation_type` (e.g. an `OP_*` constant value such as `keygen_request`); the counters and payload-size histogram expose the same value under `operation`. Plus low-cardinality tags like `party_id`, `tfhe_type`, etc. High-cardinality tags (e.g. `key_id`, `request_id`) are intentionally not attached to this series.
 - **Alarm**: If P95 latency exceeds acceptable thresholds for critical operations.
 
 #### Metric Name: `kms_payload_size_bytes`
+
 - **Type**: Histogram
 - **Description**: Size of KMS operation payloads in bytes. Uses explicit buckets (1 KiB → 64 GiB) to cover large FHE key/keyset payloads.
 - **Tags / NOTE**: Currently only the versioned storage write paths emit this metric (`safe_write_element_versioned` for file-backed vault, S3 `store_data_at_key`, and the in-memory `RamStorage`); there the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable, and sizes are recorded only after the write succeeds. Call `observe_size` from other paths (e.g. RPC handlers, labelling with the operation name) when useful.
@@ -163,24 +181,28 @@ these operations therefore work unchanged whether clients use the async or the s
 ### System Resource Metrics
 
 #### Metric Name: `kms_cpu_load`
+
 - **Type**: Gauge
 - **Description**: CPU load for KMS (averaged over all CPUs) as a percentage.
 - **Alarm**: If CPU load exceeds 80% for extended periods.
 
 #### Metric Name: `kms_memory_usage`
+
 - **Type**: Gauge
 - **Description**: Memory used by KMS in bytes.
 - **Alarm**: If memory usage exceeds 85% of available memory.
 
 #### Metric Name: `kms_fhe_key_cache_size`
+
 - **Type**: Gauge
 - **Description**: Number of FHE key entries held in the in-memory crypto-material cache. Each entry can hold multi-GiB decompressed key material, so this gauge tracks the dominant driver of KMS memory usage.
 - **Alarm**: If the count does not drop after an epoch is destroyed (cache entries are expected to be reclaimed).
 
 #### Other Gauges
+
 - **Type**: Gauge
-- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_tokio_alive_tasks`, `kms_tokio_global_queue_depth`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
-- **Alarm**: e.g. alert if `kms_rate_limiter_usage` saturates or `kms_active_sessions` looks abnormal.
+- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_tokio_alive_tasks`, `kms_tokio_global_queue_depth`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
+- **Alarm**: Alert if `kms_active_sessions` looks abnormal.
 
 ### Metric Tags
 
@@ -196,7 +218,7 @@ these operations therefore work unchanged whether clients use the async or the s
 
 High-cardinality values such as `key_id` or `request_id` are not accepted as labels by any metric family — the duration histogram only records the fixed label keys above and ignores unknown keys with a warning. See the developer metrics guide for the low-cardinality guard and best practices.
 
-**Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to *all* metrics for the process. This is the supported way to distinguish deployments: the kind CI overlay sets `deployment_profile=kind-ci`, so CI series stay separable from production in a shared Prometheus/Grafana. (The threshold and centralized kind matrices run in separate namespaces, `kms-test-threshold`/`kms-test-centralized`, so they are already distinguishable by the `namespace` label — not by a `deployment_type` const-label.)
+**Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to _all_ metrics for the process. This is the supported way to distinguish deployments: the kind CI overlay sets `deployment_profile=kind-ci`, so CI series stay separable from production in a shared Prometheus/Grafana. (The threshold and centralized kind matrices run in separate namespaces, `kms-test-threshold`/`kms-test-centralized`, so they are already distinguishable by the `namespace` label — not by a `deployment_type` const-label.)
 
 - Malformed entries, empty keys, empty values, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
 - In Helm: set `kmsCore.metricsLabels` (e.g. `deployment_profile=kind-ci`); the chart renders it into the `KMS_METRICS_LABELS` env on the kms-server container.
@@ -204,6 +226,7 @@ High-cardinality values such as `key_id` or `request_id` are not accepted as lab
 - See the [developer metrics guide](../../developer/metrics.md#distinguishing-deployments-kind-ci-vs-production) for the full mechanism, examples, and the `labels()` accessor for runtime inspection.
 
 **Operation Type Values**:
+
 - `total` - Total operations across all sub-types
 - `load_crs_pk` - Loading CRS public key operations
 - `proof_verification` - Proof verification operations
@@ -212,6 +235,7 @@ High-cardinality values such as `key_id` or `request_id` are not accepted as lab
 ### Insecure Operations (Development Only)
 
 #### Metric Name: `kms_operations_total` (Insecure Mode)
+
 - **Type**: Counter
 - **Description**: Operations available only in insecure/development mode.
 - **Insecure Operation Types**:
@@ -231,18 +255,21 @@ High-cardinality values such as `key_id` or `request_id` are not accepted as lab
 The KMS health check system provides additional operational metrics through the health endpoints:
 
 #### Health Check Operations
+
 - **Endpoint**: `GetHealthStatus` - Provides comprehensive health information
 - **Endpoint**: `GetKeyMaterialAvailability` - Reports available key material
 
 #### Health Status Levels
+
 - **Optimal**: All nodes online and reachable (threshold mode)
 - **Healthy**: Sufficient 2/3 majority but not all nodes online
-- **Degraded**: Above minimum threshold but below 2/3 majority  
+- **Degraded**: Above minimum threshold but below 2/3 majority
 - **Unhealthy**: Insufficient nodes for operations
 
 ### Key Material Monitoring
 
 #### Available Key Types
+
 - **FHE Keys**: Fully homomorphic encryption keys
 - **CRS Keys**: Common reference string keys
 - **Preprocessing Material**: PRSS preprocessing data (threshold mode only)
@@ -285,6 +312,7 @@ The Helm chart points the Kubernetes liveness probe at the `liveness` gRPC servi
 KMS exposes Prometheus-compatible metrics on the configured endpoint (default: `:<METRICS_PORT>/metrics` where `<METRICS_PORT>` defaults to `9646`).
 
 **Key Configuration Points**:
+
 - **Metrics Endpoint**: `/metrics` on the configured metrics port
 - **Scrape Interval**: Recommended 30 seconds for KMS operations
 - **Service Discovery**: Use Kubernetes pod discovery for dynamic environments
@@ -321,7 +349,7 @@ KMS metrics support comprehensive alerting for operational monitoring. Key alert
 KMS metrics can be visualized using Grafana dashboards. Key dashboard components should include:
 
 - **Operation Rates**: Monitor `kms_operations_total` metrics by operation type
-- **Error Tracking**: Visualize `kms_operation_errors_total` with operation and error breakdowns  
+- **Error Tracking**: Visualize `kms_operation_errors_total` with operation and error breakdowns
 - **Performance Metrics**: Display latency percentiles from `kms_operation_duration_ms` histograms
 - **System Resources**: Track `kms_cpu_load` and `kms_memory_usage` gauges
 - **Network Traffic**: Monitor `kms_network_rx_bytes_total` and `kms_network_tx_bytes_total` rates
@@ -331,8 +359,6 @@ KMS metrics can be visualized using Grafana dashboards. Key dashboard components
 - **Grafana Documentation**: [Creating Dashboards](https://grafana.com/docs/grafana/latest/dashboards/)
 - **Prometheus Integration**: [Prometheus Data Source](https://grafana.com/docs/grafana/latest/datasources/prometheus/)
 - **Best Practices**: [Dashboard Best Practices](https://grafana.com/docs/grafana/latest/best-practices/)
-
-
 
 ## Related Documentation
 

@@ -17,7 +17,7 @@
 duration = 60      # measurement window, seconds
 pause = 10         # post-measurement cooldown, seconds (skipped rates don't wait)
 maxfail = 0        # max failed requests, % of offered
-maxshed = 0        # max shed (rate-limited) requests, % of offered
+maxshed = 0        # max requests rejected at capacity, % of offered
 pct = 98           # min achieved/target rate, %
 allowfail = false  # false → a limit breach fails the run; true → warns only
 
