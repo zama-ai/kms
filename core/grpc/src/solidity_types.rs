@@ -96,7 +96,7 @@ impl PrepKeygenVerification {
 alloy_sol_types::sol! {
     struct EpochDestructionVerification {
         /// @notice The ID of the destroyed epoch.
-        uint256 epochId;
+        uint256 destroyedEpochId;
         /// @notice Extra data for client-specific context.
         bytes extraData;
     }
@@ -105,7 +105,7 @@ alloy_sol_types::sol! {
 impl EpochDestructionVerification {
     pub fn new(epoch_id: &EpochId, extra_data: Vec<u8>) -> Self {
         Self {
-            epochId: U256::from_be_slice(epoch_id.as_bytes()),
+            destroyedEpochId: U256::from_be_slice(epoch_id.as_bytes()),
             extraData: extra_data.into(),
         }
     }
