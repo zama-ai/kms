@@ -109,8 +109,7 @@ pub enum AgreeRandomValue {
 ///
 /// IMPORTANT: bincode encodes a variant by its position in the enum *after*
 /// `cfg` stripping. To keep the wire format backward compatible (rolling
-/// upgrades) and identical between builds with and without the `testing`
-/// feature:
+/// upgrades) and identical between builds _without_ the `testing` feature:
 /// - new non-test variants must be appended right after the last non-test
 ///   variant, i.e. *before* the `testing`-gated block;
 /// - `testing`-gated variants must always stay at the very end.
