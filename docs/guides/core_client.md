@@ -801,7 +801,15 @@ against its own signing key at boot before installing it. A key that is wrong bu
 attested just as faithfully.
 
 Note also that the document's nonce is chosen by the enclave rather than by the caller, and AWS
-permits attestation reuse, so the document offers no freshness guarantee.
+permits attestation reuse, so the document does not prove it was issued for this request. The core
+attests the key anew on every request, so the command rejects a document whose NSM timestamp is
+more than 5 minutes old, or more than 60 seconds in the future. This narrows replays of an older
+document; it does not rule them out.
+
+Each key is checked on its own, so the command also rejects two parties returning the same key or
+being attested by the same enclave (the document's `module_id`), and prints each key as
+`party <PARTY_ID>: <KEY>`, sorted by party. The command does not compare the PCR values against
+expected ones.
 
 Cores with no security module configured return an empty attestation document, which this command
 rejects; it only works against enclave-backed deployments.

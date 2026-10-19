@@ -2891,7 +2891,9 @@ pub async fn execute_cmd(
         }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
             let pks = do_get_operator_pub_keys(&core_endpoints_req).await?;
-            pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
+            pks.into_iter()
+                .map(|(party_id, pk)| (None, format!("party {party_id}: {pk}")))
+                .collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
