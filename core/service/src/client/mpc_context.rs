@@ -11,6 +11,11 @@ impl Client {
     ) -> anyhow::Result<NewMpcContextRequest> {
         Ok(NewMpcContextRequest {
             new_context: Some(MpcContext::try_from(new_context)?),
+            previous_context_id: todo!(),
+            node_config_hash: todo!(),
+            domain: todo!(),
+            extra_data: todo!(),
+            signing_schemes: todo!(),
         })
     }
 

@@ -20,7 +20,7 @@ pub trait ContextManager {
     async fn new_custodian_context(
         &self,
         request: Request<NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError>;
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError>;
 
     async fn destroy_custodian_context(
         &self,

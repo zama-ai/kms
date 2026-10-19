@@ -720,7 +720,17 @@ message NewMpcContextResponse {
   //     bytes32 nodeConfigHash;
   //     bytes extraData;
   // }
-  repeated TypedSignature signatures = 1;
+  // The ID of the context that was active when the new context was defined.
+  RequestId previous_context_id = 1;
+  // The ID of the new context.
+  RequestId new_context_id = 2;
+  // keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)) of the new context.
+  bytes node_config_hash = 3;
+  // Extra data signed as `extraData`.
+  bytes extra_data = 4;
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 5;
 }
 
 // Request to destroy the MPC context.

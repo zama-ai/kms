@@ -8,8 +8,8 @@ use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
     self, CustodianRecoveryRequest, DestroyMpcContextResponse, Empty, HealthStatusResponse,
-    KeyGenPreprocRequest, KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType,
-    OperatorPublicKey,
+    KeyGenPreprocRequest, KeyGenPreprocResult, KeyMaterialAvailabilityResponse,
+    NewMpcContextResponse, NodeType, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
@@ -288,7 +288,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     async fn new_mpc_context(
         &self,
         request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+    ) -> Result<Response<kms_grpc::kms::v1::NewMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
         self.context_manager
             .new_mpc_context(request)
@@ -316,7 +316,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     async fn new_custodian_context(
         &self,
         request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<NewMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
         self.context_manager
             .new_custodian_context(request)

@@ -32,11 +32,11 @@ use crate::{
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
+use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -82,7 +82,14 @@ where
         require_pcr_allowlist: bool,
     ) -> anyhow::Result<(Option<Role>, ContextInfo)> {
         // first verify that the context is valid
-        let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
+        let kms_grpc::kms::v1::NewMpcContextRequest {
+            new_context,
+            previous_context_id,
+            node_config_hash,
+            domain,
+            extra_data,
+            signing_schemes,
+        } = request.into_inner();
 
         let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)?;
@@ -140,7 +147,8 @@ where
     async fn new_custodian_context(
         self: Arc<Self>,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::NewCustodianContextResponse>, MetricedError>
+    {
         let inner = request.into_inner();
         let mpc_context_id: ContextId = inner
             .mpc_context_id
@@ -265,7 +273,13 @@ where
             })?;
 
         //Always answer with Empty
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(NewMpcContextResponse {
+            signatures: todo!(),
+            previous_context_id: todo!(),
+            new_context_id: todo!(),
+            node_config_hash: todo!(),
+            extra_data: todo!(),
+        }))
     }
 
     /// Removes a custodian context from disk storage and RAM (the meta-store).
@@ -371,7 +385,13 @@ where
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await;
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(NewMpcContextResponse {
+            previous_context_id: todo!(),
+            new_context_id: todo!(),
+            node_config_hash: todo!(),
+            extra_data: todo!(),
+            signatures: todo!(),
+        }))
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
@@ -808,7 +828,7 @@ where
     async fn new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
         let (_my_role, new_context) = self
             .inner
             .verify_and_extract_new_mpc_context(request, false)
@@ -883,7 +903,12 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(NewMpcContextResponse {
+            previous_context_id: todo!(),
+            new_context_id: todo!(),
+            node_config_hash: todo!(),
+            extra_data: todo!(),
+        }))
     }
 
     async fn destroy_mpc_context(
@@ -984,7 +1009,7 @@ where
     async fn new_custodian_context(
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<NewMpcContextResponses>, MetricedError> {
         Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
@@ -1371,7 +1396,7 @@ where
     async fn new_custodian_context(
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
+    ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
         Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
