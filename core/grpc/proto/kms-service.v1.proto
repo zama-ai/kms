@@ -383,13 +383,24 @@ service CoreServiceEndpoint {
   //
   // # Parameters
   // * `new_context` - Struct containing all the data of the request.
+  // * `previous_context_id` - The context active on the canonical ProtocolConfig contract when the new context was defined.
+  // * `node_config_hash` - The 32-byte `nodeConfigHash` of the new context, computed from the NewKmsContext event.
+  // * `domain` - The EIP712 domain of the canonical ProtocolConfig contract.
+  // * `extra_data` - Extra data included in the signed message.
+  // * `signing_schemes` - The signature schemes to sign with.
+  //
+  // # Returns
+  // * `signatures` - Per-scheme signatures on the ContextCreationConfirmation of the new context.
   //
   // # Conditions
   // ## Pre-condition:
   // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
+  // * `previous_context_id` must be present and valid [`RequestId`].
+  // * `node_config_hash` must be exactly 32 bytes.
+  // * `domain` must be present.
   // ## Post-condition:
   // * The `context_id` in `request` now represents a new MPC context.
-  rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
+  rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.NewMpcContextResponse);
 
   // Destroys an MPC context and the epochs associated with it by removing them from memory and storage.
   //
