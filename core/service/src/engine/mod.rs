@@ -30,8 +30,6 @@ pub mod rng_source;
 #[cfg(feature = "non-wasm")]
 pub mod service;
 #[cfg(feature = "non-wasm")]
-pub mod service_traits;
-#[cfg(feature = "non-wasm")]
 pub(crate) mod storage_material_verification;
 #[cfg(feature = "non-wasm")]
 pub mod traits;

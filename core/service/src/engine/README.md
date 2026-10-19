@@ -28,8 +28,6 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 - **endpoint.rs**  
   Entry points for threshold gRPC calls.
 
-- **service_traits.rs**: Traits specific to threshold services.
-
 - **service/**  
   Endpoint-specific code for threshold operations:
   - **crs_generator.rs**: CRS generation logic.

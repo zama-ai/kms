@@ -62,7 +62,6 @@ use crate::{
             PublicKeyMaterial, ThresholdFheKeys,
             session::{ImmutableSessionMaker, validate_context_and_epoch},
         },
-        service_traits::KeyGenerator,
         utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -110,8 +109,6 @@ enum ThresholdKeyGenResult {
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use crate::engine::service_traits::InsecureKeyGenerator;
-#[cfg(feature = "insecure")]
 use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
 use threshold_execution::tfhe_internals::{
@@ -124,7 +121,7 @@ use threshold_execution::tfhe_internals::{
     },
 };
 
-pub struct RealKeyGenerator<
+pub(crate) struct KeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -149,24 +146,24 @@ pub struct RealKeyGenerator<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureKeyGenerator<
+pub(crate) struct InsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
+    pub real_key_generator: KeyGenerator<PubS, PrivS, KG>,
 }
 
 #[cfg(feature = "insecure")]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-> RealInsecureKeyGenerator<PubS, PrivS, KG>
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+> InsecureKeyGenerator<PubS, PrivS, KG>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
+    pub async fn from_real_keygen(value: &KeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
-            real_key_generator: RealKeyGenerator {
+            real_key_generator: KeyGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
@@ -179,24 +176,16 @@ impl<
             },
         }
     }
-}
-#[cfg(feature = "insecure")]
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
-{
-    async fn insecure_key_gen(
+
+    pub(crate) async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        tracing::info!("starting insecure key gen in RealInsecureKeyGenerator");
+        tracing::info!("starting insecure key gen in InsecureKeyGenerator");
         self.real_key_generator.inner_key_gen(request, true).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
@@ -204,20 +193,10 @@ impl<
             .inner_get_result(request, true)
             .await
     }
-
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
-        self.real_key_generator
-            .inner_abort_key_gen(preproc_id)
-            .await
-    }
 }
 
-// This is an enum to determine whether to start the dkg
-// in a secure mode. If the secure mode is selected,
-// a preprocessing handle must be given.
-// This is essentially the same as an Option, but it's
-// more clear to label the variants as `Secure`
-// and `Insecure`.
+// This is an enum to determine whether to start the dkg in a secure mode. If the secure mode is selected, a
+// preprocessing handle must be given.
 #[expect(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum PreprocHandleWithMode {
@@ -227,6 +206,7 @@ pub enum PreprocHandleWithMode {
             Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
         ),
     ),
+    #[cfg_attr(not(feature = "insecure"), expect(dead_code))]
     Insecure(RequestId),
 }
 
@@ -238,7 +218,7 @@ impl PreprocHandleWithMode {
     }
 }
 
-/// Outcome of [`RealKeyGenerator::resolve_preprocessing`]: everything the DKG
+/// Outcome of [`KeyGenerator::resolve_preprocessing`]: everything the DKG
 /// launch needs to know about the preprocessing backing a key generation request.
 struct ResolvedPreprocessing {
     /// The preprocessing handle (real material or insecure marker) together with
@@ -266,7 +246,7 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> RealKeyGenerator<PubS, PrivS, KG>
+> KeyGenerator<PubS, PrivS, KG>
 {
     #[expect(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -1838,30 +1818,24 @@ impl<
             )
         })
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
-{
-    async fn key_gen(
+    pub(crate) async fn key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_key_gen(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`Preprocessor`]
+    pub(crate) async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
         self.inner_abort_key_gen(preproc_id).await
     }
 }
@@ -1905,7 +1879,7 @@ mod tests {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > RealKeyGenerator<PubS, PrivS, KG>
+    > KeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1940,7 +1914,7 @@ mod tests {
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         setup_key_generator_with_storage(ram::RamStorage::new(), ram::RamStorage::new()).await
     }
@@ -1952,7 +1926,7 @@ mod tests {
     >(
         pub_storage: PubS,
         priv_storage: PrivS,
-    ) -> ([RequestId; 4], RealKeyGenerator<PubS, PrivS, KG>) {
+    ) -> ([RequestId; 4], KeyGenerator<PubS, PrivS, KG>) {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
@@ -1975,7 +1949,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        let kg = RealKeyGenerator::<PubS, PrivS, KG>::init_test(
+        let kg = KeyGenerator::<PubS, PrivS, KG>::init_test(
             base_kms,
             pub_storage,
             priv_storage,
@@ -2254,7 +2228,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(3);
 
         let recorded_errors_before = crate::engine::utils::handle_error_call_count();
-        let err = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
+        let err = KeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
             &kg.preproc_buckets,
             RequestId::new_random(&mut rng),
             Some(RequestId::new_random(&mut rng)),
@@ -2500,7 +2474,7 @@ mod tests {
     async fn insert_insecure_bucket<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >(
-        kg: &RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        kg: &KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
         prep_id: &RequestId,
     ) {
         let bucket = BucketMetaStore {
@@ -2543,7 +2517,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(9);
         let key_id = RequestId::new_random(&mut rng);
 
@@ -2588,7 +2562,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(11);
         let key_id = RequestId::new_random(&mut rng);
         let bad_prep_id = RequestId::new_random(&mut rng);
@@ -2643,7 +2617,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(12);
         let insecure_prep_id = RequestId::new_random(&mut rng);
         insert_insecure_bucket(&kg, &insecure_prep_id).await;
@@ -2680,7 +2654,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(13);
         let key_id = RequestId::new_random(&mut rng);
 

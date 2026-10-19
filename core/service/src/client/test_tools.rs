@@ -7,8 +7,9 @@ use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
+use crate::engine::kms::ThresholdKms;
 use crate::engine::rng_source::test_rng_source;
-use crate::engine::service::{RealThresholdKms, new_real_threshold_kms};
+use crate::engine::service::new_real_threshold_kms;
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::vault::Vault;
@@ -376,7 +377,7 @@ pub async fn setup_threshold_with_custom_peers<
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
-                RealThresholdKms<PubS, PrivS>,
+                ThresholdKms<PubS, PrivS>,
                 (HealthState, _),
                 MetaStoreStatusServiceImpl,
             )> = new_real_threshold_kms(
@@ -810,9 +811,8 @@ pub async fn setup_recovery_mode<
         health,
     );
     // The service name does not depend on the type parameters of the server.
-    let service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
     await_server_ready(service_name, service_port).await;
     let uri = Uri::from_str(&format!(
         "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{service_port}"

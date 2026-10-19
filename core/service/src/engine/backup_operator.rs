@@ -27,10 +27,7 @@ use crate::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PrivateSigKey, PublicSigKey},
     },
-    engine::{
-        base::BaseKmsStruct, service::ThresholdFheKeys, traits::BackupOperator,
-        validation::RequestIdParsingErr,
-    },
+    engine::{base::BaseKmsStruct, service::ThresholdFheKeys, validation::RequestIdParsingErr},
     vault::{
         Vault, VaultDataType,
         keychain::KeychainProxy,
@@ -67,7 +64,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 use zeroize::Zeroizing;
 
-pub struct RealBackupOperator<
+pub(crate) struct BackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
@@ -121,7 +118,7 @@ impl Drop for RecoveredKeys {
     }
 }
 
-impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
+impl<PubS, PrivS> BackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -213,7 +210,7 @@ where
             .map_err(fail)
     }
 
-    pub fn new(
+    pub(crate) fn new(
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         security_module: Option<Arc<SecurityModuleProxy>>,
@@ -325,20 +322,13 @@ where
         .await?;
         Ok((validated_rec, operator))
     }
-}
 
-#[tonic::async_trait]
-impl<PubS, PrivS> BackupOperator for RealBackupOperator<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-{
     /// Return the operator's backup encryption key, with an attestation document over its digest.
     ///
     /// A digest is attested rather than the key because the composite key exceeds the attestation
     /// document's [`crate::cryptography::attestation::NSM_ATTESTATION_FIELD_MAX_BYTES`] `public_key`
     /// field.
-    async fn get_operator_public_key(
+    pub(crate) async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, MetricedError> {
@@ -394,7 +384,7 @@ where
     }
 
     /// Restores the most recent custodian based backup.
-    async fn custodian_recovery_init(
+    pub(crate) async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
     ) -> Result<Response<RecoveryRequest>, MetricedError> {
@@ -492,7 +482,7 @@ where
     ///
     /// Observe that the decryption key is NOT persisted on disc and in fact removed immediately after a call to `restore_from_backup`
     /// in order to minimize the possibility of leakage.
-    async fn custodian_backup_recovery(
+    pub(crate) async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -692,7 +682,7 @@ where
     /// Observe that if secret sharing is used for backup (i.e. with a master key being shared with a set of custodians)
     /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
     /// which is needed to allow decryption of the backup data.
-    async fn restore_from_backup(
+    pub(crate) async fn restore_from_backup(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -727,7 +717,7 @@ where
         }
     }
 
-    async fn get_key_material_availability(
+    pub(crate) async fn get_key_material_availability(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError> {
@@ -1995,10 +1985,7 @@ mod tests {
     /// together with the identity they form.
     async fn operator_after_restore(
         anchored: Option<RequestId>,
-    ) -> (
-        RealBackupOperator<RamStorage, RamStorage>,
-        NodeSigningIdentity,
-    ) {
+    ) -> (BackupOperator<RamStorage, RamStorage>, NodeSigningIdentity) {
         let mut rng = AesRng::seed_from_u64(9);
         let (_vk, sig_key) = gen_sig_keys(&mut rng);
         let seed = RootSigningSeed::random(&mut rng);
@@ -2025,7 +2012,7 @@ mod tests {
                 .unwrap();
         }
         let identity = NodeSigningIdentity::new(sig_key, seed);
-        let operator = RealBackupOperator::new(
+        let operator = BackupOperator::new(
             BaseKmsStruct::new(identity.clone(), test_rng_source()),
             CryptoMaterialStorage::from(
                 RamStorage::new(),

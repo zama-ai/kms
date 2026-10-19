@@ -38,7 +38,6 @@ use crate::{
             stored_scheme_signatures_to_proto,
         },
         service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-        service_traits::CrsGenerator,
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::meta_store::{
@@ -51,7 +50,7 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::{engine::service_traits::InsecureCrsGenerator, util::key_setup::local_material::async_generate_crs};
+        use crate::util::key_setup::local_material::async_generate_crs;
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
@@ -63,7 +62,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub struct RealCrsGenerator<
+pub(crate) struct CrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
@@ -83,7 +82,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealCrsGenerator<PubS, PrivS, C>
+> CrsGenerator<PubS, PrivS, C>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -460,30 +459,22 @@ impl<
             }
         }
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
-{
-    async fn crs_gen(
+    pub(crate) async fn crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_crs_gen_from_request(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_crs_gen(
+    pub(crate) async fn abort_crs_gen(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -492,12 +483,12 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureCrsGenerator<
+pub(crate) struct InsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, C>,
+    pub real_crs_generator: CrsGenerator<PubS, PrivS, C>,
 }
 
 #[cfg(feature = "insecure")]
@@ -505,11 +496,11 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealInsecureCrsGenerator<PubS, PrivS, C>
+> InsecureCrsGenerator<PubS, PrivS, C>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
+    pub async fn from_real_crsgen(value: &CrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
-            real_crs_generator: RealCrsGenerator {
+            real_crs_generator: CrsGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
@@ -520,40 +511,24 @@ impl<
             },
         }
     }
-}
 
-#[cfg(feature = "insecure")]
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
-{
-    async fn insecure_crs_gen(
+    pub(crate) async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        tracing::info!("starting insecure crs gen in RealInsecureCrsGenerator");
+        tracing::info!("starting insecure crs gen in InsecureCrsGenerator");
         self.real_crs_generator
             .inner_crs_gen_from_request(request, true)
             .await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.real_crs_generator
             .inner_get_result(request, true)
             .await
-    }
-
-    async fn abort_crs_gen(
-        &self,
-        request: Request<v1::RequestId>,
-    ) -> Result<Response<Empty>, MetricedError> {
-        self.real_crs_generator.inner_abort_crs_gen(request).await
     }
 }
 
@@ -594,7 +569,7 @@ mod tests {
         PubS: Storage + Send + Sync + 'static,
         PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
-    > RealCrsGenerator<PubS, PrivS, C>
+    > CrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -676,7 +651,7 @@ mod tests {
 
     async fn make_crs_gen<C: Ceremony + 'static>(
         rng: &mut AesRng,
-    ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
+    ) -> CrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(NodeSigningIdentity::ecdsa_only(sk), test_rng_source());
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -691,7 +666,7 @@ mod tests {
 
         let pub_storage = ram::RamStorage::new();
         let priv_storage = ram::RamStorage::new();
-        RealCrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
+        CrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
             base_kms,
             pub_storage,
             priv_storage,

@@ -32,16 +32,9 @@ use tfhe::{
     xof_key_set::CompressedXofKeySet,
 };
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
-    endpoints::keygen::SecureOnlineDistributedKeyGen128,
-    online::preprocessing::{
-        DKGPreprocessing, create_memory_factory,
-        orchestration::producer_traits::SecureSmallProducerFactory,
-    },
-    small_execution::prss::RobustSecurePrssInit,
+    online::preprocessing::{DKGPreprocessing, create_memory_factory},
     tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
-    zk::ceremony::SecureCeremony,
 };
 use threshold_networking::{
     grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
@@ -58,7 +51,7 @@ use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::service::epoch_manager::{EpochData, RealThresholdEpochManager};
+use crate::engine::service::epoch_manager::{EpochData, ThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -67,7 +60,7 @@ use crate::{
     consts::MINIMUM_SESSIONS_PREPROC,
     cryptography::attestation::SecurityModuleProxy,
     engine::{
-        backup_operator::RealBackupOperator,
+        backup_operator::BackupOperator,
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
@@ -75,11 +68,7 @@ use crate::{
         kms::ThresholdKms,
         prepare_shutdown_signals,
         public_material_sync::sync_public_material_from_peers,
-        service::{
-            public_decryptor::SecureNoiseFloodDecryptor,
-            session::{ImmutableSessionMaker, SessionMaker},
-            user_decryptor::SecureNoiseFloodPartialDecryptor,
-        },
+        service::session::{ImmutableSessionMaker, SessionMaker},
         storage_material_verification::{
             verify_private_metadata, verify_private_storage_layout, verify_storage_material,
         },
@@ -99,14 +88,13 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    crs_generator::RealCrsGenerator, key_generator::RealKeyGenerator,
-    preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
-    user_decryptor::RealUserDecryptor,
+    crs_generator::CrsGenerator, key_generator::KeyGenerator, preprocessor::Preprocessor,
+    public_decryptor::PublicDecryptor, user_decryptor::UserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
+use super::{crs_generator::InsecureCrsGenerator, key_generator::InsecureKeyGenerator};
 
 /// Versioned envelope for PublicKeyMaterial.
 /// V0 is the fat variant (with decompressed keys), V1 is the slim variant.
@@ -459,44 +447,6 @@ pub(crate) fn new_insecure_preproc_bucket(
     })
 }
 
-#[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
-#[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealInsecureKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
@@ -509,7 +459,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS>,
+    ThresholdKms<PubS, PrivS>,
     (HealthState, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
@@ -669,7 +619,7 @@ where
     // We are only serving after initialization
     health
         .reporter()
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .set_not_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
         .await;
     let mpc_server_health = health.clone();
 
@@ -817,7 +767,7 @@ where
 
     let tracker = Arc::new(TaskTracker::new());
 
-    let epoch_manager = RealThresholdEpochManager {
+    let epoch_manager = ThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance(),
@@ -849,7 +799,7 @@ where
 
     let immutable_session_maker = session_maker.make_immutable();
 
-    let user_decryptor = RealUserDecryptor {
+    let user_decryptor = UserDecryptor {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
@@ -859,7 +809,7 @@ where
         _dec: PhantomData,
     };
 
-    let public_decryptor = RealPublicDecryptor {
+    let public_decryptor = PublicDecryptor {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
@@ -869,7 +819,7 @@ where
         _dec: PhantomData,
     };
 
-    let keygenerator = RealKeyGenerator {
+    let keygenerator = KeyGenerator {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
@@ -882,9 +832,9 @@ where
     };
 
     #[cfg(feature = "insecure")]
-    let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
+    let insecure_keygenerator = InsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
-    let keygen_preprocessor = RealPreprocessor {
+    let keygen_preprocessor = Preprocessor {
         base_kms: base_kms.new_instance(),
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
@@ -895,7 +845,7 @@ where
         _producer_factory: PhantomData,
     };
 
-    let crs_generator = RealCrsGenerator {
+    let crs_generator = CrsGenerator {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
@@ -906,9 +856,9 @@ where
     };
 
     #[cfg(feature = "insecure")]
-    let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
+    let insecure_crs_generator = InsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
-    let backup_operator = RealBackupOperator::new(
+    let backup_operator = BackupOperator::new(
         base_kms.new_instance(),
         crypto_storage.inner.clone(),
         security_module,
