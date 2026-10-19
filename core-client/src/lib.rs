@@ -961,10 +961,6 @@ pub struct ResultParameters {
 pub struct KeyGenResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
-    /// Preprocessing ID the key was generated from.
-    /// Required unless `--no-verify` is set.
-    #[clap(long)]
-    pub preproc_id: Option<RequestId>,
     /// Fetch legacy uncompressed public key material instead of the default compressed keyset.
     #[clap(long, short = 'u', default_value_t = false)]
     pub uncompressed: bool,
@@ -1361,17 +1357,6 @@ pub(crate) fn ensure_distinct_signers(
         seen.len()
     );
     Ok(())
-}
-
-/// The preprocessing ID a `key-gen-result` command verifies the responses against.
-fn keygen_result_preproc_id(params: &KeyGenResultParameters) -> anyhow::Result<Option<RequestId>> {
-    match (params.preproc_id, params.no_verify) {
-        (None, false) => Err(anyhow::anyhow!(
-            "--preproc-id is required to verify a keygen result: pass the preprocessing ID the \
-             key was generated from, or --no-verify to fetch without verification"
-        )),
-        (preproc_id, _) => Ok(preproc_id),
-    }
 }
 
 /// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
@@ -2659,7 +2644,6 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
-            let preproc_id = keygen_result_preproc_id(result_parameters)?;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
                 req_id,
@@ -2684,7 +2668,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
-                preproc_id,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2700,7 +2683,6 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
-            let preproc_id = keygen_result_preproc_id(result_parameters)?;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
                 req_id,
@@ -2725,7 +2707,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
-                preproc_id,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -3634,41 +3615,6 @@ mod tests {
         // v2 layout: 1 version byte + 32-byte context + 32-byte epoch.
         assert_eq!(from_helper.len(), 1 + 32 + 32);
         assert_eq!(from_helper[0], 2);
-    }
-
-    /// `key-gen-result` only verifies against a preprocessing ID given on the command line,
-    /// and needs none with `--no-verify`.
-    #[test]
-    fn test_keygen_result_requires_preproc_id() {
-        let request_id = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        let preproc_id = "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        let parse = |extra: &[&str]| {
-            let mut args = vec!["core-client", "key-gen-result", "--request-id", request_id];
-            args.extend_from_slice(extra);
-            let conf = CmdConfig::try_parse_from(args).unwrap();
-            let CCCommand::KeyGenResult(params) = conf.command else {
-                panic!("expected a key-gen-result command");
-            };
-            params
-        };
-
-        let err = keygen_result_preproc_id(&parse(&[]))
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("--preproc-id is required"),
-            "unexpected error: {err}"
-        );
-
-        assert_eq!(
-            keygen_result_preproc_id(&parse(&["--preproc-id", preproc_id])).unwrap(),
-            Some(RequestId::from_str(preproc_id).unwrap())
-        );
-
-        assert_eq!(
-            keygen_result_preproc_id(&parse(&["--no-verify"])).unwrap(),
-            None
-        );
     }
 
     /// `preproc-key-gen-result` checks the fetched responses against the context and
