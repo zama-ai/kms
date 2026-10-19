@@ -770,11 +770,7 @@ pub(crate) async fn do_preproc(
             extra_data.clone(),
         )?);
     }
-    ensure_distinct_signers(
-        &format!("preprocessing {req_id}"),
-        &signers,
-        responses.len(),
-    )?;
+    ensure_distinct_signers(&format!("preprocessing {req_id}"), &signers, num_parties)?;
 
     Ok(req_id)
 }
@@ -856,22 +852,20 @@ pub(crate) async fn do_partial_preproc(
             extra_data.clone(),
         )?);
     }
-    ensure_distinct_signers(
-        &format!("preprocessing {req_id}"),
-        &signers,
-        responses.len(),
-    )?;
+    ensure_distinct_signers(&format!("preprocessing {req_id}"), &signers, num_parties)?;
 
     Ok(req_id)
 }
 
 /// Check every signature each preprocessing response carries, under every scheme
-/// the client requested, and that each was produced by a different known KMS party.
+/// the client requested, and that at least `required` different known KMS parties
+/// produced them.
 pub(crate) fn check_preproc_responses(
     internal_client: &Client,
     request_id: &RequestId,
     verify_material: &SigVerificationMaterial,
     responses: &[KeyGenPreprocResult],
+    required: usize,
 ) -> anyhow::Result<()> {
     let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
@@ -882,11 +876,7 @@ pub(crate) fn check_preproc_responses(
             verify_material.extra_data.clone(),
         )?);
     }
-    ensure_distinct_signers(
-        &format!("preprocessing {request_id}"),
-        &signers,
-        responses.len(),
-    )?;
+    ensure_distinct_signers(&format!("preprocessing {request_id}"), &signers, required)?;
     tracing::info!(
         "Verified the signatures on {} preprocessing responses for {request_id}",
         responses.len()

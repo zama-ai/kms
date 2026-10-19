@@ -2603,6 +2603,11 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
+                let num_expected_responses = if expect_all_responses {
+                    num_parties
+                } else {
+                    cc_conf.num_majority
+                };
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2610,6 +2615,7 @@ pub async fn execute_cmd(
                     &req_id,
                     &verify_material,
                     &responses,
+                    num_expected_responses,
                 )?;
             }
             vec![(Some(req_id), "preproc result queried".to_string())]
@@ -2626,6 +2632,11 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
+                let num_expected_responses = if expect_all_responses {
+                    num_parties
+                } else {
+                    cc_conf.num_majority
+                };
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2633,6 +2644,7 @@ pub async fn execute_cmd(
                     &req_id,
                     &verify_material,
                     &responses,
+                    num_expected_responses,
                 )?;
             }
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
@@ -3672,11 +3684,11 @@ mod tests {
             keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
                 .unwrap()
                 .expect("verification is on without --no-verify");
-        keygen::check_preproc_responses(&client, &req_id, &verify, &responses).unwrap();
+        keygen::check_preproc_responses(&client, &req_id, &verify, &responses, 1).unwrap();
 
         // the responses answer `req_id`, so checking them for another ID fails
         let other_id = derive_request_id("preproc_result_other_id").unwrap();
-        let err = keygen::check_preproc_responses(&client, &other_id, &verify, &responses)
+        let err = keygen::check_preproc_responses(&client, &other_id, &verify, &responses, 1)
             .unwrap_err()
             .to_string();
         assert!(err.contains("does not match"), "unexpected error: {err}");
@@ -3701,7 +3713,7 @@ mod tests {
             keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
                 .unwrap()
                 .expect("verification is on without --no-verify");
-        assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses).is_err());
+        assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses, 1).is_err());
     }
 
     #[test]
@@ -3731,7 +3743,8 @@ mod tests {
     }
 
     /// A preprocessing response that one party signed verifies on its own, so the same
-    /// response replayed in place of another party's must be refused.
+    /// response replayed in place of another party's must be refused, and distinct responses
+    /// must still reach the required quorum.
     #[test]
     fn test_preproc_responses_reject_replayed_signer() {
         let mut rng = AesRng::seed_from_u64(7);
@@ -3762,13 +3775,40 @@ mod tests {
         let from_1 = response_from(&sig_key_1);
         let from_2 = response_from(&sig_key_2);
 
-        keygen::check_preproc_responses(&client, &req_id, &verify, &[from_1.clone(), from_2])
-            .unwrap();
+        keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_2.clone()],
+            2,
+        )
+        .unwrap();
 
-        let err =
-            keygen::check_preproc_responses(&client, &req_id, &verify, &[from_1.clone(), from_1])
-                .unwrap_err()
-                .to_string();
+        // Distinct signers are still too few when fewer parties answered than the quorum
+        // requires, as when the config lists fewer cores than `num_majority`.
+        let err = keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_2],
+            3,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("only 2 distinct parties signed"),
+            "unexpected error: {err}"
+        );
+
+        let err = keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_1],
+            2,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("signed more than one response"),
             "unexpected error: {err}"

@@ -123,6 +123,13 @@ pub(crate) async fn do_new_epoch(
     tracing::info!("Starting new epoch creation...");
     tracing::info!("CONFIG IS : {:?}", cc_conf.cores);
     let max_iter = cmd_conf.max_iter;
+    // Every configured core must answer below, but the config may list fewer cores than the
+    // quorum, so the number of distinct signers is checked against the quorum itself.
+    let num_expected_responses = if cmd_conf.expect_all_responses {
+        cc_conf.num_parties
+    } else {
+        cc_conf.num_majority
+    };
 
     let (new_epoch_id, new_context_id) = (
         new_epoch_params.new_epoch_id,
@@ -432,7 +439,7 @@ pub(crate) async fn do_new_epoch(
             ensure_distinct_signers(
                 &format!("reshared key {key_id}"),
                 &signers,
-                response_vec.len(),
+                num_expected_responses,
             )?;
         }
 
@@ -493,7 +500,7 @@ pub(crate) async fn do_new_epoch(
             ensure_distinct_signers(
                 &format!("reshared CRS {crs_id}"),
                 &signers,
-                response_vec.len(),
+                num_expected_responses,
             )?;
         }
     } else {
