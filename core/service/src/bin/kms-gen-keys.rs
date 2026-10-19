@@ -7,7 +7,7 @@ use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::{
     conf::{
         AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
-        init_conf, reject_secret_sharing, threshold::PeerConf,
+        init_conf, party::PeerConf, reject_secret_sharing,
     },
     consts::{SIGNING_KEY_ID, signing_material_id},
     cryptography::attestation::make_security_module,

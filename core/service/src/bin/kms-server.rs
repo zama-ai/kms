@@ -9,7 +9,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     conf::{
         CoreConfig, init_conf, init_conf_kms_core_telemetry,
-        threshold::{PeerConf, ThresholdPartyConf, TlsConf},
+        party::{PeerConf, ThresholdPartyConf, TlsConf},
     },
     consts::SIGNING_KEY_ID,
     cryptography::{

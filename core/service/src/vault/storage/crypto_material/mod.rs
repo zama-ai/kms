@@ -9,7 +9,7 @@
 //! - `traits`: Defines core interfaces including the `CryptoMaterialReader` trait and storage traits
 //! - `readers`: Contains implementations of the `CryptoMaterialReader` trait for various types
 //! - `base`: Provides the base implementation of the `CryptoMaterialStorage` abstraction
-//! - `threshold`: Implements storage for threshold KMS cryptographic operations
+//! - `cached`: Implements storage for threshold KMS cryptographic operations
 //! - `utils`: Contains utility functions for cryptographic material management
 //! - `tests`: Contains test suites for validating the storage implementations
 //!
@@ -31,8 +31,8 @@
 //! ```
 
 mod base;
+mod cached;
 mod readers;
-mod threshold;
 mod traits;
 mod utils;
 
@@ -44,7 +44,7 @@ mod tests;
 pub use base::CryptoMaterialStorage;
 pub use base::PublicKeySet;
 pub(crate) use base::StorageError;
-pub use threshold::ThresholdCryptoMaterialStorage;
+pub use cached::ThresholdCryptoMaterialStorage;
 pub use traits::CryptoMaterialReader;
 pub use traits::PrivateCryptoMaterialReader;
 pub use utils::*;

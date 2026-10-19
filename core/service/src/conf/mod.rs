@@ -1,4 +1,4 @@
-use self::threshold::{ThresholdPartyConf, TlsConf};
+use self::party::{ThresholdPartyConf, TlsConf};
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -10,7 +10,7 @@ use strum_macros::EnumIs;
 use url::Url;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-pub mod threshold;
+pub mod party;
 
 /// Common configuration parameters that should be set in all scenarios
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
@@ -122,7 +122,7 @@ impl Default for InternalConfig {
 /// This interface has no TLS, authentication or authorization. The deployment ensures that only
 /// the operator's own KMS connector can reach it and that it is never publicly reachable, so the
 /// server trusts every message it receives. MPC traffic between KMS cores uses the separate,
-/// mutually authenticated core-to-core interface in [`crate::conf::threshold::ThresholdPartyConf`].
+/// mutually authenticated core-to-core interface in [`crate::conf::party::ThresholdPartyConf`].
 /// See `docs/explanations/trust_model.md`.
 ///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
@@ -363,7 +363,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::conf::threshold::{TlsCert, TlsConf, TlsKey};
+    use crate::conf::party::{TlsCert, TlsConf, TlsKey};
 
     fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
         VaultConfig {

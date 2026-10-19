@@ -2,7 +2,7 @@ use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES};
-use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
+use crate::conf::party::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,

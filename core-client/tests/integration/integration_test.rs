@@ -94,9 +94,9 @@ fn build_test_core_config(
     threshold_value: u8,
     server_id: usize,
     material_path: &Path,
-    peers: Vec<kms_lib::conf::threshold::PeerConf>,
+    peers: Vec<kms_lib::conf::party::PeerConf>,
 ) -> kms_lib::conf::CoreConfig {
-    use kms_lib::conf::threshold::{ThresholdPartyConf, TlsConf};
+    use kms_lib::conf::party::{ThresholdPartyConf, TlsConf};
     use kms_lib::conf::{
         AWSConfig, CoreConfig, FileStorage, S3Storage, ServiceEndpoint, Storage, VaultConfig,
     };
@@ -352,7 +352,7 @@ fn generate_threshold_cli_config(
     party_count: usize,
     fhe_params: FheParameter,
 ) -> Result<PathBuf> {
-    use kms_lib::conf::threshold::PeerConf;
+    use kms_lib::conf::party::PeerConf;
 
     let config_path = material_dir.path().join("client_config.toml");
     let majority = party_count / 2 + 1;
@@ -501,7 +501,7 @@ async fn setup_party_resharing_servers(
     PathBuf,
     PathBuf,
 )> {
-    use kms_lib::conf::threshold::PeerConf;
+    use kms_lib::conf::party::PeerConf;
     use kms_lib::testing::helpers::create_test_material_manager;
     use kms_lib::testing::material::TestMaterialSpec;
     use kms_lib::vault::storage::StorageType;

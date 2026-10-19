@@ -1,7 +1,7 @@
 use crate::conf::{CoreConfig, Keychain, SecretSharingKeychain, init_conf};
 use crate::conf::{
     ServiceEndpoint,
-    threshold::{PeerConf, ThresholdPartyConf},
+    party::{PeerConf, ThresholdPartyConf},
 };
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::cryptography::signatures::PublicSigKey;

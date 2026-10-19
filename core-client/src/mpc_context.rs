@@ -54,7 +54,7 @@ pub async fn create_test_context_info_from_core_config(
             .tls
             .ok_or_else(|| anyhow::anyhow!("TLS config not set for core {}", c.party_id))?
         {
-            kms_lib::conf::threshold::TlsConf::Auto {
+            kms_lib::conf::party::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
                 attest_private_vault_root_key: _,
