@@ -1,4 +1,6 @@
-use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings};
+use crate::{
+    CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, ensure_distinct_signers, print_phased_timings,
+};
 use alloy_sol_types::Eip712Domain;
 use anyhow::Context as _;
 use kms_grpc::{
@@ -223,6 +225,8 @@ async fn observe_rpc<T>(
 
 /// Verify every signature a public-decryption response carries, under every scheme
 /// the client requested, and that it was produced by one of the known KMS parties.
+///
+/// Returns the `(party_id, address)` of the signer, for the caller's distinct-signer check.
 fn check_pt_signatures(
     internal_client: &Client,
     response: &PublicDecryptionResponse,
@@ -231,7 +235,7 @@ fn check_pt_signatures(
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, alloy_primitives::Address)> {
     tracing::debug!(
         "Checking the signatures for PTs: {:?}, ext. handles: {:?}, extra_data: {}",
         payload.plaintexts,
@@ -258,11 +262,12 @@ fn check_pt_signatures(
              the configured KMS addresses"
         );
     }
-    Ok(())
+    Ok((party_id, address))
 }
 
-/// Check every requested signature of every response, and that each one decrypts
-/// to `expected_answer`.
+/// Check every requested signature of every response, that each one decrypts to
+/// `expected_answer`, and that at least `num_expected_responses` distinct parties signed them.
+#[expect(clippy::too_many_arguments)]
 fn check_external_decryption_signature(
     responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
@@ -271,14 +276,16 @@ fn check_external_decryption_signature(
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
     internal_client: &Client,
+    num_expected_responses: usize,
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
+    let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
         let payload = response
             .payload
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing payload in decryption response"))?;
-        check_pt_signatures(
+        let signer = check_pt_signatures(
             internal_client,
             response,
             payload,
@@ -287,6 +294,7 @@ fn check_external_decryption_signature(
             kms_addrs,
             extra_data,
         )?;
+        signers.push(signer);
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {
             tracing::info!(
@@ -309,6 +317,7 @@ fn check_external_decryption_signature(
             );
         }
     }
+    ensure_distinct_signers("public decryption", &signers, num_expected_responses)?;
 
     tracing::info!("Decryption response successfully processed.");
     Ok(())
@@ -2222,8 +2231,9 @@ fn verify_public_decrypt_responses(
             .clone(),
     };
 
-    // Check every response's signatures, signer and plaintext. For `External` material this
-    // is the only check, since without the request there is nothing to bind the responses to.
+    // Check every response's signatures, signer and plaintext, and that enough distinct parties
+    // signed. For `External` material this is the only check, since without the request there is
+    // nothing to bind the responses to.
     check_external_decryption_signature(
         resp_response_vec,
         ptxt,
@@ -2232,6 +2242,7 @@ fn verify_public_decrypt_responses(
         kms_addrs,
         &extra_data,
         internal_client,
+        num_expected_responses,
     )?;
 
     Ok(())
@@ -2359,6 +2370,13 @@ pub(crate) async fn get_public_decrypt_responses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_grpc::rpc_types::ecdsa_signatures;
+    use kms_lib::consts::TEST_PARAM;
+    use kms_lib::cryptography::signatures::{
+        PrivateSigKey, compute_eip712_signature, gen_sig_keys,
+    };
+    use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     fn sample_metrics(
         scenario: &'static str,
@@ -2624,5 +2642,71 @@ mod tests {
         assert_eq!(metrics.tx_gbps, 0.016);
         assert_eq!(metrics.rx_errors, 1);
         assert_eq!(metrics.tx_dropped, 4);
+    }
+
+    /// Without the request, every public-decryption response is verified on its own, so one
+    /// party's response replayed in place of another party's must not count towards the quorum.
+    #[test]
+    fn test_public_decrypt_result_rejects_replayed_signer() {
+        let mut rng = AesRng::seed_from_u64(11);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let kms_addrs = vec![verf_key_1.address(), verf_key_2.address()];
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+
+        let domain = crate::dummy_domain();
+        let external_handles = vec![vec![7u8; 32]];
+        let extra_data = crate::extra_data_from_context_epoch(None, None).unwrap();
+        let plaintext = TypedPlaintext::from_u8(42);
+        let payload = PublicDecryptionResponsePayload {
+            verification_key: vec![],
+            plaintexts: vec![plaintext.clone()],
+            request_id: None,
+        };
+        let sol_type =
+            compute_public_decryption_message(&external_handles, &payload.plaintexts, &extra_data)
+                .unwrap();
+        let response_from = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &sol_type, &domain).unwrap();
+            PublicDecryptionResponse {
+                signature: vec![],
+                external_signature: sig.clone(),
+                payload: Some(payload.clone()),
+                extra_data: extra_data.clone(),
+                signatures: ecdsa_signatures(sig),
+            }
+        };
+        let from_1 = response_from(&sig_key_1);
+        let from_2 = response_from(&sig_key_2);
+
+        let verify = |responses: &[PublicDecryptionResponse]| {
+            verify_public_decrypt_responses(
+                responses,
+                PubDecVerificationMaterial::External {
+                    domain: domain.clone(),
+                    external_handles: external_handles.clone(),
+                    extra_data: extra_data.clone(),
+                },
+                Some(plaintext.clone()),
+                &client,
+                &kms_addrs,
+                2,
+            )
+        };
+
+        verify(&[from_1.clone(), from_2]).unwrap();
+
+        let err = verify(&[from_1.clone(), from_1]).unwrap_err().to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
     }
 }
