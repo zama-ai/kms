@@ -4,7 +4,7 @@
 //! Material is generated once using `generate-test-material --profile ... --parties ...`
 //! and then copied into isolated temporary directories for each test, which prevents tests
 //! from interfering with each other.
-//! Each profile stores threshold material under a party-count-specific `threshold-N/` root.
+//! Each profile stores material under a party-count-specific `parties-N/` root.
 //!
 //! # Key Types
 //!
@@ -29,9 +29,9 @@ pub fn material_subdir(material_type: MaterialType) -> &'static str {
     }
 }
 
-/// Subdirectory containing threshold material for a specific party count.
+/// Subdirectory containing the material for a specific party count.
 pub fn party_material_subdir(party_count: usize) -> String {
-    format!("threshold-{party_count}")
+    format!("parties-{party_count}")
 }
 
 /// Deterministic threshold FHE key fixture ID label for a material family and party count.
