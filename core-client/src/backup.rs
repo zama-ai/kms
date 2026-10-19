@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 
 use hashing::hash_element;
@@ -23,34 +23,60 @@ use tonic::transport::Channel;
 
 use crate::CoreConf;
 
+/// Fetch the operator public key of every core, as `(party_id, hex key)` sorted by party.
+///
+/// Each key must come with an attestation document bound to it, and no two parties may
+/// return the same key or be attested by the same enclave. Every response is checked on its own,
+/// so a single party's attested key replayed in place of another party's would otherwise pass.
 pub(crate) async fn do_get_operator_pub_keys(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<(usize, String)>> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.values() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let party_id = core_conf.party_id;
         req_tasks.spawn(async move {
-            cur_client
+            let res = cur_client
                 .get_operator_public_key(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
-                .await
+                .await;
+            (party_id, res)
         });
     }
 
+    // Each party runs its own enclave and generates its own backup key, so a key or an enclave
+    // seen for two parties means one party's response was returned for another.
+    let mut seen_keys = HashSet::new();
+    let mut seen_enclaves = HashSet::new();
     let mut backup_pks = Vec::with_capacity(core_endpoints.len());
-
     while let Some(inner) = req_tasks.join_next().await {
-        let pk = inner??.into_inner();
+        let (party_id, res) = inner?;
+        let pk = res
+            .map_err(|e| anyhow::anyhow!("party {party_id} returned no operator public key: {e}"))?
+            .into_inner();
         let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
             &pk.attestation_document,
-        )?;
+        )
+        .map_err(|e| anyhow::anyhow!("party {party_id}: invalid attestation document: {e}"))?;
         let Some(attested_digest) = attestation_doc.public_key else {
-            anyhow::bail!("Bad response: public key not present in attestation document")
+            anyhow::bail!(
+                "Bad response from party {party_id}: public key not present in attestation document"
+            )
         };
-        check_attested_backup_pk(pk.public_key.as_slice(), attested_digest.as_slice())?;
-
-        backup_pks.push(hex::encode(pk.public_key.as_slice()));
+        check_attested_backup_pk(pk.public_key.as_slice(), attested_digest.as_slice())
+            .map_err(|e| anyhow::anyhow!("party {party_id}: {e}"))?;
+        anyhow::ensure!(
+            seen_keys.insert(pk.public_key.clone()),
+            "party {party_id} returned the same operator public key as another party"
+        );
+        anyhow::ensure!(
+            seen_enclaves.insert(attestation_doc.module_id.clone()),
+            "party {party_id} is attested by enclave {}, which also attested another party",
+            attestation_doc.module_id
+        );
+        backup_pks.push((party_id, hex::encode(&pk.public_key)));
     }
 
+    backup_pks.sort_by_key(|(party_id, _)| *party_id);
     Ok(backup_pks)
 }
 
