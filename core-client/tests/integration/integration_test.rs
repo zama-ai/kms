@@ -1368,6 +1368,7 @@ async fn integration_test_commands(
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
+                    preproc_id: Some(key_gen_parameters.preproc_id),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
                     context_id: None,
                     epoch_id: None,
@@ -1378,6 +1379,7 @@ async fn integration_test_commands(
             CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
+                    preproc_id: Some(key_gen_parameters.preproc_id),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
                     context_id: None,
                     epoch_id: None,
