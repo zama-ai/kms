@@ -114,7 +114,7 @@ impl EpochDestructionVerification {
 alloy_sol_types::sol! {
     struct ContextDestructionVerification {
         /// @notice The ID of the destroyed context.
-        uint256 contextId;
+        uint256 destroyedContextId;
         /// @notice Extra data for client-specific context.
         bytes extraData;
     }
@@ -123,7 +123,7 @@ alloy_sol_types::sol! {
 impl ContextDestructionVerification {
     pub fn new(context_id: &ContextId, extra_data: Vec<u8>) -> Self {
         Self {
-            contextId: U256::from_be_slice(context_id.as_bytes()),
+            destroyedContextId: U256::from_be_slice(context_id.as_bytes()),
             extraData: extra_data.into(),
         }
     }
