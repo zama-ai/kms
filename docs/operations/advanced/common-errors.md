@@ -39,7 +39,7 @@ This typically occurs if you are setting a tracer multiple times, e.g. through `
 No PRSS setup exists
 ```
 
-The threshold servers have not executed the `init` step to ensure that preprocessed material is there. This should be done automatically by the CI during the launching process, but can also be done manually from the CI https://github.com/zama-ai/kms-core/blob/main/core/service/src/bin/kms-init.rs. However, be aware that this must be done for all parties at the same time.  E.g like a command like this
+The KMS servers have not executed the `init` step to ensure that preprocessed material is there. This should be done automatically by the CI during the launching process, but can also be done manually from the CI https://github.com/zama-ai/kms-core/blob/main/core/service/src/bin/kms-init.rs. However, be aware that this must be done for all parties at the same time.  E.g like a command like this
 
 ```jsx
 kms-init --addresses http://kms-threshold-1-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-2-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-3-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-4-threshold-core_kms-threshold_svc_50100.mesh:80

@@ -343,7 +343,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     {
         #[derive(Deserialize, Clone, Debug)]
         pub struct CoreClientConfigBuffer {
-            // Optional: the client supports threshold mode only. See [LegacyKmsType].
+            // Optional and redundant. See [LegacyKmsType].
             #[serde(default, rename = "kms_type")]
             pub _kms_type: Option<LegacyKmsType>,
             // List of configurations for the cores

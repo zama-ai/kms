@@ -29,7 +29,7 @@ kubectl get events -n <NAMESPACE> --sort-by='.lastTimestamp' | tail -10
 **Health Check Tool**: Use `kms-health-check live --endpoint localhost:<GRPC_PORT>` to verify:
 - Service connectivity and latency
 - Key material availability (FHE keys, CRS, preprocessing)
-- Peer connectivity (threshold mode)
+- Peer connectivity
 - Storage configuration
 
 > **Port Configuration**: Replace `<GRPC_PORT>` with your configured gRPC port:

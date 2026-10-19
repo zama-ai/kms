@@ -1,9 +1,7 @@
 # Zama KMS Core Helm Chart
 
 A helm chart to distribute and deploy the [KMS](https://github.com/zama-ai/kms/).
-It deploys threshold (multiple parties) networks only.
-The chart rejects `kmsCore.thresholdMode.enabled: false`.
-The chart allows running either a single party or all parties in one release.
+A release runs either one party or all `3t+1` parties of a KMS network.
 
 ## Installing the Chart
 

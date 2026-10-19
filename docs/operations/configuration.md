@@ -125,7 +125,7 @@ kms-health-check --format json live --endpoint localhost:<GRPC_PORT>
 1. **Syntax Validation**: Use `kms-health-check config` to validate configuration syntax
 2. **Connectivity Testing**: Use `kms-health-check live` to verify service connectivity
 3. **Key Material Verification**: Health check tool automatically verifies key availability and storage
-4. **Peer Connectivity**: For threshold mode, verifies connectivity to all configured peers
+4. **Peer Connectivity**: Verifies connectivity to all configured peers
 
 > **Complete Tool Documentation**: See [kms-health-check README](../../tools/kms-health-check/README.md) for full capabilities including timeout configuration, Docker integration, and CI/CD usage.
 

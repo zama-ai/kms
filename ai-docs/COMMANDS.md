@@ -42,7 +42,7 @@ make lint-dylint
 
 ## Testing
 
-Typical test run for the secure/default client surface — uses the `testing` feature and includes unit plus integration tests that do not rely on insecure client commands (some integration tests need Redis running locally):
+Typical test run for the secure/default client surface — uses the `testing` feature and includes unit plus integration tests that do not rely on insecure client commands:
 
 ```
 cargo test -F testing
@@ -54,13 +54,13 @@ Full `kms-core-client` e2e coverage, including insecure keygen/CRS client comman
 cargo test -p kms-core-client -F e2e
 ```
 
-Threshold-heavy `kms-core-client` e2e coverage (PRSS + preprocessing + insecure fast paths):
+Slow `kms-core-client` e2e coverage (PRSS + preprocessing + insecure fast paths):
 
 ```
 cargo test -p kms-core-client -F e2e,slow_tests
 ```
 
-Skip the integration tests that need Redis (unit tests only):
+Unit tests only:
 
 ```
 cargo test -F testing --lib
@@ -91,7 +91,7 @@ cargo bench -p kms --bench meta_store --features testing -- --save-baseline befo
 cargo bench -p kms --bench meta_store --features testing -- --baseline before
 ```
 
-Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
+Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core-client/tests/`.
 
 ## Backward compatibility
 
@@ -171,14 +171,14 @@ make build-compose-threshold
 `kms-binaries-insecure:latest-dev` image first. It passes this image to the
 package Dockerfile through `KMS_BINARIES_IMAGE` to reuse the Rust build.
 
-Start / stop a 4-party threshold cluster (detached, waits for readiness; `stop` removes volumes and orphans):
+Start / stop a 4-party cluster (detached, waits for readiness; `stop` removes volumes and orphans):
 
 ```
 make start-compose-threshold
 make stop-compose-threshold
 ```
 
-Threshold cluster with telemetry sidecars (Jaeger / Prometheus):
+4-party cluster with telemetry sidecars (Jaeger / Prometheus):
 
 ```
 make start-compose-threshold-telemetry

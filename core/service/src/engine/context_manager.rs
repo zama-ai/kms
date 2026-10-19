@@ -598,7 +598,7 @@ enum RollbackScope {
     KeychainOnly,
 }
 
-/// Create and store the default MPC context for threshold mode from peer configuration.
+/// Create and store the default MPC context from peer configuration.
 ///
 /// This function builds a `ContextInfo` from the peer list in `threshold_config` and stores it
 /// in private storage under `DEFAULT_MPC_CONTEXT`. If a context already exists at that ID,

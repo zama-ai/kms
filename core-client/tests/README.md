@@ -116,7 +116,7 @@ K8s tests connect to a real kind cluster.
 
 **Prerequisites:**
 ```bash
-# Start kind cluster (threshold mode with TLS enabled by default)
+# Start kind cluster (TLS enabled by default)
 ./ci/scripts/deploy.sh --target kind-local --deployment-type threshold --block
 ```
 

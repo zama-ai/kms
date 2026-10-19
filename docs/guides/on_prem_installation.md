@@ -152,9 +152,8 @@ helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/helm-charts/kms-servic
 
 ## Configuration Options
 
-### Threshold Mode
+### Threshold Configuration
 
-The chart deploys threshold mode only.
 The number of parties must be `3 * thresholdValue + 1`.
 Rendering fails if you set `kmsCore.thresholdMode.enabled` to `false`.
 
@@ -168,7 +167,7 @@ kmsCore:
     numSessionsPreproc: 2 # Number of vCPUs
 
 kmsPeers:
-  count: 4  # Number of KMS peers for threshold setup
+  count: 4  # Number of KMS peers
 ```
 
 ### Storage Configuration
@@ -201,7 +200,7 @@ podSecurityContext:
 
 ### Resource Requirements
 
-The KMS service requires sufficient CPU and memory resources to handle key generation and encryption operations efficiently. Here are the recommended resource configurations:
+The KMS service requires sufficient CPU and memory resources to handle key generation and encryption operations efficiently. Set them in `kmsCore.resources`. These values apply only to workloads outside a Nitro Enclave. Here are the recommended resource configurations:
 
 ```yaml
 kmsCore:
@@ -212,16 +211,6 @@ kmsCore:
     limits:
       cpu: "4"        # Maximum 4 CPU cores
       memory: "8Gi"   # Maximum 8GB RAM to handle peak loads
-
-  # For threshold mode, increase resources:
-  thresholdMode:
-    resources:
-      requests:
-        cpu: "4"      # Minimum 4 CPU cores for threshold operations
-        memory: "8Gi" # Minimum 8GB RAM for threshold operations
-      limits:
-        cpu: "8"      # Maximum 8 CPU cores
-        memory: "16Gi" # Maximum 16GB RAM for complex key generation
 ```
 
 ### 3. Install the Chart locally with minio
@@ -295,7 +284,7 @@ kyverno:
 Factors affecting resource requirements:
 - Number of concurrent key generation requests
 - Key size and complexity
-- Threshold mode configuration
+- Number of parties and threshold value
 - Number of active sessions
 
 For production deployments with heavy workloads, monitor resource usage and adjust accordingly. It's recommended to start with higher limits and adjust down based on observed usage patterns.

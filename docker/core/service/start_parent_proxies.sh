@@ -50,10 +50,6 @@ get_value() {
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE"
 }
 
-is_threshold() {
-    yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
-}
-
 ENCLAVE_TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
 
 if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
@@ -89,9 +85,7 @@ cleanup() {
     if [ -f "$KMS_SERVER_CONFIG_FILE" ]; then
         delete_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
         delete_ingress_dnat "$(get_configured_port "service.listen_port")"
-        if is_threshold; then
-            delete_ingress_dnat "$(get_configured_port "threshold.listen_port")"
-        fi
+        delete_ingress_dnat "$(get_configured_port "threshold.listen_port")"
     fi
     if [ -n "$PARENT_IF" ]; then
         sudo iptables -t nat -D POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || true
@@ -179,9 +173,7 @@ sudo iptables -C FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,
 echo "start_proxies: DNATing metrics, client, and peer ingress to $ENCLAVE_TUN_IP over $KMS_SERVER_TUN_IF"
 add_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
 add_ingress_dnat "$(get_configured_port "service.listen_port")"
-if is_threshold; then
-    add_ingress_dnat "$(get_configured_port "threshold.listen_port")"
-fi
+add_ingress_dnat "$(get_configured_port "threshold.listen_port")"
 
 echo "start_proxies: starting dnsproxy on $KMS_SERVER_TUN_IP via $UPSTREAM_DNS"
 sudo dnsproxy -v -l "$KMS_SERVER_TUN_IP" -u "$UPSTREAM_DNS" &

@@ -215,7 +215,7 @@ kmsCore:
         publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
         publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
 
-  # Threshold Mode Configuration
+  # Threshold Configuration
   thresholdMode:
     enabled: true
     peersList:

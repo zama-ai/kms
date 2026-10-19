@@ -37,7 +37,6 @@ data:
     # Decryption mode used in user decryption reconstruction.
     # Options are NoiseFloodSmall and BitDecSmall.
     # Must match the deployed core/service setting!
-    # Only relevant for threshold.
     decryption_mode=${DECRYPTION_MODE}
 
     # fhe_params = "Test" # Small, insecure parameters for testing

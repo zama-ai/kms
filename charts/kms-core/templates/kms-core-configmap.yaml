@@ -8,7 +8,7 @@
 {{- end }}
 {{- $expectedPartyCount := add (mul 3 (int .Values.kmsCore.thresholdMode.thresholdValue)) 1 }}
 {{- if ne (int $partyCount) (int $expectedPartyCount) }}
-{{- fail (printf "threshold mode requires 3*t+1 parties: thresholdValue=%d requires %d parties, got %d" (int .Values.kmsCore.thresholdMode.thresholdValue) (int $expectedPartyCount) (int $partyCount)) }}
+{{- fail (printf "a KMS network requires 3*t+1 parties: thresholdValue=%d requires %d parties, got %d" (int .Values.kmsCore.thresholdMode.thresholdValue) (int $expectedPartyCount) (int $partyCount)) }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap

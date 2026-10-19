@@ -23,9 +23,9 @@
 {{ default $kmsCoreAddressDefault .Values.kmsCore.addressOverride }}
 {{- end -}}
 
-{{/* Rejects an explicit `kmsCore.thresholdMode.enabled: false`. The chart
-     deploys threshold mode only; the `enabled` key stays accepted with the
-     value `true` so existing values files keep working. */}}
+{{/* Rejects an explicit `kmsCore.thresholdMode.enabled: false`. The
+     `enabled` key stays accepted with the value `true` so existing values
+     files keep working. */}}
 {{- define "kmsValidateThresholdMode" -}}
 {{- if eq (toString .Values.kmsCore.thresholdMode.enabled) "false" -}}
 {{- fail "kmsCore.thresholdMode.enabled=false is not supported: the chart deploys threshold mode only. Set kmsCore.thresholdMode.enabled to true or remove the key." -}}

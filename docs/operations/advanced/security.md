@@ -32,7 +32,7 @@ The [trust model of the KMS core](../../explanations/trust_model.md) states whic
 > 🚨 **CRITICAL**: **Port 50100 (gRPC)** - **NEVER EXPOSE TO INTERNET**
 > This port handles sensitive cryptographic operations and MUST be restricted to localhost/authorized connectors only. Internet exposure creates severe security vulnerabilities.
 
-- **Port 50001 (P2P)**: Allow only between KMS threshold nodes
+- **Port 50001 (P2P)**: Allow only between KMS nodes
 - **Port 9646 (Metrics)**: Restrict to monitoring systems only  
 - **SSH/Management**: Limit to management networks only
 

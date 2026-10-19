@@ -17,7 +17,6 @@ num_reconstruct = 1
 # Decryption mode used in user decryption reconstruction.
 # Options are NoiseFloodSmall and BitDecSmall.
 # Must match the deployed core/service setting!
-# Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
 # The parameters used in the deployment.

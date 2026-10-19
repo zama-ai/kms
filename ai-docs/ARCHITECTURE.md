@@ -19,12 +19,12 @@ At the top level, an FHEVM deployment is composed of three subsystems:
    key generation, public/user decryption, CRS generation, and reshare
    operations.
 
-The KMS exposes a gRPC API. In the threshold deployment the KMS is itself a
+The KMS exposes a gRPC API. The KMS is itself a
 cluster of `n` independent parties (typically 13 parties, threshold `t = 4`)
 that run an MPC protocol among themselves; each party runs the same binary with
 its own configuration and secret share.
 
-The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Threshold KMS deployments using Nitro Enclave remote attestation reject both new and stored contexts whose PCR allowlist is empty; stored contexts that fail validation are skipped during startup. Non-enclave and mocked-enclave deployments permit an empty allowlist.
+The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. KMS deployments that use Nitro Enclave remote attestation reject both new and stored contexts whose PCR allowlist is empty; stored contexts that fail validation are skipped during startup. Non-enclave and mocked-enclave deployments permit an empty allowlist.
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
@@ -83,10 +83,14 @@ The repository is a Cargo workspace. The members are declared in
 | `kms-grpc`       | [core/grpc/](../core/grpc/)                     | Protobuf definitions + generated types and client stubs                                                                                                                                                                                                                                                                                                                                                  |
 | `core-client`    | [core-client/](../core-client/)                 | CLI client that drives the gRPC API                                                                                                                                                                                                                                                                                                                                                                      |
 | `observability`  | [observability/](../observability/)             | OpenTelemetry / Prometheus wiring                                                                                                                                                                                                                                                                                                                                                                        |
-| `vsocktun`       | [vsocktun/](vsocktun/)                          | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
 | `bc2wrap`        | [bc2wrap/](../bc2wrap/)                         | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding                                                                                                                                                                                                                                                                                                                                   |
 | `error-utils`    | [core/error-utils/](../core/error-utils/)       | Shared error types and helpers                                                                                                                                                                                                                                                                                                                                                                           |
 | `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management                                                                                                                                                                                                                                                                                                                                                                             |
+
+The service image also bundles `vsocktun` from the external
+[zama-ai/vsocktun](https://github.com/zama-ai/vsocktun) repository. It is a
+multi-queue TUN-to-VSOCK relay that bridges the peer TCP traffic of the enclave
+through the parent instance.
 
 Auxiliary tools live under [tools/](../tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
@@ -214,8 +218,8 @@ All under [core/service/src/bin/](../core/service/src/bin/):
   initialization.
 - [kms-gen-keys.rs](../core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing identity — the `RootSigningSeed` plus the ECDSA signing key, derived
-  from the seed on a fresh node and left untouched on an upgraded one — and, in
-  threshold mode, per-party self-signed CA certificates for mTLS. It is the
+  from the seed on a fresh node and left untouched on an upgraded one — and the
+  per-party self-signed CA certificates for mTLS. It is the
   **only** thing that ever creates a seed. Also derives and persists every
   scheme's public verification material: ECDSA's from the persisted signing key,
   every other scheme's from the seed. Reads a keygen TOML with
@@ -487,7 +491,7 @@ then atomically renames them into place. A process crash during a write cannot e
 destination file. This does not make a multi-file operation atomic or guarantee rename durability
 after power loss; the writers do not sync the parent directory.
 
-Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
+Calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
 
 - `PublicKey` and `FheKeyInfo` share a key ID.
 - `CRS` and `CrsInfo` share a CRS ID.
@@ -678,8 +682,8 @@ the copies differ, an operator must inspect them and remove the incorrect copy b
 Once the migration completes, releases older than v0.14 can no longer load that CRS metadata because
 they only know the removed non-epoched path.
 
-**Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
-is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
+**Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
+is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
 — because each pinned historical version drags in a conflicting dependency
 graph). Per-version `generate-vX.Y.Z/` crates serialize a catalogue of types
 using that release's dependencies; the artifacts land under
@@ -752,7 +756,7 @@ exact commands.
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
-- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
+- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for KMS deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
 
 ## Further reading
 

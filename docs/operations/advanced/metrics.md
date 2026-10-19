@@ -261,7 +261,7 @@ The KMS health check system provides additional operational metrics through the 
 
 #### Health Status Levels
 
-- **Optimal**: All nodes online and reachable (threshold mode)
+- **Optimal**: All nodes online and reachable
 - **Healthy**: Sufficient 2/3 majority but not all nodes online
 - **Degraded**: Above minimum threshold but below 2/3 majority
 - **Unhealthy**: Insufficient nodes for operations
@@ -272,7 +272,7 @@ The KMS health check system provides additional operational metrics through the 
 
 - **FHE Keys**: Fully homomorphic encryption keys
 - **CRS Keys**: Common reference string keys
-- **Preprocessing Material**: PRSS preprocessing data (threshold mode only)
+- **Preprocessing Material**: PRSS preprocessing data
 
 ## Monitoring Integration
 
@@ -334,7 +334,7 @@ KMS metrics support comprehensive alerting for operational monitoring. Key alert
 - **Performance Alerts**: Monitor latency percentiles from `kms_operation_duration_ms`
 - **Resource Alerts**: CPU and memory usage from `kms_cpu_load` and `kms_memory_usage`
 - **Network Health**: Peer connectivity and network traffic patterns
-- **Threshold Mode**: Multi-party network health and PRSS initialization status
+- **MPC Network**: Multi-party network health and PRSS initialization status
 
 ### Alerting References
 

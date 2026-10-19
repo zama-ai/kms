@@ -1,6 +1,6 @@
 # KMS Health Check Tool
 
-Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for threshold KMS instances.
+Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for KMS instances.
 
 __NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
 
@@ -215,7 +215,7 @@ enum NodeType {
 
   // Health information for a peer node
   message PeerHealth {
-    // Peer party ID (for threshold mode)
+    // Party ID of the peer in the context
     uint32 peer_id = 1;
     // Peer endpoint address
     string endpoint = 2;

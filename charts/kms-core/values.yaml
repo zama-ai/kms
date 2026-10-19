@@ -57,8 +57,7 @@ kmsCore:
     #    epochIds:
     #      - "0x0800000000000000000000000000000000000000000000000000000000000001" # Default Epoch ID
     #      - "0x0800000000000000000000000000000000000000000000000000000000000002" # ID of the first new epoch created
-  # The chart deploys threshold mode only. `enabled` accepts only `true`;
-  # rendering fails if it is set to `false`.
+  # `enabled` accepts only `true`. Rendering fails if it is set to `false`.
   thresholdMode:
     enabled: true
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
@@ -136,9 +135,9 @@ kmsCore:
     memoryGiB: 96
     networkTunnel:
       enabled: true
-      # If unset, queueCount defaults to a heuristic based on the threshold
+      # If unset, queueCount defaults to a heuristic based on the
       # party topology: 8 queues minimum, or the next power of two above the
-      # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
+      # hot peer-flow count (2 * (party_count - 1)).
       queueCount:
       # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
       # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.

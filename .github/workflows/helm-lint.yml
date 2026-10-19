@@ -133,7 +133,7 @@ jobs:
             echo "expected invalid threshold topology to fail" >&2
             exit 1
           fi
-          grep -Fq "threshold mode requires 3*t+1 parties" <<<"$output"
+          grep -Fq "a KMS network requires 3*t+1 parties" <<<"$output"
 
           if output=$(helm template test charts/kms-core \
             --set kmsCore.thresholdMode.enabled=false \

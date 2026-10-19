@@ -10,6 +10,8 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 - **context.rs**  
   Definitions and utilities for managing the service context, including state and configuration relevant to KMS operations.
 
+- **context_manager.rs**: Management of MPC contexts and custodian contexts.
+
 - **server.rs**  
   Main server implementation for handling incoming gRPC requests.
 
@@ -22,10 +24,7 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 ### Threshold KMS (`threshold/`)
 
 - **threshold_kms.rs**  
-  Main implementation for threshold (distributed) KMS logic (renamed from `generic.rs`).
-
-- **threshold_kms_mock.rs**  
-  Mock services for testing threshold KMS.
+  Main implementation for threshold (distributed) KMS logic.
 
 - **endpoint.rs**  
   Entry points for threshold gRPC calls.
@@ -35,9 +34,7 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 
 - **service/**  
   Endpoint-specific code for threshold operations:
-  - **context_manager.rs**: Service context management.
   - **crs_generator.rs**: CRS generation logic.
-  - **initiator.rs**: Session initiator logic.
   - **key_generator.rs**: Key generation logic.
   - **kms_impl.rs**: Core threshold KMS implementation.
   - **preprocessor.rs**: Key generation pre-processing.

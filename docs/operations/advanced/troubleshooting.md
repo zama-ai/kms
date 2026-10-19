@@ -228,7 +228,7 @@ while restoration is in progress.
 
 **Errors that do not stop the node:** `Unexpected flat private material`, `Unexpected epoched
 private material`, `Unexpected data type in private storage`, and `Could not list private material`.
-On a threshold node, the 0.15 migration leaves flat `PrssSetupCombined` entries in place.
+The 0.15 migration leaves flat `PrssSetupCombined` entries in place.
 
 ---
 
