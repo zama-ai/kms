@@ -1,9 +1,7 @@
-use crate::client::tests::threshold::crs_gen_tests::crs_gen;
-use crate::client::tests::threshold::key_gen_tests::{
-    preproc_and_keygen, run_threshold_decompression_keygen,
-};
-use crate::client::tests::threshold::public_decryption_tests::decryption_threshold;
-use crate::client::tests::threshold::user_decryption_tests::user_decryption_threshold;
+use crate::client::tests::crs_gen_tests::crs_gen;
+use crate::client::tests::key_gen_tests::{preproc_and_keygen, run_threshold_decompression_keygen};
+use crate::client::tests::public_decryption_tests::decryption_threshold;
+use crate::client::tests::user_decryption_tests::user_decryption_threshold;
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID;
 use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
 use crate::util::key_setup::test_tools::EncryptionConfig;

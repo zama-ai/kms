@@ -23,10 +23,10 @@ use crate::client::tests::common::{PollConfig, retrying_poll};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::common::threshold_secure_key_gen;
-use crate::client::tests::threshold::common::{run_insecure_preproc, threshold_insecure_key_gen};
+use crate::client::tests::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+use crate::client::tests::service_helpers::threshold_secure_key_gen;
+use crate::client::tests::service_helpers::{run_insecure_preproc, threshold_insecure_key_gen};
 use crate::consts::MAX_TRIES;
 use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]

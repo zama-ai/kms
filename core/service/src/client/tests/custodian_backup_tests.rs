@@ -6,11 +6,11 @@ use crate::client::test_tools::{ServerHandle, custodian_backup_vault, setup_reco
 use crate::client::tests::common::{
     PollConfig, keygen_config, retrying_poll, uncompressed_keygen_config,
 };
-use crate::client::tests::threshold::common::run_insecure_preproc;
-use crate::client::tests::threshold::crs_gen_tests::run_crs;
-use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
-use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+use crate::client::tests::crs_gen_tests::run_crs;
+use crate::client::tests::custodian_context_tests::run_new_cus_context;
+use crate::client::tests::key_gen_tests::run_threshold_keygen;
+use crate::client::tests::public_decryption_tests::run_decryption_threshold;
+use crate::client::tests::service_helpers::run_insecure_preproc;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::SAFE_SER_SIZE_LIMIT;

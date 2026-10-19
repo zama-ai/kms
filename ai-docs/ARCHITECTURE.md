@@ -482,7 +482,7 @@ restarts.
 
 Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at
-[core/service/src/client/tests/threshold/custodian_backup_tests.rs](../core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+[core/service/src/client/tests/custodian_backup_tests.rs](../core/service/src/client/tests/custodian_backup_tests.rs).
 
 ## Paired material writes
 

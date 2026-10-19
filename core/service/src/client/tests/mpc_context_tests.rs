@@ -11,7 +11,7 @@ use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 
 use crate::{
-    client::tests::threshold::public_decryption_tests::{
+    client::tests::public_decryption_tests::{
         run_decryption_threshold, run_decryption_threshold_optionally_fail,
     },
     consts::{

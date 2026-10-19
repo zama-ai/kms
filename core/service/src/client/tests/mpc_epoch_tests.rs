@@ -21,13 +21,11 @@ use crate::{
         client_wasm::Client,
         tests::{
             common::{PollConfig, keygen_config, retrying_poll},
-            threshold::{
-                crs_gen_tests::run_crs,
-                key_gen_tests::{
-                    TestKeyGenResult, run_preproc, run_threshold_keygen, verify_keygen_responses,
-                },
-                public_decryption_tests::run_decryption_threshold,
+            crs_gen_tests::run_crs,
+            key_gen_tests::{
+                TestKeyGenResult, run_preproc, run_threshold_keygen, verify_keygen_responses,
             },
+            public_decryption_tests::run_decryption_threshold,
         },
     },
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},

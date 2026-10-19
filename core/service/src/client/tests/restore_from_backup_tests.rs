@@ -10,7 +10,7 @@
 
 use crate::client::tests::common::wait_for_storage;
 use crate::client::tests::common::{PollConfig, retrying_poll};
-use crate::client::tests::threshold::common::threshold_insecure_key_gen;
+use crate::client::tests::service_helpers::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
@@ -208,7 +208,7 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     .await?;
 
     // Validate restored keys by performing a public decryption
-    use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+    use crate::client::tests::public_decryption_tests::run_decryption_threshold;
     use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 
     run_decryption_threshold(
