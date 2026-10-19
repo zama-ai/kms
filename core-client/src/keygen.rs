@@ -3,8 +3,9 @@ use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
-    SigVerificationMaterial,
+    SigVerificationMaterial, ensure_distinct_signers,
 };
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
@@ -247,6 +248,7 @@ pub(crate) async fn fetch_and_check_keygen(
         .party_id as usize;
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
+    let mut signers = Vec::with_capacity(responses.len());
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
@@ -282,7 +284,7 @@ pub(crate) async fn fetch_and_check_keygen(
                             "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_compressed_keyset_signatures(
+                    let signer = check_compressed_keyset_signatures(
                         internal_client,
                         &compressed_keyset,
                         &compact_public_key,
@@ -294,6 +296,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         material.extra_data.clone(),
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+                    signers.push(signer);
 
                     tracing::info!(
                         "Verification of every requested CompressedXofKeySet signature successful."
@@ -339,7 +342,7 @@ pub(crate) async fn fetch_and_check_keygen(
                             "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_uncompressed_keyset_signatures(
+                    let signer = check_uncompressed_keyset_signatures(
                         internal_client,
                         &public_key,
                         &server_key,
@@ -351,6 +354,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         material.extra_data.clone(),
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+                    signers.push(signer);
 
                     tracing::info!(
                         "Verification of every requested Public Key and Server Key signature \
@@ -366,6 +370,13 @@ pub(crate) async fn fetch_and_check_keygen(
                 }
             }
         }
+    }
+    if verify.is_some() {
+        ensure_distinct_signers(
+            &format!("keygen {request_id}"),
+            &signers,
+            num_expected_responses,
+        )?;
     }
     Ok(())
 }
@@ -561,6 +572,8 @@ pub(crate) async fn do_abort_key_gen(
 
 /// Verify every signature a keygen result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
+///
+/// Returns the `(party_id, address)` of the signer.
 #[expect(clippy::too_many_arguments)]
 fn check_keyset_signatures(
     internal_client: &Client,
@@ -572,7 +585,7 @@ fn check_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
     let payload = keygen_payload(prep_id, key_id, &key_digests, &extra_data);
     internal_client
@@ -584,7 +597,7 @@ fn check_keyset_signatures(
             &DSEP_PUBDATA_KEY,
             &payload,
         )
-        .map(|(party_id, _address)| {
+        .inspect(|(party_id, _address)| {
             tracing::info!("Keygen result verified as produced by party {party_id}");
         })
 }
@@ -601,7 +614,7 @@ pub(crate) fn check_uncompressed_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
@@ -641,7 +654,7 @@ pub(crate) fn check_compressed_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let keyset_digest = hash_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
@@ -747,15 +760,21 @@ pub(crate) async fn do_preproc(
 
     let responses =
         get_preproc_keygen_responses(core_endpoints, req_id, max_iter, insecure).await?;
-    for response in responses {
+    let mut signers = Vec::with_capacity(responses.len());
+    for response in &responses {
         // this part also verifies the signature
-        internal_client.process_preproc_response(
+        signers.push(internal_client.process_preproc_response(
             &req_id,
             &domain,
-            &response,
+            response,
             extra_data.clone(),
-        )?;
+        )?);
     }
+    ensure_distinct_signers(
+        &format!("preprocessing {req_id}"),
+        &signers,
+        responses.len(),
+    )?;
 
     Ok(req_id)
 }
@@ -828,34 +847,46 @@ pub(crate) async fn do_partial_preproc(
     }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter, false).await?;
-    for response in responses {
-        internal_client.process_preproc_response(
+    let mut signers = Vec::with_capacity(responses.len());
+    for response in &responses {
+        signers.push(internal_client.process_preproc_response(
             &req_id,
             &domain,
-            &response,
+            response,
             extra_data.clone(),
-        )?;
+        )?);
     }
+    ensure_distinct_signers(
+        &format!("preprocessing {req_id}"),
+        &signers,
+        responses.len(),
+    )?;
 
     Ok(req_id)
 }
 
 /// Check every signature each preprocessing response carries, under every scheme
-/// the client requested, and that each was produced by a known KMS party.
+/// the client requested, and that each was produced by a different known KMS party.
 pub(crate) fn check_preproc_responses(
     internal_client: &Client,
     request_id: &RequestId,
     verify_material: &SigVerificationMaterial,
     responses: &[KeyGenPreprocResult],
 ) -> anyhow::Result<()> {
+    let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
-        internal_client.process_preproc_response(
+        signers.push(internal_client.process_preproc_response(
             request_id,
             &verify_material.domain,
             response,
             verify_material.extra_data.clone(),
-        )?;
+        )?);
     }
+    ensure_distinct_signers(
+        &format!("preprocessing {request_id}"),
+        &signers,
+        responses.len(),
+    )?;
     tracing::info!(
         "Verified the signatures on {} preprocessing responses for {request_id}",
         responses.len()

@@ -1,7 +1,8 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, crsgen::check_crsgen_signatures,
-    keygen::check_uncompressed_keyset_signatures, s3_operations::fetch_public_elements,
+    ensure_distinct_signers, keygen::check_uncompressed_keyset_signatures,
+    s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
     RequestId,
@@ -371,6 +372,7 @@ pub(crate) async fn do_new_epoch(
 
             let key_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(key_id.into());
             let preproc_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(preproc_id.into());
+            let mut signers = Vec::with_capacity(response_vec.len());
             for (_, response) in response_vec.iter() {
                 let reshared = response
                     .reshare_responses
@@ -385,7 +387,7 @@ pub(crate) async fn do_new_epoch(
                             preproc_id
                         )
                     })?;
-                let verified = accepted_extra_data.iter().any(|extra_data| {
+                let signer = accepted_extra_data.iter().find_map(|extra_data| {
                     if let Some(keyset) = keyset.as_ref() {
                         let pk = compressed_public_key.as_ref().expect(
                             "compressed reshared key must have compact public key material",
@@ -401,7 +403,7 @@ pub(crate) async fn do_new_epoch(
                             &default_domain,
                             extra_data.clone(),
                         )
-                        .is_ok()
+                        .ok()
                     } else {
                         check_uncompressed_keyset_signatures(
                             internal_client,
@@ -418,15 +420,20 @@ pub(crate) async fn do_new_epoch(
                             &default_domain,
                             extra_data.clone(),
                         )
-                        .is_ok()
+                        .ok()
                     }
                 });
 
-                anyhow::ensure!(
-                    verified,
-                    "Signature verification failed for the reshared key {key_id}"
-                );
+                let signer = signer.ok_or_else(|| {
+                    anyhow::anyhow!("Signature verification failed for the reshared key {key_id}")
+                })?;
+                signers.push(signer);
             }
+            ensure_distinct_signers(
+                &format!("reshared key {key_id}"),
+                &signers,
+                response_vec.len(),
+            )?;
         }
 
         // Every party re-signs the CRS of the epoch we reshare from, so every response has
@@ -459,13 +466,14 @@ pub(crate) async fn do_new_epoch(
             .await;
 
             let crs_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(crs_id.into());
+            let mut signers = Vec::with_capacity(response_vec.len());
             for (_, response) in response_vec.iter() {
                 let resigned = response
                     .crs_responses
                     .iter()
                     .find(|r| r.request_id == crs_id_proto)
                     .ok_or_else(|| anyhow::anyhow!("No CRS response found for crs_id={crs_id}"))?;
-                let verified = accepted_extra_data.iter().any(|extra_data| {
+                let signer = accepted_extra_data.iter().find_map(|extra_data| {
                     check_crsgen_signatures(
                         internal_client,
                         &crs,
@@ -475,13 +483,18 @@ pub(crate) async fn do_new_epoch(
                         &default_domain,
                         extra_data.clone(),
                     )
-                    .is_ok()
+                    .ok()
                 });
-                anyhow::ensure!(
-                    verified,
-                    "Signature verification failed for the reshared CRS {crs_id}"
-                );
+                let signer = signer.ok_or_else(|| {
+                    anyhow::anyhow!("Signature verification failed for the reshared CRS {crs_id}")
+                })?;
+                signers.push(signer);
             }
+            ensure_distinct_signers(
+                &format!("reshared CRS {crs_id}"),
+                &signers,
+                response_vec.len(),
+            )?;
         }
     } else {
         // If it was just a PRSS init simply make sure all is ok

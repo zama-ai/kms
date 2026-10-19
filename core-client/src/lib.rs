@@ -1337,6 +1337,28 @@ pub(crate) struct SigVerificationMaterial {
     pub extra_data: Vec<u8>,
 }
 
+/// Require that `signers`, the `(party_id, address)` recovered from each verified response,
+/// name at least `required` distinct parties and that no party signed two responses.
+pub(crate) fn ensure_distinct_signers(
+    what: &str,
+    signers: &[(u32, alloy_primitives::Address)],
+    required: usize,
+) -> anyhow::Result<()> {
+    let mut seen = HashSet::new();
+    for (party_id, address) in signers {
+        anyhow::ensure!(
+            seen.insert(*address),
+            "{what}: party {party_id} ({address}) signed more than one response"
+        );
+    }
+    anyhow::ensure!(
+        seen.len() >= required,
+        "{what}: only {} distinct parties signed, but {required} are required",
+        seen.len()
+    );
+    Ok(())
+}
+
 /// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
 /// `None` (skip verification, with an error log) when `no_verify` is set. Otherwise the
 /// domain comes from the config (falling back to [`dummy_domain`]) and the `extra_data`
@@ -3676,6 +3698,77 @@ mod tests {
                 .unwrap()
                 .expect("verification is on without --no-verify");
         assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses).is_err());
+    }
+
+    #[test]
+    fn ensure_distinct_signers_counts_parties_not_responses() {
+        let a = (1, alloy_primitives::Address::repeat_byte(1));
+        let b = (2, alloy_primitives::Address::repeat_byte(2));
+
+        ensure_distinct_signers("test", &[a, b], 2).unwrap();
+        // More distinct signers than required is fine.
+        ensure_distinct_signers("test", &[a, b], 1).unwrap();
+
+        let err = ensure_distinct_signers("test", &[a, a], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
+
+        let err = ensure_distinct_signers("test", &[a], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("only 1 distinct parties signed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A preprocessing response that one party signed verifies on its own, so the same
+    /// response replayed in place of another party's must be refused.
+    #[test]
+    fn test_preproc_responses_reject_replayed_signer() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let req_id = derive_request_id("preproc_replayed_signer").unwrap();
+        let verify = SigVerificationMaterial {
+            domain: dummy_domain(),
+            extra_data: extra_data_from_context_epoch(None, None).unwrap(),
+        };
+        let sol_struct = PrepKeygenVerification::new(&req_id, verify.extra_data.clone());
+        let response_from = |sig_key| {
+            let sig = compute_eip712_signature(sig_key, &sol_struct, &verify.domain).unwrap();
+            KeyGenPreprocResult {
+                preprocessing_id: Some(req_id.into()),
+                external_signature: sig.clone(),
+                signatures: ecdsa_signatures(sig),
+            }
+        };
+        let from_1 = response_from(&sig_key_1);
+        let from_2 = response_from(&sig_key_2);
+
+        keygen::check_preproc_responses(&client, &req_id, &verify, &[from_1.clone(), from_2])
+            .unwrap();
+
+        let err =
+            keygen::check_preproc_responses(&client, &req_id, &verify, &[from_1.clone(), from_1])
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

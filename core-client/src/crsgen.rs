@@ -1,8 +1,10 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SigVerificationMaterial,
+    ensure_distinct_signers,
 };
 
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
@@ -185,6 +187,7 @@ pub(crate) async fn fetch_and_check_crsgen(
     )
     .await;
 
+    let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         let signature_bytes = first_signature_with_scheme(
@@ -208,7 +211,7 @@ pub(crate) async fn fetch_and_check_crsgen(
 
         match verify.as_ref() {
             Some(material) => {
-                check_crsgen_signatures(
+                let signer = check_crsgen_signatures(
                     internal_client,
                     &crs,
                     &request_id,
@@ -218,6 +221,7 @@ pub(crate) async fn fetch_and_check_crsgen(
                     material.extra_data.clone(),
                 )
                 .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
+                signers.push(signer);
 
                 tracing::info!("Verification of every requested CRS signature successful.");
             }
@@ -229,6 +233,13 @@ pub(crate) async fn fetch_and_check_crsgen(
                 );
             }
         }
+    }
+    if verify.is_some() {
+        ensure_distinct_signers(
+            &format!("CRS gen {request_id}"),
+            &signers,
+            num_expected_responses,
+        )?;
     }
     Ok(())
 }
@@ -346,6 +357,8 @@ pub(crate) async fn get_crsgen_responses(
 
 /// Check every signature the CRS result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
+///
+/// Returns the `(party_id, address)` of the signer.
 pub(crate) fn check_crsgen_signatures(
     internal_client: &Client,
     crs: &CompactPkeCrs,
@@ -354,7 +367,7 @@ pub(crate) fn check_crsgen_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     tracing::info!(
@@ -375,7 +388,7 @@ pub(crate) fn check_crsgen_signatures(
             &DSEP_PUBDATA_CRS,
             &signed_payload,
         )
-        .map(|(party_id, _address)| {
+        .inspect(|(party_id, _address)| {
             tracing::info!("CRS gen result verified as produced by party {party_id}");
         })
 }
