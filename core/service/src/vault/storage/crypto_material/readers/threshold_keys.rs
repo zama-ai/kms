@@ -4,7 +4,7 @@
 //! for the ThresholdFheKeys type, enabling it to be read from storage.
 
 use crate::anyhow_error_and_warn_log;
-use crate::engine::threshold::service::ThresholdFheKeys;
+use crate::engine::service::ThresholdFheKeys;
 use crate::vault::storage::crypto_material::traits::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageReaderExt, read_versioned_at_request_and_epoch_id};
 use kms_grpc::RequestId;

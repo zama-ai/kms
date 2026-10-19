@@ -9,8 +9,8 @@ use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::rng_source::RngSource;
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
@@ -28,7 +28,7 @@ use crate::{
         signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
-        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
+        base::BaseKmsStruct, service::ThresholdFheKeys, traits::BackupOperator,
         validation::RequestIdParsingErr,
     },
     vault::{

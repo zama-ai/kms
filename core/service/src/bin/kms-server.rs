@@ -21,7 +21,7 @@ use kms_lib::{
     },
     engine::{
         backup_operator::boot_base_kms, context::SoftwareVersion, migration::migrate_to_0_15_x,
-        rng_source::RngSource, run_server, threshold::service::new_real_threshold_kms,
+        rng_source::RngSource, run_server, service::new_real_threshold_kms,
     },
     vault::{
         Vault,

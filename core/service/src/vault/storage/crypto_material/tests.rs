@@ -43,7 +43,7 @@ use tokio::sync::{Mutex, RwLock};
 use super::base::{BackupPolicy, StorageError, update_meta_store};
 use crate::{
     consts::TEST_PARAM,
-    engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
+    engine::service::{PublicKeyMaterial, ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{
         StorageReader, StorageReaderExt,

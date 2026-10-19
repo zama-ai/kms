@@ -71,9 +71,7 @@ use kms_lib::{
             PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
-        threshold::service::{
-            EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
-        },
+        service::{EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     vault::keychain::AppKeyBlob,
 };

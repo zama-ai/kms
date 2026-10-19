@@ -79,7 +79,7 @@ use crate::{
             compute_info_crs_from_digest, compute_info_standard_keygen_from_digests,
             retrieve_parameters, stored_scheme_signatures_to_proto,
         },
-        threshold::service::{
+        service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
                 FheKeyDigestMode, VerifiedCrsMaterial, VerifiedPublicMaterial,
@@ -2184,8 +2184,8 @@ pub(crate) mod tests {
         dummy_domain,
         engine::{
             base::{BaseKmsStruct, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, derive_request_id},
+            service::session::PRSSSetupCombined,
             storage_material_verification::{verify_crses, verify_keysets},
-            threshold::service::session::PRSSSetupCombined,
             utils::make_extra_data,
         },
         util::key_setup::{

@@ -35,7 +35,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::engine::threshold::service::ThresholdFheKeys;
+use crate::engine::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::TestMaterialSpec;
 use crate::testing::setup::threshold::ThresholdTestEnv;
@@ -1038,7 +1038,7 @@ async fn poll_key_gen_preproc_result(
 fn try_reconstruct_shares(
     param: DKGParams,
     threshold: usize,
-    all_threshold_fhe_keys: HashMap<Role, crate::engine::threshold::service::ThresholdFheKeys>,
+    all_threshold_fhe_keys: HashMap<Role, crate::engine::service::ThresholdFheKeys>,
 ) -> (
     tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
@@ -2016,7 +2016,7 @@ async fn run_threshold_compressed_keygen_from_existing(
                 StorageType::PRIV,
                 PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[(party_id as usize) - 1].as_deref(),
             )?;
-            let threshold_keys: crate::engine::threshold::service::ThresholdFheKeys =
+            let threshold_keys: crate::engine::service::ThresholdFheKeys =
                 read_versioned_at_request_and_epoch_id(
                     &priv_storage,
                     &keygen_id_2,
@@ -2024,7 +2024,7 @@ async fn run_threshold_compressed_keygen_from_existing(
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await?;
-            let threshold_keys_old: crate::engine::threshold::service::ThresholdFheKeys =
+            let threshold_keys_old: crate::engine::service::ThresholdFheKeys =
                 read_versioned_at_request_and_epoch_id(
                     &priv_storage,
                     &keygen_id_1,

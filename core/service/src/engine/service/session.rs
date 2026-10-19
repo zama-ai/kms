@@ -8,7 +8,7 @@ use std::{
 use crate::engine::{
     context::{ContextInfo, SignerAddress},
     rng_source::{RngSource, RngSourceError},
-    threshold::service::epoch_manager::EpochData,
+    service::epoch_manager::EpochData,
     utils::MetricedError,
 };
 
@@ -1261,7 +1261,7 @@ mod tests {
 
     use crate::engine::{
         context::{NodeInfo, SchemeDigests, SoftwareVersion, four_party_nodes},
-        threshold::service::epoch_manager::tests::dummy_epoch_data,
+        service::epoch_manager::tests::dummy_epoch_data,
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
     use std::time::Duration;

@@ -44,10 +44,8 @@ use crate::{
         base::{
             BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::KeyGenPreprocessor,
-        },
+        service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+        service_traits::KeyGenPreprocessor,
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
@@ -702,7 +700,7 @@ mod tests {
     use super::*;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::engine::rng_source::test_rng_source;
-    use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
+    use crate::engine::{base::BaseKmsStruct, service::session::SessionMaker};
     use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};

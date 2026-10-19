@@ -1,8 +1,8 @@
 use crate::conf::MigrationConfig;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
 use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{

@@ -51,10 +51,8 @@ use crate::{
             BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
             sign_public_decryption_result,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::PublicDecryptor,
-        },
+        service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+        service_traits::PublicDecryptor,
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -732,7 +730,7 @@ mod tests {
         cryptography::signatures::gen_sig_keys,
         cryptography::signing::identity::NodeSigningIdentity,
         dummy_domain,
-        engine::threshold::service::session::SessionMaker,
+        engine::service::session::SessionMaker,
         util::meta_store::EntryState,
         vault::storage::{crypto_material::PublicKeySet, ram},
     };

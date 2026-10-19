@@ -307,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn service_instances_and_session_maker_share_one_source() {
         use crate::cryptography::signatures::gen_sig_keys;
-        use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
+        use crate::engine::{base::BaseKmsStruct, service::session::SessionMaker};
         use threshold_networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
         use tokio::sync::RwLock;
 

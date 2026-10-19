@@ -37,10 +37,8 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
             stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::CrsGenerator,
-        },
+        service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+        service_traits::CrsGenerator,
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::meta_store::{
@@ -53,7 +51,7 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::{engine::threshold::traits::InsecureCrsGenerator, util::key_setup::local_material::async_generate_crs};
+        use crate::{engine::service_traits::InsecureCrsGenerator, util::key_setup::local_material::async_generate_crs};
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
@@ -581,7 +579,7 @@ mod tests {
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DURATION_WAITING_ON_RESULT_SECONDS},
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
-        engine::threshold::service::session::SessionMaker,
+        engine::service::session::SessionMaker,
         testing::utils::poll_result_until_ready,
         vault::storage::{
             read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,

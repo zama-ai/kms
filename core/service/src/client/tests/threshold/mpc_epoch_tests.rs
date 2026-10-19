@@ -36,7 +36,7 @@ use crate::{
     dummy_domain,
     engine::{
         base::{DSEP_PUBDATA_KEY, derive_request_id},
-        threshold::service::ThresholdFheKeys,
+        service::ThresholdFheKeys,
         validation::ResharingParams,
     },
     util::key_setup::{

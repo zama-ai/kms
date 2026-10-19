@@ -15,7 +15,7 @@ use tonic::{Request, Response, Status};
 use crate::{
     conf::BandwidthBenchmarkConfig,
     engine::{
-        threshold::service::session::ImmutableSessionMaker,
+        service::session::ImmutableSessionMaker,
         validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
     },
 };

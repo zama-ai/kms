@@ -58,7 +58,7 @@ use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
+use crate::engine::service::epoch_manager::{EpochData, RealThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -72,18 +72,16 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
+        kms::ThresholdKms,
         prepare_shutdown_signals,
         public_material_sync::sync_public_material_from_peers,
+        service::{
+            public_decryptor::SecureNoiseFloodDecryptor,
+            session::{ImmutableSessionMaker, SessionMaker},
+            user_decryptor::SecureNoiseFloodPartialDecryptor,
+        },
         storage_material_verification::{
             verify_private_metadata, verify_private_storage_layout, verify_storage_material,
-        },
-        threshold::{
-            service::{
-                public_decryptor::SecureNoiseFloodDecryptor,
-                session::{ImmutableSessionMaker, SessionMaker},
-                user_decryptor::SecureNoiseFloodPartialDecryptor,
-            },
-            threshold_kms::ThresholdKms,
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,

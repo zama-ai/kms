@@ -10,7 +10,7 @@ use crate::client::tests::common::send_dec_reqs;
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::threshold::service::RealThresholdKms;
+use crate::engine::service::RealThresholdKms;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::{material_subdir, threshold_material_subdir};
 use crate::testing::prelude::*;

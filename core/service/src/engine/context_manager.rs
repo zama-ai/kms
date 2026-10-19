@@ -9,7 +9,7 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
-use crate::engine::threshold::service::session::SessionMaker;
+use crate::engine::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{

@@ -8,7 +8,7 @@ use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::rng_source::test_rng_source;
-use crate::engine::threshold::service::{RealThresholdKms, new_real_threshold_kms};
+use crate::engine::service::{RealThresholdKms, new_real_threshold_kms};
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::vault::Vault;

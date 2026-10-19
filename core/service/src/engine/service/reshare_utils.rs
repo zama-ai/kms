@@ -711,10 +711,10 @@ mod tests {
     use crate::engine::context::{NodeInfo, SchemeDigests, four_party_nodes};
     use crate::engine::material_integrity::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::engine::public_material_sync::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
-    use crate::engine::threshold::service::reshare_utils::ensure_verified_reshare_public_bytes;
-    use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
-    use crate::engine::threshold::service::reshare_utils::get_verified_crs_material;
-    use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
+    use crate::engine::service::reshare_utils::ensure_verified_reshare_public_bytes;
+    use crate::engine::service::reshare_utils::fetch_public_fhe_materials_from_peers;
+    use crate::engine::service::reshare_utils::get_verified_crs_material;
+    use crate::engine::service::reshare_utils::get_verified_fhe_public_materials;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::{FailingRamStorage, RamStorage};
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;

@@ -21,16 +21,14 @@ This folder contains the core logic for the Key Management Service (KMS) server,
 - **validation_non_wasm.rs / validation_wasm.rs**  
   Validation logic for different build targets (native and WASM). Observe that the WASM build is _only_ used for user decryption.
 
-### Threshold KMS (`threshold/`)
+### KMS services
 
-- **threshold_kms.rs**  
-  Main implementation for threshold (distributed) KMS logic.
+- **kms.rs**: Main implementation for threshold (distributed) KMS logic.
 
 - **endpoint.rs**  
   Entry points for threshold gRPC calls.
 
-- **traits.rs**  
-  Traits specific to threshold services.
+- **service_traits.rs**: Traits specific to threshold services.
 
 - **service/**  
   Endpoint-specific code for threshold operations:
@@ -55,7 +53,7 @@ This module is not intended to be used directly. Instead, it is integrated into 
 ## Expanding
 
 To expand the module add relevant structures and/or functions to the protobuf files (found in `../../../grpc/proto/*`).
-Then compile to generate the protobuf fixtures and add the new methods to `threshold/endpoint.rs`.
+Then compile to generate the protobuf fixtures and add the new methods to `endpoint.rs`.
 
 ---
 

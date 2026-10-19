@@ -106,7 +106,7 @@ The service crate is the main surface area. Key subdirectories under
 
 - [engine/](../core/service/src/engine/) — RPC handlers and KMS state machines.
   The protocol code lives in the
-  [threshold/](../core/service/src/engine/threshold/) submodule. Other notable
+  [service/](../core/service/src/engine/service/) submodule. Other notable
   files: [base.rs](../core/service/src/engine/base.rs),
   [context.rs](../core/service/src/engine/context.rs),
   [backup_operator.rs](../core/service/src/engine/backup_operator.rs),

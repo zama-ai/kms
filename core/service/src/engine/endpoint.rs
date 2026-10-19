@@ -1,10 +1,10 @@
-use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
-use crate::engine::threshold::threshold_kms::ThresholdKms;
-use crate::engine::threshold::traits::{
+use crate::engine::bandwidth_bench::run_bandwidth_benchmark;
+use crate::engine::kms::ThresholdKms;
+use crate::engine::service_traits::{
     CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use crate::engine::service_traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
 use kms_grpc::ContextId;

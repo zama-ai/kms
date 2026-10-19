@@ -2,8 +2,8 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! the threshold KMS.
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
@@ -16,7 +16,7 @@ use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
-        threshold::service::ThresholdFheKeys,
+        service::ThresholdFheKeys,
     },
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,

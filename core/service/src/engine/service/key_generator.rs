@@ -58,13 +58,11 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         material_integrity::verify_public_key_digest_from_bytes,
-        threshold::{
-            service::{
-                PublicKeyMaterial, ThresholdFheKeys,
-                session::{ImmutableSessionMaker, validate_context_and_epoch},
-            },
-            traits::KeyGenerator,
+        service::{
+            PublicKeyMaterial, ThresholdFheKeys,
+            session::{ImmutableSessionMaker, validate_context_and_epoch},
         },
+        service_traits::KeyGenerator,
         utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -112,7 +110,7 @@ enum ThresholdKeyGenResult {
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::traits::InsecureKeyGenerator;
+use crate::engine::service_traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
 use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
@@ -1891,7 +1889,7 @@ mod tests {
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},
         dummy_domain,
-        engine::threshold::service::session::SessionMaker,
+        engine::service::session::SessionMaker,
         util::meta_store::{EntryState, update_ok_req_in_meta_store},
         vault::storage::{
             ram::{self, FailingRamStorage},

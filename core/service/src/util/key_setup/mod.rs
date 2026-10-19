@@ -9,9 +9,9 @@ cfg_if::cfg_if! {
             CrsGenMetadata,
         };
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-        use crate::engine::threshold::service::epoch_manager::EpochData;
-        use crate::engine::threshold::service::session::PRSSSetupCombined;
-        use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
+        use crate::engine::service::epoch_manager::EpochData;
+        use crate::engine::service::session::PRSSSetupCombined;
+        use crate::engine::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_identity,
         };
@@ -1292,7 +1292,7 @@ mod tests {
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
-    use crate::engine::threshold::service::epoch_manager::EpochData;
+    use crate::engine::service::epoch_manager::EpochData;
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };

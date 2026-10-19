@@ -65,10 +65,8 @@ use crate::{
             BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level,
             sign_user_decryption_result,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::UserDecryptor,
-        },
+        service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+        service_traits::UserDecryptor,
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -685,7 +683,7 @@ mod tests {
             signatures::{NodeSigningIdentity, gen_sig_keys},
         },
         dummy_domain,
-        engine::threshold::service::session::SessionMaker,
+        engine::service::session::SessionMaker,
         util::meta_store::EntryState,
         vault::storage::{crypto_material::PublicKeySet, ram},
     };

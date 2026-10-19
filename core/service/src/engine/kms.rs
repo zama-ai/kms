@@ -1,7 +1,7 @@
 use crate::conf::BandwidthBenchmarkConfig;
 use crate::engine::Shutdown;
-use crate::engine::threshold::bandwidth_bench::new_bandwidth_bench_limiter;
-use crate::engine::threshold::service::session::ImmutableSessionMaker;
+use crate::engine::bandwidth_bench::new_bandwidth_bench_limiter;
+use crate::engine::service::session::ImmutableSessionMaker;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use observability::health::HealthState;
