@@ -13,11 +13,12 @@ use kms_grpc::rpc_types::{PubDataType, first_signature_with_scheme};
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::local_crypto::load_material_from_pub_storage;
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload, crs_sol_type};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::{max_num_bits_from_crs, max_num_messages};
 use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 use tonic::Code;
@@ -125,6 +126,7 @@ pub(crate) async fn do_crsgen(
         destination_prefix,
         req_id,
         Some(SigVerificationMaterial { domain, extra_data }),
+        max_num_bits.map(|bits| (param, bits)),
         resp_response_vec,
         cmd_conf.download_all,
     )
@@ -144,6 +146,9 @@ pub(crate) async fn fetch_and_check_crsgen(
     // `None`, the CRS is still downloaded and request IDs checked, but the
     // external signature is not verified (an error is logged).
     verify: Option<SigVerificationMaterial>,
+    // The parameter set and `max_num_bits` of the request, when it is at hand. The
+    // CRS is then checked to have the requested size.
+    requested_size: Option<(FheParameter, u32)>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
@@ -186,6 +191,9 @@ pub(crate) async fn fetch_and_check_crsgen(
         Some(core_config.object_folder.as_str()),
     )
     .await;
+    if let Some((param, max_num_bits)) = requested_size {
+        check_crs_size(&crs, param, max_num_bits)?;
+    }
 
     let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
@@ -241,6 +249,29 @@ pub(crate) async fn fetch_and_check_crsgen(
             num_expected_responses,
         )?;
     }
+    Ok(())
+}
+
+/// Check that `crs` has the size requested with `max_num_bits` under `param`.
+///
+/// The signatures cover whatever size the parties generated, so they do not show that it is the
+/// size the request asked for.
+fn check_crs_size(
+    crs: &CompactPkeCrs,
+    param: FheParameter,
+    max_num_bits: u32,
+) -> anyhow::Result<()> {
+    let params = match param {
+        FheParameter::Test => TEST_PARAM,
+        FheParameter::Default => DEFAULT_PARAM,
+    };
+    let expected = max_num_messages(&params.compact_pk_enc_params(), max_num_bits as usize)?.0;
+    let actual = crs.max_num_messages().0;
+    anyhow::ensure!(
+        actual == expected,
+        "the CRS supports {actual} messages, but {max_num_bits} bits under the {} parameters need {expected}",
+        param.as_str_name()
+    );
     Ok(())
 }
 
@@ -604,5 +635,43 @@ mod tests {
             .to_string()
             .contains(UNKNOWN_PARTY)
         );
+    }
+
+    /// A CRS passes when it has the size the request asked for, rounded up to whole messages,
+    /// and fails when the request asked for more.
+    #[tokio::test]
+    async fn test_check_crs_size() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let crs_id = &TEST_CENTRAL_CRS_ID;
+        ensure_central_crs_exists(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            crs_id,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let crs: CompactPkeCrs = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+        let bits = max_num_bits_from_crs(&crs) as u32;
+
+        check_crs_size(&crs, FheParameter::Test, bits).unwrap();
+        // One bit less still needs the same number of messages; internally rounded up
+        check_crs_size(&crs, FheParameter::Test, bits - 1).unwrap();
+
+        let err = check_crs_size(&crs, FheParameter::Test, bits + 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("the CRS supports"), "unexpected error: {err}");
     }
 }
