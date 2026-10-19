@@ -2607,7 +2607,7 @@ mod tests {
     const LEGACY_PRSS_SETUP_COMBINED: PrivDataType = PrivDataType::PrssSetupCombined;
 
     #[tokio::test]
-    async fn private_layout_accepts_consistent_threshold_storage() {
+    async fn private_layout_accepts_consistent_storage() {
         let mut storage = RamStorage::new();
         let (epoch, context) = (test_epoch(1), test_context(1));
         let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
@@ -2754,7 +2754,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fhe_private_key_material_on_threshold_node_fails_boot() {
+    async fn fhe_private_key_material_fails_boot() {
         let mut storage = RamStorage::new();
         let (epoch, context) = (test_epoch(1), test_context(1));
         let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
@@ -2785,7 +2785,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_prss_material_on_threshold_node_fails_boot() {
+    async fn legacy_prss_material_fails_boot() {
         let mut storage = RamStorage::new();
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
         store_flat(&mut storage, LEGACY_PRSS_SETUP, &test_id(211)).await;

@@ -501,7 +501,7 @@ mod tests {
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
-    async fn test_setup_threshold_material() {
+    async fn test_setup_material() {
         let manager = create_test_material_manager();
         let spec = TestMaterialSpec::basic(4);
 

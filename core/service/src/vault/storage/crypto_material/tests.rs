@@ -86,7 +86,7 @@ fn dummy_info() -> KeyGenMetadata {
     )
 }
 
-fn ram_threshold_storage(
+fn ram_cached_storage(
     backup_vault: Option<crate::vault::Vault>,
 ) -> CachedCryptoMaterialStorage<RamStorage, RamStorage> {
     CachedCryptoMaterialStorage::new(
@@ -290,8 +290,8 @@ async fn write_crs() {
 }
 
 #[tokio::test]
-async fn read_public_key_from_threshold_storage() {
-    let crypto_storage = ram_threshold_storage(None);
+async fn read_public_key_from_storage() {
+    let crypto_storage = ram_cached_storage(None);
     let pub_storage = crypto_storage.inner.public_storage.clone();
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
@@ -314,15 +314,14 @@ async fn read_public_key_from_threshold_storage() {
 }
 
 #[tokio::test]
-async fn write_threshold_keys_failed_storage_sets_terminal_error() {
-    let req_id =
-        derive_request_id("write_threshold_keys_failed_storage_sets_terminal_error").unwrap();
+async fn write_fhe_keys_failed_storage_sets_terminal_error() {
+    let req_id = derive_request_id("write_fhe_keys_failed_storage_sets_terminal_error").unwrap();
     let epoch_id: EpochId =
         derive_request_id("write_threshold_keys_failed_storage_sets_terminal_error_epoch")
             .unwrap()
             .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_threshold_store(&req_id, FailingRamStorage::new());
+        setup_cached_store(&req_id, FailingRamStorage::new());
     let public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
 
     let meta_store = MetaStore::new_unlimited();
@@ -374,13 +373,13 @@ async fn write_threshold_keys_failed_storage_sets_terminal_error() {
 }
 
 #[tokio::test]
-async fn write_threshold_keys_sunshine() {
+async fn write_fhe_keys_sunshine() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_threshold_store(&req_id, RamStorage::new());
+        setup_cached_store(&req_id, RamStorage::new());
     let meta_store = MetaStore::new_unlimited();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set.clone()));
 
@@ -409,15 +408,15 @@ async fn write_threshold_keys_sunshine() {
 }
 
 #[tokio::test]
-async fn write_threshold_keys_meta_update() {
+async fn write_fhe_keys_meta_update() {
     // `MetaStore::insert` refuses to mint a second permit for an existing
     // entry, so write_fhe_keys cannot be called twice for the same req_id.
-    let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
+    let req_id = derive_request_id("write_fhe_keys_meta_update").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_threshold_store(&req_id, RamStorage::new());
+        setup_cached_store(&req_id, RamStorage::new());
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let meta_store = MetaStore::new_unlimited();
 
@@ -486,9 +485,9 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
         .unwrap()
         .into();
 
-    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a, RamStorage::new());
+    let (crypto_storage, keys_a, pubset_a) = setup_cached_store(&req_a, RamStorage::new());
     // A second keyset; the throwaway storage is unused, only the key material is.
-    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b, RamStorage::new());
+    let (_throwaway, keys_b, pubset_b) = setup_cached_store(&req_b, RamStorage::new());
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -545,13 +544,13 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
 }
 
 #[tokio::test]
-async fn write_threshold_keys_failed_storage() {
-    let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
+async fn write_fhe_keys_failed_storage() {
+    let req_id = derive_request_id("write_fhe_keys_failed_storage").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
-        setup_threshold_store(&req_id, FailingRamStorage::new());
+        setup_cached_store(&req_id, FailingRamStorage::new());
     let meta_store = MetaStore::new_unlimited();
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -621,8 +620,8 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 #[tokio::test]
-async fn read_guarded_threshold_fhe_keys_not_found() {
-    let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
+async fn read_guarded_fhe_keys_not_found() {
+    let req_id = derive_request_id("read_guarded_fhe_keys_not_found").unwrap();
     let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
         .unwrap()
         .into();
@@ -654,17 +653,16 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 }
 
 #[tokio::test]
-async fn threshold_compressed_fhe_keys_exist_requires_standalone_public_key() {
+async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     let req_id =
-        derive_request_id("threshold_compressed_fhe_keys_exist_requires_standalone_public_key")
-            .unwrap();
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
     let epoch_id: EpochId = derive_request_id(
         "threshold_compressed_fhe_keys_exist_requires_standalone_public_key_epoch",
     )
     .unwrap()
     .into();
 
-    let crypto_storage = ram_threshold_storage(None);
+    let crypto_storage = ram_cached_storage(None);
     let (compressed_keyset, compact_pk, threshold_fhe_keys) =
         generate_threshold_compressed_keys(&req_id, &req_id, 50);
 
@@ -749,7 +747,7 @@ async fn read_guarded_crypto_material_from_cache_not_found() {
     );
 }
 
-fn setup_threshold_store<PubS>(
+fn setup_cached_store<PubS>(
     req_id: &RequestId,
     public_storage: PubS,
 ) -> (
@@ -1148,7 +1146,7 @@ async fn write_all_updates_backup_vault() {
 }
 
 #[tokio::test]
-async fn handle_threshold_fhe_keys_compressed_writes_and_caches() {
+async fn handle_fhe_keys_compressed_writes_and_caches() {
     // Compressed layout: stores CompressedXofKeySet + PublicKey, no ServerKey.
     let req_id = derive_request_id("handle_threshold_fhe_keys_compressed").unwrap();
     let epoch_id: EpochId = derive_request_id("handle_threshold_fhe_keys_compressed_epoch")

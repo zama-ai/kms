@@ -653,7 +653,7 @@ mod tests {
     use threshold_types::rng::AesRng;
 
     #[test]
-    fn valid_threshold_ca_cert_is_accepted() {
+    fn valid_ca_cert_is_accepted() {
         let signing_key = test_signing_key(1);
         let cert = test_ca_cert(&signing_key, true);
 

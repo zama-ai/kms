@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 
 use crate::{
     client::tests::public_decryption_tests::{
-        run_decryption_threshold, run_decryption_threshold_optionally_fail,
+        run_public_decryption, run_public_decryption_optionally_fail,
     },
     consts::{
         DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -155,7 +155,7 @@ async fn do_context_switch(
     let key_id = &TEST_KEY_ID_4P;
 
     // The new context owns no epoch, so it holds no key shares either.
-    run_decryption_threshold_optionally_fail(
+    run_public_decryption_optionally_fail(
         amount_parties,
         &mut kms_servers,
         &mut kms_clients,
@@ -203,7 +203,7 @@ async fn do_context_switch(
 
     // run the request again with the new context ID (which is deleted)
     // this should fail because the context is unknown to every party.
-    run_decryption_threshold_optionally_fail(
+    run_public_decryption_optionally_fail(
         amount_parties,
         &mut kms_servers,
         &mut kms_clients,
@@ -221,7 +221,7 @@ async fn do_context_switch(
     .await;
 
     // running the request with the old context ID should still work
-    run_decryption_threshold(
+    run_public_decryption(
         amount_parties,
         &mut kms_servers,
         &mut kms_clients,

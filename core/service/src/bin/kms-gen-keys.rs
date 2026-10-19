@@ -12,8 +12,7 @@ use kms_lib::{
     consts::{SIGNING_KEY_ID, signing_material_id},
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_all_verf_material, ensure_all_verf_material,
-        ensure_threshold_server_signing_key_exists,
+        delete_all_verf_material, ensure_all_verf_material, ensure_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -411,7 +410,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     if args.overwrite {
         delete_signing_key_material(args.pub_storage, args.priv_storage).await?;
     }
-    if !ensure_threshold_server_signing_key_exists(
+    if !ensure_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
         #[cfg(any(test, feature = "testing", feature = "insecure"))]

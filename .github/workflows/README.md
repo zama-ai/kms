@@ -150,7 +150,7 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 
 Two parallel entries on PRs:
 1. `-F slow_tests --lib -- --skip nightly` — workspace lib tests
-2. `-E kind(test) -F slow_tests -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
+2. `-E kind(test)&!test(/^kms_gen_keys_binary_test::/) -F slow_tests -- --skip nightly` — integration tests excluding the `kms-gen-keys` binary tests (those run in `test-core-service-slow-threshold`)
 
 Schedule entry: `--release -F slow_tests nightly` — nightly-suffixed tests in release mode.
 

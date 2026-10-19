@@ -48,7 +48,7 @@ jobs:
           # preproc-keygen, 6-party context switch) run per-PR.
           - job_name: core-client-threshold
             crate_names: '-p kms-core-client'
-            args_tests: '--features slow_tests,insecure -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker'
+            args_tests: '--features slow_tests,insecure --test integration_test -- --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_mpc_context_switch_6_docker'
             skip_test_material: false
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -58,7 +58,7 @@ jobs:
           #======================================================================
           - job_name: core-client-unit-p1
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:1/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:1/3 -E !binary_id(kms-core-client::integration_test) -- --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -67,7 +67,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-client-unit-p2
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:2/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:2/3 -E !binary_id(kms-core-client::integration_test) -- --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -76,7 +76,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-client-unit-p3
             crate_names: '-p kms-core-client'
-            args_tests: '--features testing --partition count:3/3 -- --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            args_tests: '--features testing --partition count:3/3 -E !binary_id(kms-core-client::integration_test) -- --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
             skip_test_material: true
             lfs: false
             runs_on: '64cpu-linux-x64'
@@ -188,7 +188,7 @@ jobs:
           #======================================================================
           - job_name: core-service-test-p1
             crate_names: '-p kms'
-            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:1/4 -- --skip threshold --skip nightly'
+            args_tests: '-E kind(test)&!test(/^kms_gen_keys_binary_test::/) -F slow_tests -F insecure --partition count:1/4 -- --skip nightly'
             skip_test_material: false
             lfs: true
             runs_on: '64cpu-linux-x64'
@@ -197,7 +197,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-service-test-p2
             crate_names: '-p kms'
-            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:2/4 -- --skip threshold --skip nightly'
+            args_tests: '-E kind(test)&!test(/^kms_gen_keys_binary_test::/) -F slow_tests -F insecure --partition count:2/4 -- --skip nightly'
             skip_test_material: false
             lfs: true
             runs_on: '64cpu-linux-x64'
@@ -206,7 +206,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-service-test-p3
             crate_names: '-p kms'
-            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:3/4 -- --skip threshold --skip nightly'
+            args_tests: '-E kind(test)&!test(/^kms_gen_keys_binary_test::/) -F slow_tests -F insecure --partition count:3/4 -- --skip nightly'
             skip_test_material: false
             lfs: true
             runs_on: '64cpu-linux-x64'
@@ -215,7 +215,7 @@ jobs:
             nextest_threads: '4'
           - job_name: core-service-test-p4
             crate_names: '-p kms'
-            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:4/4 -- --skip threshold --skip nightly'
+            args_tests: '-E kind(test)&!test(/^kms_gen_keys_binary_test::/) -F slow_tests -F insecure --partition count:4/4 -- --skip nightly'
             skip_test_material: false
             lfs: true
             runs_on: '64cpu-linux-x64'
@@ -225,7 +225,7 @@ jobs:
           #======================================================================
           - job_name: core-service-threshold
             crate_names: '-p kms'
-            args_tests: '-E kind(test) -F slow_tests -F insecure threshold -- --skip nightly'
+            args_tests: '-E kind(test)&test(/^kms_gen_keys_binary_test::/) -F slow_tests -F insecure -- --skip nightly'
             skip_test_material: false
             lfs: true
             runs_on: '64cpu-linux-x64'

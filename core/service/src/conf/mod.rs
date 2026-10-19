@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_config() {
+    fn test_party_config() {
         let core_config: CoreConfig =
             init_conf("config/default_2").expect("default_2 config must parse");
         core_config
@@ -524,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_config_negative() {
+    fn test_party_config_negative() {
         // the test below assumes we're using a valid config with 4 parties and threshold 1, which is the case for the default configs
         let core_config: CoreConfig = init_conf("config/default_2").expect("config must parse");
         core_config

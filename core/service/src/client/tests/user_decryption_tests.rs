@@ -48,14 +48,14 @@ use tokio::task::JoinSet;
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold(
+async fn test_user_decryption(
     #[case] secure: bool,
     #[case] pt: TestingPlaintext,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         key_id,
         false,
@@ -79,12 +79,12 @@ async fn test_user_decryption_threshold(
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_KEY_ID_4P, vec![Role::indexed_from_one(1)])]
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_KEY_ID_4P, vec![Role::indexed_from_one(4)])]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_malicious(
+async fn test_user_decryption_malicious(
     #[case] pt: TestingPlaintext,
     #[case] key_id: &RequestId,
     #[case] malicious_set: Vec<Role>,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         key_id,
         false,
@@ -105,9 +105,9 @@ async fn test_user_decryption_threshold_malicious(
 
 #[tokio::test(flavor = "multi_thread")]
 #[should_panic]
-async fn test_user_decryption_threshold_malicious_failure() {
+async fn test_user_decryption_malicious_failure() {
     // should panic because the malicious set is too big
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         &TEST_KEY_ID_4P,
         false,
@@ -133,9 +133,9 @@ async fn test_user_decryption_threshold_malicious_failure() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[should_panic]
-async fn test_user_decryption_threshold_all_malicious_failure() {
+async fn test_user_decryption_all_malicious_failure() {
     // should panic because the malicious set is too big
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         &TEST_KEY_ID_4P,
         false,
@@ -163,13 +163,13 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
 #[case(true, 4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(false, 4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_precompute_sns(
+async fn test_user_decryption_precompute_sns(
     #[case] secure: bool,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         key_id,
         false,
@@ -190,8 +190,8 @@ async fn test_user_decryption_threshold_precompute_sns(
 
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_no_compression(#[values(true, false)] secure: bool) {
-    user_decryption_threshold(
+async fn test_user_decryption_no_compression(#[values(true, false)] secure: bool) {
+    user_decryption(
         TEST_PARAM,
         &TEST_KEY_ID_4P,
         false,
@@ -213,7 +213,7 @@ async fn test_user_decryption_threshold_no_compression(#[values(true, false)] se
 /// Checks that every party fails a user decryption of an oversized garbage ciphertext with an
 /// error instead of a crash, and that the parties still serve user decryptions afterward.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_largecipher() {
+async fn test_user_decryption_largecipher() {
     let amount_parties = 4;
     let env = TestEnv::builder()
         .with_test_name("user_decryption_threshold_largecipher")
@@ -309,7 +309,7 @@ async fn test_user_decryption_threshold_largecipher() {
         .into_iter()
         .map(|(_, result)| result.unwrap())
         .collect();
-    process_batch_threshold_user_decryption(
+    process_batch_user_decryption(
         &mut internal_client,
         msg,
         true,
@@ -326,7 +326,7 @@ async fn test_user_decryption_threshold_largecipher() {
 /// Checks that a single valid response does not decrypt for a client that knows all four
 /// parties, on both the secure and the insecure path.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_single_response_fails() {
+async fn test_user_decryption_single_response_fails() {
     let msg = TestingPlaintext::U8(42);
     let fx = UserDecryptionResponses::collect("user_decryption_single_response", msg).await;
     assert_eq!(fx.client.server_identities.len(), 4);
@@ -356,7 +356,7 @@ async fn test_user_decryption_threshold_single_response_fails() {
 /// secure path expects degree 0 from one server identity and rejects the response. The
 /// insecure path cannot reconstruct a degree-1 sharing from one share.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_one_identity_one_response_fails() {
+async fn test_user_decryption_one_identity_one_response_fails() {
     let msg = TestingPlaintext::U8(42);
     let mut fx =
         UserDecryptionResponses::collect("user_decryption_one_identity_one_response", msg).await;
@@ -390,7 +390,7 @@ async fn test_user_decryption_threshold_one_identity_one_response_fails() {
 /// parties 1 and 2 plus the forged response from party 3 therefore decrypt only if the
 /// client accepts the forged response.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_rejects_plaintext_encoding() {
+async fn test_user_decryption_rejects_plaintext_encoding() {
     let msg = TestingPlaintext::U8(42);
     let fx = UserDecryptionResponses::collect("user_decryption_plaintext_encoding", msg).await;
     let identities = get_server_signing_identities(4, &fx.material_path).await;
@@ -431,12 +431,12 @@ async fn test_user_decryption_threshold_rejects_plaintext_encoding() {
 #[case(true, 4, &TEST_KEY_ID_4P)]
 #[case(false, 4, &TEST_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_and_write_transcript(
+async fn test_user_decryption_and_write_transcript(
     #[case] secure: bool,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         TEST_PARAM,
         key_id,
         true,
@@ -460,13 +460,13 @@ async fn test_user_decryption_threshold_and_write_transcript(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-async fn default_user_decryption_threshold_and_write_transcript(
+async fn default_user_decryption_and_write_transcript(
     #[case] msg: TestingPlaintext,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[values(true, false)] secure: bool,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         true,
@@ -489,14 +489,14 @@ async fn default_user_decryption_threshold_and_write_transcript(
 #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_KEY_ID_4P)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-async fn default_user_decryption_threshold(
+async fn default_user_decryption(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[values(true)] secure: bool,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -518,14 +518,14 @@ async fn default_user_decryption_threshold(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-async fn default_user_decryption_threshold_precompute_sns(
+async fn default_user_decryption_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[values(true)] secure: bool,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -547,7 +547,7 @@ async fn default_user_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn default_user_decryption_threshold_with_crash(
+async fn default_user_decryption_with_crash(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
@@ -555,7 +555,7 @@ async fn default_user_decryption_threshold_with_crash(
     #[case] key_id: &RequestId,
     #[values(true, false)] secure: bool,
 ) {
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -580,7 +580,7 @@ async fn default_user_decryption_threshold_with_crash(
 }
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn user_decryption_threshold(
+pub(crate) async fn user_decryption(
     dkg_params: DKGParams,
     key_id: &RequestId,
     _write_transcript: bool,
@@ -772,7 +772,7 @@ pub(crate) async fn user_decryption_threshold(
 
     let server_private_keys = get_server_private_keys(amount_parties, &material_path).await;
 
-    process_batch_threshold_user_decryption(
+    process_batch_user_decryption(
         &mut internal_client,
         msg,
         secure,
@@ -787,7 +787,7 @@ pub(crate) async fn user_decryption_threshold(
 }
 
 #[expect(clippy::too_many_arguments)]
-async fn process_batch_threshold_user_decryption(
+async fn process_batch_user_decryption(
     internal_client: &mut Client,
     msg: TestingPlaintext,
     secure: bool,

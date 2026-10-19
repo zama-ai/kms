@@ -42,8 +42,8 @@
 
 ### Test gating patterns
 
-- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow threshold tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_threshold_cli_test_with_prss`).
-- **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_threshold_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
+- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow threshold tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_cli_test_with_prss`).
+- **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
 
 ### Test naming conventions (CI skip rules)
 
@@ -88,7 +88,7 @@ Native tests spawn KMS servers in-process. See `integration/integration_test.rs`
 #[tokio::test]
 async fn test_my_feature() -> Result<()> {
     // Setup returns (TempDir, HashMap<party_id, ServerHandle>, config_path)
-    let (_dir, _servers, config) = setup_isolated_threshold_cli_test_signing_only("my_test", 4).await?;
+    let (_dir, _servers, config) = setup_isolated_cli_test_signing_only("my_test", 4).await?;
     
     // Run CLI command
     let output = Command::new(env!("CARGO_BIN_EXE_kms-core-client"))
@@ -101,12 +101,12 @@ async fn test_my_feature() -> Result<()> {
 ```
 
 **Threshold setup variants** (all take `party_count: usize`):
-- `setup_isolated_threshold_cli_test` — basic threshold test
-- `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
-- `setup_isolated_threshold_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
-- `setup_isolated_threshold_cli_test_with_prss_with_backup` — with backup vault
-- `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
-- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
+- `setup_isolated_cli_test` — basic threshold test
+- `setup_isolated_cli_test_signing_only` — signing without pre-loaded PRSS
+- `setup_isolated_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
+- `setup_isolated_cli_test_with_prss_with_backup` — with backup vault
+- `setup_isolated_cli_test_with_custodian_backup` — with custodian backup vault
+- `setup_isolated_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
 
 ---
 

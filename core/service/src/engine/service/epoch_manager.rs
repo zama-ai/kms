@@ -2184,8 +2184,8 @@ pub(crate) mod tests {
             utils::make_extra_data,
         },
         util::key_setup::{
-            SigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
-            ensure_threshold_server_signing_keys_exist,
+            SigningKeyConfig, ensure_client_keys_exist, ensure_epoch_exists,
+            ensure_server_signing_keys_exist,
         },
         vault::storage::{
             StorageReader, StorageReaderExt, StorageType,
@@ -2378,7 +2378,7 @@ pub(crate) mod tests {
         // from each private storage and panics if it's missing. Populate the
         // tempdir with signing + client keys (same calls `TestEnv`
         // makes internally via `setup_test_material_temp`).
-        ensure_threshold_server_signing_keys_exist(
+        ensure_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             true, // deterministic
@@ -2394,7 +2394,7 @@ pub(crate) mod tests {
         ensure_client_keys_exist(Some(material_path), true).await;
         // A server never creates an epoch on its own, so the default epoch is written the way
         // the fixture generator writes it.
-        ensure_threshold_epoch_exists(&mut priv_storage, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+        ensure_epoch_exists(&mut priv_storage, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
             .await
             .unwrap();
         let epoch_before: HashMap<RequestId, EpochData> =

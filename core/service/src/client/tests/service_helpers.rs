@@ -95,7 +95,7 @@ pub(crate) async fn run_insecure_preproc(
 /// * `Ok((preproc_id, responses))` - the preprocessing ID that was consumed and
 ///   per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
-pub async fn threshold_insecure_key_gen(
+pub async fn run_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
@@ -176,7 +176,7 @@ pub async fn threshold_insecure_key_gen(
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 #[expect(clippy::too_many_arguments)]
-pub async fn threshold_secure_key_gen(
+pub async fn run_secure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,

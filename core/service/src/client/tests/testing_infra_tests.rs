@@ -11,7 +11,7 @@ use crate::testing::prelude::*;
 
 /// Validates that TestEnv builder fails gracefully when material is missing.
 #[tokio::test]
-async fn test_threshold_material_validation() -> Result<()> {
+async fn test_material_validation() -> Result<()> {
     use std::path::PathBuf;
 
     let nonexistent_path = PathBuf::from("/nonexistent/test-material");

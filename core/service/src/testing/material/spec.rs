@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_threshold_basic_spec() {
+    fn test_basic_spec() {
         let spec = TestMaterialSpec::basic(4);
 
         assert_eq!(spec.material_type, MaterialType::Testing);
@@ -148,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_default_spec() {
+    fn test_default_params_spec() {
         let spec = TestMaterialSpec::default_params(4);
 
         assert_eq!(spec.material_type, MaterialType::Default);

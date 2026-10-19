@@ -9,7 +9,7 @@ use crate::engine::backup_operator::boot_base_kms;
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::kms::Kms;
 use crate::engine::rng_source::test_rng_source;
-use crate::engine::service::new_real_threshold_kms;
+use crate::engine::service::new_kms;
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::vault::Vault;
@@ -153,7 +153,7 @@ pub async fn setup_servers_no_client<
             let base_kms = BaseKmsStruct::new(sk, test_rng_source());
 
             // TODO pass in cert_paths for testing TLS
-            let server = new_real_threshold_kms(
+            let server = new_kms(
                 core_config,
                 cur_pub_storage,
                 cur_priv_storage,
@@ -380,7 +380,7 @@ pub async fn setup_servers_with_custom_peers<
                 Kms<PubS, PrivS>,
                 (HealthState, _),
                 MetaStoreStatusServiceImpl,
-            )> = new_real_threshold_kms(
+            )> = new_kms(
                 core_config,
                 cur_pub_storage,
                 cur_priv_storage,
@@ -767,7 +767,7 @@ pub async fn setup_recovery_mode<
         .pop()
         .unwrap();
     let (mpc_shutdown_tx, mpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let (kms, (health, health_service), _metastore_status_service) = new_real_threshold_kms(
+    let (kms, (health, health_service), _metastore_status_service) = new_kms(
         core_config,
         pub_storage,
         priv_storage,

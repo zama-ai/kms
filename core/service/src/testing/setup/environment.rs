@@ -13,8 +13,7 @@ use crate::testing::material::{KeyType, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::TestConfig;
 use crate::util::key_setup::{
-    SigningKeyConfig, ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist,
-    max_threshold,
+    SigningKeyConfig, ensure_client_keys_exist, ensure_server_signing_keys_exist, max_threshold,
 };
 use crate::vault::Vault;
 use crate::vault::keychain::make_keychain_proxy;
@@ -339,7 +338,7 @@ impl TestEnvBuilder {
         }
 
         // Ensure signing keys exist (generates VerfAddress if missing)
-        ensure_threshold_server_signing_keys_exist(
+        ensure_server_signing_keys_exist(
             &mut pub_storages,
             &mut priv_storages,
             true, // deterministic
@@ -356,7 +355,7 @@ impl TestEnvBuilder {
         ensure_client_keys_exist(Some(material_dir.path()), true).await;
 
         let vaults = if self.with_backup_vault {
-            build_threshold_vaults(
+            build_vaults(
                 material_dir.path(),
                 self.party_count,
                 self.with_custodian_keychain,
@@ -409,7 +408,7 @@ impl TestEnvBuilder {
         }
 
         let vaults = if self.with_backup_vault {
-            build_threshold_vaults(path, self.party_count, self.with_custodian_keychain).await?
+            build_vaults(path, self.party_count, self.with_custodian_keychain).await?
         } else {
             (0..self.party_count).map(|_| None).collect()
         };
@@ -426,7 +425,7 @@ impl TestEnvBuilder {
     }
 }
 
-async fn build_threshold_vaults(
+async fn build_vaults(
     material_path: &Path,
     party_count: usize,
     with_custodian_keychain: bool,

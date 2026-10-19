@@ -956,7 +956,7 @@ mod tests {
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
-        delete_non_legacy_verf_material, ensure_threshold_server_signing_key_exists,
+        delete_non_legacy_verf_material, ensure_server_signing_key_exists,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_identity, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;
@@ -974,9 +974,7 @@ mod tests {
     use threshold_types::rng::AesRng;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
-    pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_migrate_legacy_fhe_keys<S: StorageExt + Sync + Send>(storage: &mut S) {
         // Store some legacy data (directly under data_type without epoch)
         // Note: key IDs must not collide with the epoch id to avoid path conflicts
         let key_id_1 = RequestId::from_str(
@@ -1135,9 +1133,9 @@ mod tests {
 
     // RAM storage tests
     #[tokio::test]
-    async fn test_migrate_threshold_ram() {
+    async fn test_migrate_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
+        test_migrate_legacy_fhe_keys(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1160,10 +1158,10 @@ mod tests {
 
     // File storage tests
     #[tokio::test]
-    async fn test_migrate_threshold_file() {
+    async fn test_migrate_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
+        test_migrate_legacy_fhe_keys(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1261,9 +1259,7 @@ mod tests {
     // ── Tests for migrate_fhe_keys_after_0_13_x ──
 
     /// Test that legacy keys with epoch counterparts are deleted (threshold)
-    pub async fn test_migrate_fhe_keys_after_0_13_x_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_migrate_fhe_keys_after_0_13_x<S: StorageExt + Sync + Send>(storage: &mut S) {
         let key_id_1 = RequestId::from_str(
             "0x00000000000000000000000000000000000000000000000000000000000000aa",
         )
@@ -1362,9 +1358,9 @@ mod tests {
 
     // RAM storage tests — migrate_fhe_keys_after_0_13_x
     #[tokio::test]
-    async fn test_after_0_13_x_threshold_ram() {
+    async fn test_after_0_13_x_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
+        test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1401,10 +1397,10 @@ mod tests {
 
     // File storage tests — migrate_fhe_keys_after_0_13_x
     #[tokio::test]
-    async fn test_after_0_13_x_threshold_file() {
+    async fn test_after_0_13_x_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
+        test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1817,7 +1813,7 @@ mod tests {
             .unwrap();
     }
 
-    pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold<S: StorageExt + Sync + Send>(
+    pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
         let key_id_1 = RequestId::from_str(
@@ -1939,9 +1935,9 @@ mod tests {
 
     // RAM storage tests — migrate_fhe_keys_0_13_x_to_0_13_10
     #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_threshold_ram() {
+    async fn test_0_13_x_to_0_13_10_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
+        test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1964,10 +1960,10 @@ mod tests {
 
     // File storage tests — migrate_fhe_keys_0_13_x_to_0_13_10
     #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_threshold_file() {
+    async fn test_0_13_x_to_0_13_10_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
+        test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1994,9 +1990,7 @@ mod tests {
     // ── Tests for remove_old_keys_for_0_13_20 ──
 
     /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (threshold)
-    pub async fn test_remove_old_keys_for_0_13_20_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_remove_old_keys_for_0_13_20<S: StorageExt + Sync + Send>(storage: &mut S) {
         let key_id_1 = RequestId::from_str(
             "0x00000000000000000000000000000000000000000000000000000000000000aa",
         )
@@ -2102,9 +2096,9 @@ mod tests {
 
     // RAM storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
-    async fn test_remove_old_keys_threshold_ram() {
+    async fn test_remove_old_keys_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
+        test_remove_old_keys_for_0_13_20(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2121,10 +2115,10 @@ mod tests {
 
     // File storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
-    async fn test_remove_old_keys_threshold_file() {
+    async fn test_remove_old_keys_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
+        test_remove_old_keys_for_0_13_20(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2144,7 +2138,7 @@ mod tests {
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_13_x_threshold() {
+    async fn test_migrate_to_0_13_x() {
         let mut storage = RamStorage::new();
         let threshold = 1u8;
         let num_parties = 4;
@@ -2187,7 +2181,7 @@ mod tests {
     // ── Tests for migrate_to_0_13_10 (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_13_10_threshold() {
+    async fn test_migrate_to_0_13_10() {
         let mut storage = RamStorage::new();
         let threshold = 1u8;
         let num_parties = 4;
@@ -2452,7 +2446,7 @@ mod tests {
     // ── Tests for threshold_prss_to_epoch ──
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_sunshine() {
+    async fn test_prss_to_epoch_sunshine() {
         let mut storage = RamStorage::new();
         let num_parties = 4u8;
         let threshold = 1u8;
@@ -2478,7 +2472,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_missing_prss_errors() {
+    async fn test_prss_to_epoch_missing_prss_errors() {
         let mut storage = RamStorage::new();
         // No combined PRSS stored, so reading it back for the mapped epoch must fail.
         let result = threshold_prss_to_epoch(&mut storage, &default_migration_config()).await;
@@ -2486,7 +2480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_stored_epoch_missing_from_config_errors() {
+    async fn test_prss_to_epoch_stored_epoch_missing_from_config_errors() {
         let mut storage = RamStorage::new();
         // Two epochs have PRSS on disk, but the config only lists the default one (DEFAULT_EPOCH_ID).
         // The unlisted epoch must be rejected before any write, so it can never be silently dropped
@@ -2515,7 +2509,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_configured_epoch_missing_on_disk_errors() {
+    async fn test_prss_to_epoch_configured_epoch_missing_on_disk_errors() {
         let mut storage = RamStorage::new();
         // Only the default epoch has PRSS on disk, but the config also lists an extra epoch under
         // the default context. The phantom epoch must be rejected up front rather than crashing
@@ -2554,7 +2548,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_skips_already_migrated_epoch() {
+    async fn test_prss_to_epoch_skips_already_migrated_epoch() {
         let mut storage = RamStorage::new();
 
         // Two epochs under the default context both still have their legacy combined PRSS on disk
@@ -2700,7 +2694,7 @@ mod tests {
     // ── Tests for remove_old_prss_data ──
 
     #[tokio::test]
-    async fn test_remove_old_prss_data_threshold_removes_all() {
+    async fn test_remove_old_prss_data_removes_all() {
         let mut storage = RamStorage::new();
 
         // Two combined PRSS entries under different epoch IDs.
@@ -2725,7 +2719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_prss_data_threshold_no_data() {
+    async fn test_remove_old_prss_data_no_data() {
         let mut storage = RamStorage::new();
         // Nothing stored → still succeeds.
         remove_old_prss_data(&mut storage).await.unwrap();
@@ -2752,7 +2746,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_threshold_sunshine() {
+    async fn test_migrate_to_0_15_x_sunshine() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         let num_parties = 4u8;
@@ -2790,7 +2784,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_threshold_idempotent() {
+    async fn test_migrate_to_0_15_x_idempotent() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
@@ -2865,7 +2859,7 @@ mod tests {
     // ── Tests for migrate_to_0_16_x (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_16_x_threshold_removes_combined_prss() {
+    async fn test_migrate_to_0_16_x_removes_combined_prss() {
         let mut storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
 
@@ -2879,12 +2873,12 @@ mod tests {
         assert!(remaining.is_empty());
     }
 
-    /// Runs [ensure_threshold_server_signing_key_exists] deterministically for party 1.
+    /// Runs [ensure_server_signing_key_exists] deterministically for party 1.
     async fn ensure_signing_key_exists(
         pub_storage: &mut RamStorage,
         priv_storage: &mut RamStorage,
     ) {
-        ensure_threshold_server_signing_key_exists(
+        ensure_server_signing_key_exists(
             pub_storage,
             priv_storage,
             true,
@@ -3028,13 +3022,10 @@ mod tests {
         use crate::vault::storage::s3::create_s3_storage;
 
         #[tokio::test]
-        async fn test_migrate_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_migrate_threshold_s3),
-            )
-            .await;
-            test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
+        async fn test_migrate_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_migrate_s3)).await;
+            test_migrate_legacy_fhe_keys(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3068,13 +3059,10 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_after_0_13_x_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_after_0_13_x_threshold_s3),
-            )
-            .await;
-            test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
+        async fn test_after_0_13_x_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_after_0_13_x_s3)).await;
+            test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3098,13 +3086,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_0_13_x_to_0_13_10_threshold_s3() {
+        async fn test_0_13_x_to_0_13_10_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_0_13_x_to_0_13_10_threshold_s3),
+                std::stringify!(test_0_13_x_to_0_13_10_s3),
             )
             .await;
-            test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3138,13 +3126,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_remove_old_keys_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_threshold_s3),
-            )
-            .await;
-            test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
+        async fn test_remove_old_keys_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_remove_old_keys_s3))
+                    .await;
+            test_remove_old_keys_for_0_13_20(&mut storage).await;
         }
 
         #[tokio::test]

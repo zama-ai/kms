@@ -10,7 +10,7 @@
 
 use crate::client::tests::common::wait_for_storage;
 use crate::client::tests::common::{PollConfig, retrying_poll};
-use crate::client::tests::service_helpers::threshold_insecure_key_gen;
+use crate::client::tests::service_helpers::run_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
@@ -42,7 +42,7 @@ use tokio::task::JoinSet;
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-async fn test_insecure_threshold_dkg_backup() -> Result<()> {
+async fn test_insecure_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = TestEnv::builder()
         .with_test_name("threshold_dkg_backup")
@@ -59,8 +59,8 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
 
-    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test, None, None).await?;
-    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test, None, None).await?;
+    run_insecure_key_gen(&clients, &key_id_1, FheParameter::Test, None, None).await?;
+    run_insecure_key_gen(&clients, &key_id_2, FheParameter::Test, None, None).await?;
 
     // Delete threshold private key material for both keys on all parties
     let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
@@ -208,10 +208,10 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     .await?;
 
     // Validate restored keys by performing a public decryption
-    use crate::client::tests::public_decryption_tests::run_decryption_threshold;
+    use crate::client::tests::public_decryption_tests::run_public_decryption;
     use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 
-    run_decryption_threshold(
+    run_public_decryption(
         4, // amount_parties
         &mut restarted_servers,
         &mut restarted_clients,
@@ -250,7 +250,7 @@ async fn test_insecure_threshold_dkg_backup() -> Result<()> {
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-async fn test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
+async fn test_insecure_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = TestEnv::builder()
         .with_test_name("threshold_autobackup")
@@ -266,7 +266,7 @@ async fn test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
-    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test, None, None).await?;
+    run_insecure_key_gen(&clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Shutdown servers
     drop(clients);
@@ -312,7 +312,7 @@ async fn test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
 /// 6. Verify both backup and restored CRS exist
 ///
 #[tokio::test]
-async fn test_insecure_threshold_crs_backup() -> Result<()> {
+async fn test_insecure_crs_backup() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
     // Setup using builder pattern with backup vault

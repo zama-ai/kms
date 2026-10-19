@@ -23,8 +23,8 @@ pub mod setup {
     use crate::util::key_setup::{SigningKeyConfig, ensure_client_keys_exist};
     use crate::{
         util::key_setup::{
-            ensure_threshold_crs_exists, ensure_threshold_epoch_exists,
-            ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
+            ensure_crs_exists, ensure_epoch_exists, ensure_fhe_keys_exist,
+            ensure_server_signing_keys_exist,
         },
         vault::storage::{StorageType, file::FileStorage},
     };
@@ -80,7 +80,7 @@ pub mod setup {
             MaterialType::Default => &DEFAULT_PARAM,
         };
 
-        threshold_material(
+        party_material(
             params,
             &key_id,
             &crs_id,
@@ -94,7 +94,7 @@ pub mod setup {
         Ok(())
     }
 
-    async fn threshold_material(
+    async fn party_material(
         params: &DKGParams,
         fhe_key_id: &RequestId,
         crs_id: &RequestId,
@@ -120,7 +120,7 @@ pub mod setup {
             );
         }
 
-        ensure_threshold_server_signing_keys_exist(
+        ensure_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             true,
@@ -131,7 +131,7 @@ pub mod setup {
         )
         .await
         .unwrap();
-        ensure_threshold_keys_exist(
+        ensure_fhe_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             params.to_owned(),
@@ -140,7 +140,7 @@ pub mod setup {
             true,
         )
         .await;
-        ensure_threshold_crs_exists(
+        ensure_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             params.to_owned(),
@@ -151,7 +151,7 @@ pub mod setup {
         .await;
         // The key shares and CRS metadata above live under `epoch_id`, so the fixture carries
         // that epoch as well; a node refuses to boot on shares whose epoch it does not know.
-        ensure_threshold_epoch_exists(&mut threshold_priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
+        ensure_epoch_exists(&mut threshold_priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
             .await
             .unwrap();
     }
@@ -233,7 +233,7 @@ async fn test_purge() {
     );
     // Create keys to be deleted
     assert!(
-        crate::util::key_setup::ensure_threshold_server_signing_key_exists(
+        crate::util::key_setup::ensure_server_signing_key_exists(
             &mut pub_storage,
             &mut priv_storage,
             true,

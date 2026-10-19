@@ -138,7 +138,7 @@ tls_subject = "kms-party"
 
     /// Runs `kms-gen-keys` once for party 1 with `overwrite = true`, asserts it
     /// succeeds, and returns its stdout log.
-    fn run_threshold_overwrite(
+    fn run_overwrite(
         config_dir: &tempfile::TempDir,
         temp_dir_priv: &tempfile::TempDir,
         temp_dir_pub: &tempfile::TempDir,
@@ -237,12 +237,12 @@ tls_subject = "kms-party"
 
     #[test]
     #[integration_test]
-    fn threshold_signing_keys_overwrite() {
+    fn signing_keys_overwrite() {
         // All invocations must share storage so each run sees the keys written
         // by the previous one.
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
-        let log = run_threshold_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        let log = run_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(log.contains("Deleting published verification material from public storage"));
         assert!(log.contains("Deleting SigningKey under request ID "));
         assert!(log.contains("Deleting SigningSeed under request ID "));
@@ -279,8 +279,7 @@ tls_subject = "kms-party"
         // A second `overwrite = true` run against the same, now-populated storage
         // must also succeed, and must replace the CA certificate signed by the
         // deleted key.
-        let overwrite_again_log =
-            run_threshold_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        let overwrite_again_log = run_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(
             overwrite_again_log
                 .contains("Deleting published verification material from public storage")
@@ -310,10 +309,10 @@ tls_subject = "kms-party"
     /// not verification material, so repopulate does not restore it.
     #[test]
     #[integration_test]
-    fn threshold_repopulate_after_partial_purge() {
+    fn repopulate_after_partial_purge() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
-        run_threshold_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        run_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
         let signing_key_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
         let purged: Vec<PathBuf> = [
@@ -378,7 +377,7 @@ tls_subject = "kms-party"
     /// so it must fail rather than write partial material.
     #[test]
     #[integration_test]
-    fn threshold_repopulate_without_signing_key_fails() {
+    fn repopulate_without_signing_key_fails() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
@@ -410,10 +409,10 @@ tls_subject = "kms-party"
     /// front rather than publish an ECDSA-only layout.
     #[test]
     #[integration_test]
-    fn threshold_repopulate_without_root_seed_fails() {
+    fn repopulate_without_root_seed_fails() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
-        run_threshold_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        run_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
         let seed_path = temp_dir_priv
             .path()
@@ -458,10 +457,10 @@ tls_subject = "kms-party"
     /// the per-scheme public material and the CA certificate, and deletes nothing.
     #[test]
     #[integration_test]
-    fn threshold_show_existing_lists_the_signing_identity() {
+    fn show_existing_lists_the_signing_identity() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
-        run_threshold_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        run_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
         let config_path = write_file_storage_config(
             &config_dir,
@@ -515,7 +514,7 @@ tls_subject = "kms-party"
 
     #[test]
     #[integration_test]
-    fn threshold_party_id_validation() {
+    fn party_id_validation() {
         for (case, threshold_config, expected_err) in [
             (
                 "party id 0 is rejected, since parties are 1-indexed",
@@ -565,7 +564,7 @@ tls_subject = "kms-party"
     #[test]
     #[integration_test]
     #[persistent_traces]
-    fn threshold_signing_key() {
+    fn signing_key() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
@@ -612,7 +611,7 @@ tls_subject = "kms-party"
     /// material under the expected fixed handle, and derives the same identity on every run.
     #[test]
     #[integration_test]
-    fn threshold_deterministic_signing_keys() {
+    fn deterministic_signing_keys() {
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(

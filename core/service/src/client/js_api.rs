@@ -56,7 +56,7 @@
 //!
 //! 2. Generate the JSON test vector (this still needs `wasm_tests`)
 //! ```
-//! cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --release
+//! cargo test test_user_decryption_and_write_transcript -F wasm_tests --release
 //! ```
 //!
 //! 3. Build the wasm package from the core/service directory (no `wasm_tests` needed)

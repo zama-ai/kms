@@ -1,7 +1,7 @@
 use crate::client::tests::crs_gen_tests::crs_gen;
-use crate::client::tests::key_gen_tests::{preproc_and_keygen, run_threshold_decompression_keygen};
-use crate::client::tests::public_decryption_tests::decryption_threshold;
-use crate::client::tests::user_decryption_tests::user_decryption_threshold;
+use crate::client::tests::key_gen_tests::{preproc_and_keygen, run_decompression_keygen};
+use crate::client::tests::public_decryption_tests::public_decryption;
+use crate::client::tests::user_decryption_tests::user_decryption;
 use crate::consts::DEFAULT_KEY_ID;
 use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
 use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -20,14 +20,14 @@ use threshold_types::role::Role;
 #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_KEY_ID)]
 #[tokio::test(flavor = "multi_thread")]
 
-async fn default_decryption_threshold_with_sns_preprocessing(
+async fn default_decryption_with_sns_preprocessing(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[values(true, false)] compression: bool,
 ) {
-    decryption_threshold(
+    public_decryption(
         DEFAULT_PARAM,
         key_id,
         msg,
@@ -53,14 +53,14 @@ async fn default_decryption_threshold_with_sns_preprocessing(
 // Note: the following takes approx. 138 secs locally. Disabled since we only support up to 256 bits for now starting with v0.12.0
 // #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![4]), &DEFAULT_KEY_ID)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn nightly_default_decryption_threshold_with_crash(
+async fn nightly_default_decryption_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] party_ids_to_crash: Option<Vec<usize>>,
     #[case] key_id: &RequestId,
 ) {
-    decryption_threshold(
+    public_decryption(
         DEFAULT_PARAM,
         key_id,
         msg,
@@ -88,7 +88,7 @@ async fn nightly_default_decryption_threshold_with_crash(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_KEY_ID)]
 
-async fn nightly_default_user_decryption_threshold_sns_precompute(
+async fn nightly_default_user_decryption_sns_precompute(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
@@ -96,7 +96,7 @@ async fn nightly_default_user_decryption_threshold_sns_precompute(
     #[values(true, false)] compression: bool,
 ) {
     let secure = true;
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -127,7 +127,7 @@ async fn nightly_default_user_decryption_threshold_sns_precompute(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES ,Some(vec![3]), &DEFAULT_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_KEY_ID)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn nightly_default_user_decryption_threshold_with_crash(
+async fn nightly_default_user_decryption_with_crash(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
@@ -137,7 +137,7 @@ async fn nightly_default_user_decryption_threshold_with_crash(
 ) {
     use crate::consts::DEFAULT_PARAM;
 
-    user_decryption_threshold(
+    user_decryption(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -165,7 +165,7 @@ async fn nightly_default_user_decryption_threshold_with_crash(
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
+async fn nightly_secure_sequential_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
 
     crs_gen(amount_parties, FheParameter::Test, Some(512), 2, false).await;
@@ -175,7 +175,7 @@ async fn nightly_secure_threshold_sequential_crs_test(#[case] amount_parties: us
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_concurrent_crs_test(#[case] amount_parties: usize) {
+async fn nightly_secure_concurrent_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
     crs_gen(amount_parties, FheParameter::Test, Some(512), 2, true).await;
 }
@@ -184,7 +184,7 @@ async fn nightly_secure_threshold_concurrent_crs_test(#[case] amount_parties: us
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_sequential_crs_default(#[case] amount_parties: usize) {
+async fn nightly_secure_sequential_crs_default(#[case] amount_parties: usize) {
     crs_gen(amount_parties, FheParameter::Default, Some(512), 2, false).await;
 }
 
@@ -192,7 +192,7 @@ async fn nightly_secure_threshold_sequential_crs_default(#[case] amount_parties:
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) {
+async fn nightly_secure_concurrent_crs_default(#[case] amount_parties: usize) {
     crs_gen(amount_parties, FheParameter::Default, Some(2048), 2, true).await;
 }
 
@@ -200,7 +200,7 @@ async fn nightly_secure_threshold_concurrent_crs_default(#[case] amount_parties:
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) {
+async fn nightly_secure_sequential_keygen_test(#[case] amount_parties: usize) {
     preproc_and_keygen(
         amount_parties,
         FheParameter::Test,
@@ -218,7 +218,7 @@ async fn nightly_secure_threshold_sequential_keygen_test(#[case] amount_parties:
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4)]
-async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: usize) {
+async fn secure_keygen_with_partial_preproc(#[case] amount_parties: usize) {
     preproc_and_keygen(
         amount_parties,
         FheParameter::Test,
@@ -240,7 +240,7 @@ async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: us
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
+async fn nightly_secure_concurrent_keygen_test(#[case] amount_parties: usize) {
     preproc_and_keygen(
         amount_parties,
         FheParameter::Test,
@@ -259,7 +259,7 @@ async fn nightly_secure_threshold_concurrent_keygen_test(#[case] amount_parties:
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_concurrent_compressed_keygen_test(#[case] amount_parties: usize) {
+async fn nightly_secure_concurrent_compressed_keygen_test(#[case] amount_parties: usize) {
     preproc_and_keygen(
         amount_parties,
         FheParameter::Test,
@@ -279,6 +279,6 @@ async fn nightly_secure_threshold_concurrent_compressed_keygen_test(#[case] amou
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
-async fn nightly_secure_threshold_decompression_keygen(#[case] amount_parties: usize) {
-    run_threshold_decompression_keygen(amount_parties, FheParameter::Test, false).await;
+async fn nightly_secure_decompression_keygen(#[case] amount_parties: usize) {
+    run_decompression_keygen(amount_parties, FheParameter::Test, false).await;
 }

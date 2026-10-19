@@ -22,10 +22,8 @@ use crate::{
         tests::{
             common::{PollConfig, keygen_config, retrying_poll},
             crs_gen_tests::run_crs,
-            key_gen_tests::{
-                TestKeyGenResult, run_preproc, run_threshold_keygen, verify_keygen_responses,
-            },
-            public_decryption_tests::run_decryption_threshold,
+            key_gen_tests::{TestKeyGenResult, run_keygen, run_preproc, verify_keygen_responses},
+            public_decryption_tests::run_public_decryption,
         },
     },
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
@@ -130,7 +128,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         .await;
 
         let (keyset_config, keyset_added_info) = keygen_config();
-        let (keyset, all_private_keys) = run_threshold_keygen(
+        let (keyset, all_private_keys) = run_keygen(
             parameters,
             &kms_clients,
             &internal_client,
@@ -351,7 +349,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         }
 
         // Run a DDec with the new context id
-        run_decryption_threshold(
+        run_public_decryption(
             amount_parties,
             &mut kms_servers,
             &mut kms_clients,

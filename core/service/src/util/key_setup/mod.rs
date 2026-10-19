@@ -543,7 +543,7 @@ pub enum SigningKeyConfig {
 ///
 /// Implements the complete threshold key setup workflow:
 /// 1. Validates that the public and private storages line up with the parties
-/// 2. Delegates to [`ensure_threshold_server_signing_key_exists`] for each
+/// 2. Delegates to [`ensure_server_signing_key_exists`] for each
 ///    party, which either generates the party's key material or completes the
 ///    public material of the key it already has at [`SIGNING_KEY_ID`]
 ///
@@ -554,7 +554,7 @@ pub enum SigningKeyConfig {
 /// # Panics
 /// - If the number of public and private storages differ
 /// - If there are more configured parties than storages
-pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
+pub async fn ensure_server_signing_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     #[cfg(any(test, feature = "testing", feature = "insecure"))] deterministic: bool,
@@ -592,7 +592,7 @@ where
     }
 
     for (storage_index, subject) in parties.into_iter().enumerate() {
-        ensure_threshold_server_signing_key_exists(
+        ensure_server_signing_key_exists(
             &mut pub_storages[storage_index],
             &mut priv_storages[storage_index],
             #[cfg(any(test, feature = "testing", feature = "insecure"))]
@@ -627,7 +627,7 @@ where
 /// - `Ok(true)` if new keys were generated
 /// - `Ok(false)` if a signing key already existed
 /// - `Err` if reading, generating or storing any of the material failed
-pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
+pub async fn ensure_server_signing_key_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     #[cfg(any(test, feature = "testing", feature = "insecure"))] deterministic: bool,
@@ -787,7 +787,7 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
 /// - If storage access fails
 /// - If threshold parameters are invalid
 #[cfg(any(test, feature = "testing"))]
-pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
+pub async fn ensure_fhe_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
@@ -1039,7 +1039,7 @@ where
 /// - If `priv_storages` is empty
 /// - If a PRSS setup cannot be built, or an entry cannot be stored
 #[cfg(any(test, feature = "testing"))]
-pub async fn ensure_threshold_epoch_exists<PrivS>(
+pub async fn ensure_epoch_exists<PrivS>(
     priv_storages: &mut [PrivS],
     epoch_id: &EpochId,
     context_id: &ContextId,
@@ -1113,7 +1113,7 @@ where
 /// - If parameter generation fails
 /// - If CRS distribution fails
 #[cfg(any(test, feature = "testing"))]
-pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
+pub async fn ensure_crs_exists<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
@@ -1283,7 +1283,7 @@ mod tests {
     use super::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
         delete_non_legacy_verf_material, ensure_all_verf_material, ensure_no_verf_material,
-        ensure_threshold_server_signing_key_exists,
+        ensure_server_signing_key_exists,
     };
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
@@ -1296,7 +1296,7 @@ mod tests {
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };
-    use crate::util::key_setup::{ensure_threshold_epoch_exists, max_threshold};
+    use crate::util::key_setup::{ensure_epoch_exists, max_threshold};
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_identity, read_verf_key_at, store_verf_key_at,
     };
@@ -1319,13 +1319,13 @@ mod tests {
 
     const DSEP: &DomainSep = b"SEEDKGEN";
 
-    /// Runs [ensure_threshold_server_signing_key_exists] for party 1.
+    /// Runs [ensure_server_signing_key_exists] for party 1.
     async fn ensure_party_signing_key_exists(
         pub_storage: &mut RamStorage,
         priv_storage: &mut RamStorage,
         deterministic: bool,
     ) -> anyhow::Result<bool> {
-        ensure_threshold_server_signing_key_exists(
+        ensure_server_signing_key_exists(
             pub_storage,
             priv_storage,
             deterministic,
@@ -1339,10 +1339,9 @@ mod tests {
     #[tokio::test]
     async fn default_epoch_fixture_is_written_once_per_party() {
         let mut storages: Vec<RamStorage> = (0..4).map(|_| RamStorage::new()).collect();
-        let written =
-            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
-                .await
-                .unwrap();
+        let written = ensure_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap();
         assert!(written);
         for storage in &storages {
             let epoch: EpochData = read_versioned_at_request_id(
@@ -1358,10 +1357,9 @@ mod tests {
         }
 
         // Every party already holds the epoch, so nothing is written.
-        let written =
-            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
-                .await
-                .unwrap();
+        let written = ensure_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap();
         assert!(!written);
     }
 
@@ -2124,13 +2122,13 @@ mod tests {
 
     /// Each threshold party gets its own independent seed.
     #[tokio::test]
-    async fn threshold_parties_get_independent_seeds() {
+    async fn parties_get_independent_seeds() {
         let mut seeds = Vec::new();
         for party in [1usize, 2] {
             let mut pub_storage = RamStorage::new();
             let mut priv_storage = RamStorage::new();
             assert!(
-                ensure_threshold_server_signing_key_exists(
+                ensure_server_signing_key_exists(
                     &mut pub_storage,
                     &mut priv_storage,
                     true,

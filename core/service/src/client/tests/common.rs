@@ -27,7 +27,7 @@ use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 
 /// Poll storage until it contains the given (`request_id`, `epoch_id`, `data_type`) tuple. Give up after 30s.
-// TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_threshold_crs_backup`
+// TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_crs_backup`
 // would try to inspect state before backup actually had time to happen.
 pub(crate) async fn wait_for_storage<S>(
     storage: &S,

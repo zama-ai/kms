@@ -422,7 +422,7 @@ pub mod tests {
 
     #[ignore]
     #[tokio::test]
-    async fn threshold_dev_storage() {
+    async fn dev_storage() {
         let path1 = tempfile::tempdir().unwrap();
         let path2 = tempfile::tempdir().unwrap();
         let mut storage1 = FileStorage { path: path1.keep() };
@@ -476,7 +476,7 @@ pub mod tests {
 
     #[ignore]
     #[tokio::test]
-    async fn threshold_file_storage_with_path() {
+    async fn party_prefix_file_storage_with_path() {
         file_storage_with_path(true).await
     }
 

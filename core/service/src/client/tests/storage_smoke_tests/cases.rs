@@ -2,8 +2,8 @@
 
 use super::support::{
     PARTY_COUNT, assert_destroy_error, assert_epoch_delete_delta, assert_restart_state,
-    create_prss_epoch, destroy_epochs_and_assert_success, seed_fhe_storage_layout,
-    threshold_storage_state,
+    create_prss_epoch, destroy_epochs_and_assert_success, party_storage_state,
+    seed_fhe_storage_layout,
 };
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM};
 use crate::engine::base::derive_request_id;
@@ -27,10 +27,10 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     let internal_client = env.create_internal_client(&TEST_PARAM, None).await.unwrap();
     let material_path = env.material_dir.path().to_path_buf();
 
-    let before_rejected_delete = threshold_storage_state(&material_path);
+    let before_rejected_delete = party_storage_state(&material_path);
     assert_destroy_error(&env.clients, *DEFAULT_EPOCH_ID, Code::FailedPrecondition).await;
     assert_eq!(
-        threshold_storage_state(&material_path),
+        party_storage_state(&material_path),
         before_rejected_delete,
         "destroying the only epoch changed files"
     );
@@ -47,9 +47,9 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     .await;
     seed_fhe_storage_layout(&material_path, second_epoch).await;
 
-    let before_successful_delete = threshold_storage_state(&material_path);
+    let before_successful_delete = party_storage_state(&material_path);
     destroy_epochs_and_assert_success(&env.clients, second_epoch).await;
-    let after_successful_delete = threshold_storage_state(&material_path);
+    let after_successful_delete = party_storage_state(&material_path);
     assert_epoch_delete_delta(
         &before_successful_delete,
         &after_successful_delete,
@@ -68,7 +68,7 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
         .from_path(&material_path)
         .await
         .unwrap();
-    let after_restart = threshold_storage_state(&material_path);
+    let after_restart = party_storage_state(&material_path);
     assert_restart_state(&after_successful_delete, &after_restart);
     assert_destroy_error(&restarted_clients, second_epoch, Code::NotFound).await;
     // This response proves startup loaded the remaining epoch from disk. Without it, deletion

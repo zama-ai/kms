@@ -26,7 +26,7 @@ pub(super) const PARTY_COUNT: usize = 4;
 pub(super) type FileState = BTreeMap<PathBuf, EntryDigest>;
 
 /// Fingerprints all files in the four `PUB-p*` and `PRIV-p*` directories.
-pub(super) fn threshold_storage_state(material_path: &Path) -> FileState {
+pub(super) fn party_storage_state(material_path: &Path) -> FileState {
     let prefixes = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[..PARTY_COUNT]
         .iter()
         .chain(&PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[..PARTY_COUNT]);

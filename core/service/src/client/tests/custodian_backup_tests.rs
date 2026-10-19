@@ -8,8 +8,8 @@ use crate::client::tests::common::{
 };
 use crate::client::tests::crs_gen_tests::run_crs;
 use crate::client::tests::custodian_context_tests::run_new_cus_context;
-use crate::client::tests::key_gen_tests::run_threshold_keygen;
-use crate::client::tests::public_decryption_tests::run_decryption_threshold;
+use crate::client::tests::key_gen_tests::run_keygen;
+use crate::client::tests::public_decryption_tests::run_public_decryption;
 use crate::client::tests::service_helpers::run_insecure_preproc;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -229,7 +229,7 @@ impl ThresholdBackupTestEnv {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+async fn test_auto_update_backups(#[case] custodians: usize, #[case] threshold: u32) {
     auto_update_backup(custodians, threshold).await;
 }
 
@@ -279,7 +279,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 /// Recovery material planted in public storage must not decide which custodian context a party
 /// adopts on restart. Regression test for the advisory behind issue #3139.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_planted_public_recovery_material_ignored_threshold() {
+async fn test_planted_public_recovery_material_ignored() {
     use crate::vault::storage::tests::store_dummy_recovery_material;
     use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
 
@@ -353,7 +353,7 @@ async fn test_planted_public_recovery_material_ignored_threshold() {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+async fn test_backup_after_crs(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
 }
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
@@ -489,7 +489,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+async fn test_decrypt_after_recovery(#[case] custodians: usize, #[case] threshold: u32) {
     decrypt_after_recovery(custodians, threshold).await;
 }
 
@@ -515,7 +515,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    let _keys = run_threshold_keygen(
+    let _keys = run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -606,7 +606,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     drop(kms_clients);
     let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
-    run_decryption_threshold(
+    run_public_decryption(
         n,
         &mut kms_servers,
         &mut kms_clients,
@@ -630,7 +630,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 /// one to recover under: `None` is refused as ambiguous, and the current context recovers the FHE
 /// key shares, proven by a decryption at the end.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_recovery_names_the_context_after_rotation_threshold() {
+async fn test_recovery_names_the_context_after_rotation() {
     use crate::vault::storage::read_custodian_context_anchor;
 
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
@@ -648,7 +648,7 @@ async fn test_recovery_names_the_context_after_rotation_threshold() {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    run_threshold_keygen(
+    run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -746,7 +746,7 @@ async fn test_recovery_names_the_context_after_rotation_threshold() {
     drop(kms_clients);
     let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
-    run_decryption_threshold(
+    run_public_decryption(
         n,
         &mut kms_servers,
         &mut kms_clients,
@@ -771,7 +771,7 @@ async fn test_recovery_names_the_context_after_rotation_threshold() {
 /// and custodian recovery restores its signing material and its anchor. After the operator
 /// republishes the verification keys, the cluster boots normally and serves a decryption.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_recovery_without_signing_material_threshold() {
+async fn test_recovery_without_signing_material() {
     use crate::vault::storage::read_custodian_context_anchor;
 
     const PARTY: u32 = 1;
@@ -791,7 +791,7 @@ async fn test_recovery_without_signing_material_threshold() {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    run_threshold_keygen(
+    run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -887,7 +887,7 @@ async fn test_recovery_without_signing_material_threshold() {
     // decryption needs the signed response of the party.
     let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
-    run_decryption_threshold(
+    run_public_decryption(
         n,
         &mut kms_servers,
         &mut kms_clients,
@@ -910,7 +910,7 @@ async fn test_recovery_without_signing_material_threshold() {
 /// Corrupts the signcryption for two custodians. Recovery filters the invalid outputs and still
 /// restores the signing keys (`assert_eq!` on recovered keys).
 #[tokio::test]
-async fn test_decrypt_after_recovery_threshold_negative() {
+async fn test_decrypt_after_recovery_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
 
@@ -964,7 +964,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    let _keys = run_threshold_keygen(
+    let _keys = run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -1036,7 +1036,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     drop(kms_clients);
     let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
-    run_decryption_threshold(
+    run_public_decryption(
         n,
         &mut kms_servers,
         &mut kms_clients,
@@ -1059,9 +1059,8 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 /// Test that epoch data (EpochData) is present in the custodian backup vault
 /// after a server boots from a fixture that holds the default epoch.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_epoch_in_custodian_backup_threshold() {
-    let mut env =
-        ThresholdBackupTestEnv::new("test_epoch_in_custodian_backup_threshold", 3, 1).await;
+async fn test_epoch_in_custodian_backup() {
+    let mut env = ThresholdBackupTestEnv::new("test_epoch_in_custodian_backup", 3, 1).await;
 
     // Epoch is stored with epoch_id.into() as the request_id (non-epoched layout)
     let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
@@ -1088,8 +1087,8 @@ async fn test_epoch_in_custodian_backup_threshold() {
 /// Test that FHE key material is present in the custodian backup vault
 /// immediately after key generation (not just after recovery).
 #[tokio::test(flavor = "multi_thread")]
-async fn test_keygen_backup_presence_threshold() {
-    let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
+async fn test_keygen_backup_presence() {
+    let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence", 3, 1).await;
     let req_key_id: RequestId =
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
     let preproc_id: RequestId =
@@ -1100,7 +1099,7 @@ async fn test_keygen_backup_presence_threshold() {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    let _keys = run_threshold_keygen(
+    let _keys = run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -1140,7 +1139,7 @@ async fn test_keygen_backup_presence_threshold() {
 /// Test that re-creating a custodian context with pre-existing key material
 /// results in re-encrypted backup entries (different ciphertexts).
 #[tokio::test(flavor = "multi_thread")]
-async fn test_custodian_reencryption_with_existing_data_threshold() {
+async fn test_custodian_reencryption_with_existing_data() {
     // env already creates the first custodian context (env.req_new_cus)
     let mut env = ThresholdBackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
     let req_cus_b: RequestId =
@@ -1155,7 +1154,7 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    let _keys = run_threshold_keygen(
+    let _keys = run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
@@ -1222,8 +1221,8 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
 /// Test that creating a new MPC context results in the ContextInfo
 /// being backed up in the custodian backup vault (threshold mode).
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mpc_context_backup_threshold() {
-    let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup_threshold", 3, 1).await;
+async fn test_mpc_context_backup() {
+    let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..n];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..n];
@@ -1311,8 +1310,8 @@ async fn test_mpc_context_backup_threshold() {
 /// transition (reshare). This validates that `update_backup_vault` is called
 /// after `store_reshared_keys` completes.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_backup_after_reshare_threshold() {
-    let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare_threshold", 3, 1).await;
+async fn test_backup_after_reshare() {
+    let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let req_key_id: RequestId =
         derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
@@ -1328,7 +1327,7 @@ async fn test_backup_after_reshare_threshold() {
     run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
         .await
         .unwrap();
-    let (keyset, _) = run_threshold_keygen(
+    let (keyset, _) = run_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),

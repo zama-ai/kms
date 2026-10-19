@@ -448,7 +448,7 @@ pub(crate) fn new_insecure_preproc_bucket(
 }
 
 #[expect(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, F>(
+pub async fn new_kms<PubS, PrivS, F>(
     config: CoreConfig,
     mut public_storage: PubS,
     mut private_storage: PrivS,
@@ -877,7 +877,7 @@ where
         anyhow::bail!("Failed to update backup vault when booting");
     }
     // Start updating system metrics
-    update_threshold_kms_system_metrics(
+    update_kms_system_metrics(
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
@@ -928,7 +928,7 @@ fn core_to_core_stop_fault(shutdown_requested: bool, serve_error: Option<&str>) 
     })
 }
 
-fn update_threshold_kms_system_metrics<PubS, PrivS>(
+fn update_kms_system_metrics<PubS, PrivS>(
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
@@ -1302,7 +1302,7 @@ mod tests {
         // Without a signing key, the constructor skips the storage checks.
         let base_kms = BaseKmsStruct::new_no_signing_key(verf_key, test_rng_source());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (kms, _, _) = new_real_threshold_kms(
+        let (kms, _, _) = new_kms(
             config,
             RamStorage::new(),
             RamStorage::new(),
@@ -1342,7 +1342,7 @@ mod tests {
         let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
         let base_kms = BaseKmsStruct::new_no_signing_key(verf_key, test_rng_source());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let _booted = new_real_threshold_kms(
+        let _booted = new_kms(
             config,
             RamStorage::new(),
             RamStorage::new(),

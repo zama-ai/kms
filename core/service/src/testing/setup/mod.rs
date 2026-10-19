@@ -1,17 +1,15 @@
 //! Test environment setup utilities
 //!
-//! This module provides high-level test environment builders for threshold KMS
+//! This module provides high-level test environment builders for KMS
 //! configurations.
 //!
 //! # Examples
-//!
-//! ## Threshold Test
 //!
 //! ```no_run
 //! use kms_lib::testing::prelude::*;
 //!
 //! #[tokio::test]
-//! async fn test_threshold() -> Result<()> {
+//! async fn test_four_parties() -> Result<()> {
 //!     let env = TestEnv::builder()
 //!         .with_test_name("my_test")
 //!         .with_party_count(4)

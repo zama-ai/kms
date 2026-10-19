@@ -28,7 +28,7 @@ cfg_if::cfg_if! {
 }}
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
+async fn test_insecure_crs_gen() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
     use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 
@@ -70,7 +70,7 @@ async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn secure_threshold_crs() -> anyhow::Result<()> {
+async fn secure_crs() -> anyhow::Result<()> {
     use crate::consts::DEFAULT_PARAM;
     use crate::testing::prelude::{KeyType, TestEnv, TestMaterialSpec};
 
@@ -85,7 +85,7 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
     };
 
     let env = TestEnv::builder()
-        .with_test_name("secure_threshold_crs")
+        .with_test_name("secure_crs")
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
@@ -115,7 +115,7 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_crs_gen_threshold() -> anyhow::Result<()> {
+async fn test_crs_gen() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
     use crate::testing::prelude::{TestEnv, TestMaterialSpec};
 
@@ -126,7 +126,7 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     let spec = TestMaterialSpec::signing_only(amount_parties);
 
     let env = TestEnv::builder()
-        .with_test_name("test_crs_gen_threshold")
+        .with_test_name("test_crs_gen")
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)

@@ -18,7 +18,7 @@ use tonic::transport::Channel;
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-async fn test_new_custodian_context_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+async fn test_new_custodian_context(#[case] custodians: usize, #[case] threshold: u32) {
     new_custodian_context(4, FheParameter::Test, custodians, threshold).await;
 }
 

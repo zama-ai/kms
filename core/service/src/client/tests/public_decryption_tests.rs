@@ -29,12 +29,12 @@ use tonic::transport::Channel;
 #[rstest::rstest]
 #[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-async fn test_decryption_threshold_no_decompression(
+async fn test_decryption_no_decompression(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
 ) {
-    decryption_threshold(
+    public_decryption(
         TEST_PARAM,
         key_id,
         vec![
@@ -58,12 +58,12 @@ async fn test_decryption_threshold_no_decompression(
 #[rstest::rstest]
 #[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-async fn test_decryption_threshold(
+async fn test_decryption(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
 ) {
-    decryption_threshold(
+    public_decryption(
         TEST_PARAM,
         key_id,
         vec![
@@ -86,13 +86,13 @@ async fn test_decryption_threshold(
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-async fn test_decryption_threshold_precompute_sns(
+async fn test_decryption_precompute_sns(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
     #[values(true, false)] compression: bool,
 ) {
-    decryption_threshold(
+    public_decryption(
         TEST_PARAM,
         key_id,
         vec![
@@ -116,14 +116,14 @@ async fn test_decryption_threshold_precompute_sns(
 #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-async fn default_decryption_threshold(
+async fn default_decryption(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[case] decryption_mode: DecryptionMode,
 ) {
-    decryption_threshold(
+    public_decryption(
         DEFAULT_PARAM,
         key_id,
         msg,
@@ -142,14 +142,14 @@ async fn default_decryption_threshold(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-async fn default_decryption_threshold_precompute_sns(
+async fn default_decryption_precompute_sns(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
     #[values(true, false)] compression: bool,
 ) {
-    decryption_threshold(
+    public_decryption(
         DEFAULT_PARAM,
         key_id,
         msg,
@@ -168,14 +168,14 @@ async fn default_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn default_decryption_threshold_with_crash(
+async fn default_decryption_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] party_ids_to_crash: Option<Vec<usize>>,
     #[case] key_id: &RequestId,
 ) {
-    decryption_threshold(
+    public_decryption(
         DEFAULT_PARAM,
         key_id,
         msg,
@@ -192,7 +192,7 @@ async fn default_decryption_threshold_with_crash(
 }
 
 #[expect(clippy::too_many_arguments)]
-pub async fn decryption_threshold(
+pub async fn public_decryption(
     dkg_params: DKGParams,
     key_id: &RequestId,
     msgs: Vec<TestingPlaintext>,
@@ -229,7 +229,7 @@ pub async fn decryption_threshold(
         .expect("create_internal_client failed");
     let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
-    run_decryption_threshold(
+    run_public_decryption(
         amount_parties,
         &mut kms_servers,
         &mut kms_clients,
@@ -246,7 +246,7 @@ pub async fn decryption_threshold(
     .await;
 }
 #[expect(clippy::too_many_arguments)]
-pub async fn run_decryption_threshold(
+pub async fn run_public_decryption(
     amount_parties: usize,
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -260,7 +260,7 @@ pub async fn run_decryption_threshold(
     parallelism: usize,
     data_root_path: Option<&Path>,
 ) {
-    run_decryption_threshold_optionally_fail(
+    run_public_decryption_optionally_fail(
         amount_parties,
         kms_servers,
         kms_clients,
@@ -281,7 +281,7 @@ pub async fn run_decryption_threshold(
 /// - `encryption_key_id` is set to `key_id` if not given.
 ///   this is the key used to encrypt the ciphertext.
 #[expect(clippy::too_many_arguments)]
-pub async fn run_decryption_threshold_optionally_fail(
+pub async fn run_public_decryption_optionally_fail(
     amount_parties: usize,
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,

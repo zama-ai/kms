@@ -27,7 +27,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 /// (verifies they are accepted but results fail), checks both core + MPC health,
 /// initializes PRSS via new_mpc_epoch, then shuts down and verifies NotServing.
 #[tokio::test]
-async fn test_threshold_health_endpoint_availability() -> Result<()> {
+async fn test_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
 
     // DON'T setup PRSS in order to ensure the server is not ready yet. Key shares are not copied
@@ -167,7 +167,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
 
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
-async fn test_threshold_close_after_drop() -> Result<()> {
+async fn test_close_after_drop() -> Result<()> {
     let env = TestEnv::builder()
         .with_test_name("close_after_drop")
         .with_party_count(4)
@@ -232,7 +232,7 @@ async fn test_threshold_close_after_drop() -> Result<()> {
 /// requests to keep server busy, shuts down server 1 via service_shutdown_tx,
 /// verifies NotServing status, then verifies ports are closed.
 #[tokio::test]
-async fn test_threshold_shutdown() -> Result<()> {
+async fn test_shutdown() -> Result<()> {
     let amount_parties = 4;
     let pub_storage_prefixes =
         &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -336,7 +336,7 @@ async fn test_threshold_shutdown() -> Result<()> {
 /// Stops the core-to-core server of one party through its own shutdown signal, while no MPC session
 /// runs, and verifies that the party stays live: the stop is part of a shutdown, not a fault.
 #[tokio::test]
-async fn test_threshold_mpc_server_stop_on_signal_is_not_a_fault() -> Result<()> {
+async fn test_mpc_server_stop_on_signal_is_not_a_fault() -> Result<()> {
     let amount_parties = 4;
     let env = TestEnv::builder()
         .with_test_name("mpc_stop_on_signal")

@@ -21,7 +21,7 @@ use kms_lib::{
     },
     engine::{
         backup_operator::boot_base_kms, context::SoftwareVersion, migration::migrate_to_0_15_x,
-        rng_source::RngSource, run_server, service::new_real_threshold_kms,
+        rng_source::RngSource, run_server, service::new_kms,
     },
     vault::{
         Vault,
@@ -621,7 +621,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     let service_config = core_config.service.clone();
-    let (kms, (health, health_service), metastore_status_service) = new_real_threshold_kms(
+    let (kms, (health, health_service), metastore_status_service) = new_kms(
         core_config,
         public_vault,
         private_vault,

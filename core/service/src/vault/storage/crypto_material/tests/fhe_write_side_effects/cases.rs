@@ -171,7 +171,7 @@ async fn uncompressed_fhe_write_cleans_new_entries_after_private_failure() {
     let epoch_id: EpochId = derive_request_id("uncompressed_fhe_write_failure_epoch")
         .unwrap()
         .into();
-    let (_, private_keys, public_keys) = setup_threshold_store(&key_id, RamStorage::new());
+    let (_, private_keys, public_keys) = setup_cached_store(&key_id, RamStorage::new());
 
     run_fhe_write_rollback(
         key_id,
