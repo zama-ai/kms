@@ -997,9 +997,6 @@ where
             .inner
             .confirm_destroy_mpc_context(&verified, context_exists)
             .await?;
-        if !context_exists {
-            return Ok(Response::new(response));
-        }
 
         // Also remove it from the cache
         let remaining_contexts = {
