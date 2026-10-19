@@ -65,10 +65,7 @@ use crate::{
             BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level,
             sign_user_decryption_result,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::UserDecryptor,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -127,7 +124,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
     }
 }
 
-pub struct RealUserDecryptor<
+pub(crate) struct UserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodPartialDecryptor + 'static,
@@ -145,7 +142,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodPartialDecryptor + 'static,
-> RealUserDecryptor<PubS, PrivS, Dec>
+> UserDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for user decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition.
@@ -429,15 +426,7 @@ impl<
             _dec: std::marker::PhantomData,
         }
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodPartialDecryptor + 'static,
-> UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
-{
     // Mirrors the public decryption span: `context_id`/`epoch_id` are only known after request
     // validation, so they start empty and are recorded below. The spawned decryption task inherits
     // this span, so its events carry both without extra log lines.
@@ -447,7 +436,7 @@ impl<
         context_id = tracing::field::Empty,
         epoch_id = tracing::field::Empty
     ))]
-    async fn user_decrypt(
+    pub(crate) async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -597,7 +586,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    async fn user_decrypt_sync(
+    pub(crate) async fn user_decrypt_sync(
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
@@ -621,7 +610,7 @@ impl<
         self.get_result(Request::new(req_id.into())).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
@@ -709,7 +698,7 @@ mod tests {
         }
     }
 
-    impl RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
+    impl UserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
@@ -765,7 +754,7 @@ mod tests {
         RequestId,
         EpochId,
         Vec<u8>,
-        RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor>,
+        UserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
@@ -800,7 +789,7 @@ mod tests {
         let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
         let user_decryptor =
-            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+            UserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
                 .await;
 
         // make a dummy private keyset
