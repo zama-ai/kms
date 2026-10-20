@@ -1,6 +1,7 @@
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::client::tests::common::default_isolated_extra_data;
+    use crate::retry_loop;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_uncompressed_keygen};
     use crate::vault::storage::{
@@ -1921,6 +1922,11 @@ async fn run_threshold_compressed_keygen_from_existing(
         assert_eq!(result.into_inner().request_id, Some(keygen_id_2.into()));
     }
 
+    // keygen_id_2 is reported done before the server copies the migrated material back to
+    // keygen_id_1, and that copy deletes and re-stores the private keys. Wait for it to land
+    // on every party before reading keygen_id_1.
+    wait_for_copy_to_original(NUM_PARTIES, &material_path, &keygen_id_1).await?;
+
     // Do distributed decryption to verify the generated key is ok
     let material_path = material_path.as_path();
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..NUM_PARTIES];
@@ -2122,6 +2128,57 @@ async fn run_threshold_compressed_keygen_from_existing(
         server.assert_shutdown().await;
     }
 
+    Ok(())
+}
+
+/// Poll the private storage of every party until the `FheKeyInfo` at `(old_key_id,
+/// DEFAULT_EPOCH_ID)` is readable and carries compressed metadata, i.e. until
+/// `copy_compressed_key_to_original` has finished rewriting it.
+#[cfg(feature = "slow_tests")]
+async fn wait_for_copy_to_original(
+    num_parties: usize,
+    material_path: &Path,
+    old_key_id: &RequestId,
+) -> anyhow::Result<()> {
+    for (i, priv_prefix) in PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties]
+        .iter()
+        .enumerate()
+    {
+        let party_id = i + 1;
+        let priv_storage = FileStorage::new(
+            Some(material_path),
+            StorageType::PRIV,
+            priv_prefix.as_deref(),
+        )?;
+        let priv_storage = &priv_storage;
+        // Spend at most 20 seconds waiting
+        let res: anyhow::Result<()> = retry_loop!(
+            || async move {
+                let keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+                    priv_storage,
+                    old_key_id,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+                match &keys.meta_data {
+                    KeyGenMetadata::Current(inner)
+                        if inner
+                            .key_digest_map
+                            .contains_key(&PubDataType::CompressedXofKeySet) =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "party {party_id}: compressed key not yet copied to {old_key_id}"
+                    )),
+                }
+            },
+            200,
+            100
+        );
+        res?;
+    }
     Ok(())
 }
 
