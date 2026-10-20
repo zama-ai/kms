@@ -23,7 +23,7 @@ use threshold_execution::{
 };
 use threshold_types::network::NetworkMode;
 use threshold_types::rng::AesRng;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -37,18 +37,12 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
             stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::CrsGenerator,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-            update_err_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+        update_err_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -56,7 +50,7 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
+        use crate::engine::centralized::central_kms::async_generate_crs;
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
@@ -68,7 +62,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub struct RealCrsGenerator<
+pub(crate) struct CrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
@@ -81,7 +75,6 @@ pub struct RealCrsGenerator<
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing crs generation tasks
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _ceremony: PhantomData<C>,
 }
 
@@ -89,7 +82,7 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealCrsGenerator<PubS, PrivS, C>
+> CrsGenerator<PubS, PrivS, C>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -102,8 +95,6 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        let rate_limiter_permit = self.rate_limiter.start_crsgen(op_tag).await?;
-
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
         let inner = request.into_inner();
@@ -166,7 +157,6 @@ impl<
             &verified.eip712_domain,
             verified.extra_data,
             verified.signing_schemes,
-            rate_limiter_permit,
             meta_permit,
             verified.epoch_id,
             verified.context_id,
@@ -189,7 +179,6 @@ impl<
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        rate_limiter_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
         context_id: ContextId,
@@ -222,7 +211,6 @@ impl<
                 // Capture the timer inside the generation task, such that when the
                 // task exits, the timer is dropped and thus exported.
                 let _inner_timer = timer;
-                let _inner_rate_limiter_permit = rate_limiter_permit;
                 Self::crs_gen_background(
                     meta_permit,
                     token,
@@ -471,30 +459,22 @@ impl<
             }
         }
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
-{
-    async fn crs_gen(
+    pub(crate) async fn crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_crs_gen_from_request(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_crs_gen(
+    pub(crate) async fn abort_crs_gen(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -503,12 +483,12 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureCrsGenerator<
+pub(crate) struct InsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, C>,
+    pub real_crs_generator: CrsGenerator<PubS, PrivS, C>,
 }
 
 #[cfg(feature = "insecure")]
@@ -516,33 +496,23 @@ impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> RealInsecureCrsGenerator<PubS, PrivS, C>
+> InsecureCrsGenerator<PubS, PrivS, C>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
+    pub async fn from_real_crsgen(value: &CrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
-            real_crs_generator: RealCrsGenerator {
+            real_crs_generator: CrsGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
                 session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
-                rate_limiter: value.rate_limiter.clone(),
                 _ceremony: PhantomData,
             },
         }
     }
-}
 
-#[cfg(feature = "insecure")]
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    C: Ceremony + Send + Sync + 'static,
-> InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
-{
-    async fn insecure_crs_gen(
+    pub(crate) async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -552,20 +522,13 @@ impl<
             .await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.real_crs_generator
             .inner_get_result(request, true)
             .await
-    }
-
-    async fn abort_crs_gen(
-        &self,
-        request: Request<v1::RequestId>,
-    ) -> Result<Response<Empty>, MetricedError> {
-        self.real_crs_generator.inner_abort_crs_gen(request).await
     }
 }
 
@@ -606,7 +569,7 @@ mod tests {
         PubS: Storage + Send + Sync + 'static,
         PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
-    > RealCrsGenerator<PubS, PrivS, C>
+    > CrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -623,7 +586,6 @@ mod tests {
 
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
-            let rate_limiter = RateLimiter::default();
             Self {
                 base_kms,
                 crypto_storage,
@@ -631,17 +593,8 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _ceremony: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -698,7 +651,7 @@ mod tests {
 
     async fn make_crs_gen<C: Ceremony + 'static>(
         rng: &mut AesRng,
-    ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
+    ) -> CrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
             KMSType::Threshold,
@@ -717,7 +670,7 @@ mod tests {
 
         let pub_storage = ram::RamStorage::new();
         let priv_storage = ram::RamStorage::new();
-        RealCrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
+        CrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
             base_kms,
             pub_storage,
             priv_storage,
@@ -878,33 +831,6 @@ mod tests {
                 .await
                 .unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(123);
-        let mut crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
-
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        crs_gen.set_bucket_size(1);
-
-        let req_id = RequestId::new_random(&mut rng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-        };
-
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
-
-        assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

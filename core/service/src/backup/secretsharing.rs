@@ -240,6 +240,7 @@ mod tests {
                 let mut shares = share(&mut rng, &secret, n, t).unwrap();
 
                 for block in &mut shares {
+                    #[allow(clippy::needless_range_loop)]
                     for i in n-t..n {
                         let owner = block.shares[i].owner();
                         let bad_value = block.shares[i].value() + ResiduePolyF4Z64::ONE;

@@ -8,7 +8,6 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::base::{DSEP_PUBDATA_CRS, derive_request_id},
-    util::rate_limiter::RateLimiterConfig,
     vault::storage::StorageReader,
 };
 
@@ -174,19 +173,9 @@ pub async fn crs_gen_centralized(
     insecure: bool,
 ) -> Result<()> {
     let dkg_param: WrappedDKGParams = params.into();
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 1,
-        user_decrypt: 1,
-        crsgen: 100,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
     let env = CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
-        .with_rate_limiter(rate_limiter_conf)
         .build()
         .await?;
     let internal_client = env.create_internal_client(&dkg_param).await?;

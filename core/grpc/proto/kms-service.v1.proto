@@ -41,8 +41,8 @@ import "kms.v1.proto";
 // `Unavailable` - An async request is not done yet. The caller can retry at a
 // later point and may obtain the result.
 //
-// `ResourceExhausted` - The request is being rate limited, wait until the
-// existing tasks are done before retrying.
+// `ResourceExhausted` - The meta store is full or the bandwidth benchmark has
+// reached its concurrency limit. Wait until existing tasks finish, then retry.
 //
 // `AlreadyExists` - This happens when making a request with an existing ID,
 // the caller should not retry in this case.
@@ -497,10 +497,10 @@ service CoreServiceEndpoint {
   // * The `context_id` in `request` can no longer be used. Any context data associated with it, that may have existed, including _all backups_ has been purged from both memory and disc.
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Retrieves the encryption public key of this KMS.
+  // Retrieves the operator's public backup encryption key for the current custodian context.
   //
-  // This can be used by a custorian to encrypt data for the KMS during recovery.
-  // WARNING: This method is not fully implemented yet.
+  // The operator encrypts its backups under this key.
+  // Returns `Unimplemented` if the backup vault does not use the secret-sharing keychain.
   //
   // # Parameters
   // * `_request` - Struct containing all the data of the request.
