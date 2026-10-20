@@ -1306,7 +1306,8 @@ mod tests {
         read_versioned_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
     };
     use crate::{
-        consts::DEFAULT_PARAM, dummy_domain, util::key_setup::local_material::gen_trusted_setup_crs,
+        consts::DEFAULT_PARAM, dummy_domain,
+        util::key_setup::test_tools::trusted_setup_crs_with_info,
     };
     use hashing::DomainSep;
     use kms_grpc::RequestId;
@@ -1371,7 +1372,7 @@ mod tests {
         let params = &DEFAULT_PARAM;
         let eip712_domain = dummy_domain();
         for max_num_bits in [64, 128, 256, 1024, 2048] {
-            let (crs, _) = gen_trusted_setup_crs(
+            let (crs, _) = trusted_setup_crs_with_info(
                 &NodeSigningIdentity::ecdsa_only(sk.clone()),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 params,

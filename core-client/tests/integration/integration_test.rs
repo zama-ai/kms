@@ -2201,7 +2201,8 @@ async fn nightly_tests_sequential_crs() -> Result<()> {
         setup_isolated_cli_test_with_prss_default("seq_crs", 4).await?;
 
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
-    // Secure ZK ceremony with Default params can take ~17min per CRS gen
+    // The secure ceremony with Default params and 4 parties takes about 2.5 min per CRS gen here
+    // (CI, 2026-10-20)
     let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_with_params(
         &config_path,
@@ -2583,7 +2584,8 @@ async fn nightly_full_gen_tests_default_sequential_crs() -> Result<()> {
         setup_isolated_cli_test_with_prss_default("full_gen_crs", 4).await?;
 
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
-    // Secure ZK ceremony with Default params can take ~17min per CRS gen
+    // The secure ceremony with Default params and 4 parties takes about 2.5 min per CRS gen here
+    // (CI, 2026-10-20)
     let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_with_params(
         &config_path,

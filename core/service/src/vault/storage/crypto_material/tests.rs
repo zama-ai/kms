@@ -8,7 +8,7 @@ use crate::{
         CrsGenMetadata, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
         derive_request_id,
     },
-    util::key_setup::local_material::async_generate_crs,
+    util::key_setup::test_tools::trusted_setup_crs_with_info,
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
         Vault, VaultDataType,
@@ -210,17 +210,16 @@ async fn write_crs() {
     let crs_id = RequestId::new_random(&mut rng);
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(
+    let (pp, crs_info) = trusted_setup_crs_with_info(
         &NodeSigningIdentity::ecdsa_only(sig_sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-        TEST_PARAM,
+        &TEST_PARAM,
         Some(1),
-        domain,
+        &domain,
         vec![],
         &crs_id,
         rng,
     )
-    .await
     .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
     let default_epoch_id = *DEFAULT_EPOCH_ID;

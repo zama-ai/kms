@@ -13,17 +13,16 @@ async fn crs_write_rejects_an_existing_pair_half(#[case] existing_half: StorageT
     let epoch_id = *DEFAULT_EPOCH_ID;
     let mut rng = AesRng::seed_from_u64(100);
     let (_, signing_key) = gen_sig_keys(&mut rng);
-    let (crs, crs_info) = async_generate_crs(
+    let (crs, crs_info) = trusted_setup_crs_with_info(
         &NodeSigningIdentity::ecdsa_only(signing_key),
         &[SigningSchemeType::Ecdsa256k1],
-        TEST_PARAM,
+        &TEST_PARAM,
         Some(1),
-        dummy_domain(),
+        &dummy_domain(),
         vec![],
         &crs_id,
         rng,
     )
-    .await
     .unwrap();
     let storage =
         CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);

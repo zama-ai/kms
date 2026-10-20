@@ -1671,8 +1671,8 @@ pub(crate) mod tests {
             compute_preprocessing_signatures, compute_public_decryption_message, hash_versioned,
         },
         util::key_setup::{
-            FhePublicKey,
-            local_material::{gen_trusted_setup_crs, generate_client_fhe_key},
+            FhePublicKey, local_material::generate_client_fhe_key,
+            test_tools::trusted_setup_crs_with_info,
         },
     };
     use alloy_sol_types::SolStruct;
@@ -2604,7 +2604,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x10u8, 0x20, 0x30];
 
-        let (crs, meta_data) = gen_trusted_setup_crs(
+        let (crs, meta_data) = trusted_setup_crs_with_info(
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[SigningSchemeType::Ecdsa256k1],
             &params,
@@ -2725,7 +2725,7 @@ pub(crate) mod tests {
         {
             // shold fail if we use the wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
-            let (crs, meta_data) = gen_trusted_setup_crs(
+            let (crs, meta_data) = trusted_setup_crs_with_info(
                 &NodeSigningIdentity::ecdsa_only(bad_sk.clone()), // using bad_sk
                 &[SigningSchemeType::Ecdsa256k1],
                 &params,

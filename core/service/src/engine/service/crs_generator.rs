@@ -50,8 +50,8 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::util::key_setup::local_material::async_generate_crs;
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
+        use threshold_execution::zk::ceremony::public_parameters_by_trusted_setup;
     }
 }
 
@@ -376,22 +376,8 @@ impl<
                     let my_role = base_session.my_role();
                     // We let the first party sample the seed (we are using 1-based party IDs)
                     let input_party_id = 1;
-                    let domain = eip712_domain.clone();
                     if my_role.one_based() == input_party_id {
-                        let crs_res = async_generate_crs(
-                            &sk,
-                            &signing_schemes,
-                            params,
-                            max_num_bits,
-                            domain,
-                            extra_data.clone(),
-                            req_id,
-                            rng,
-                        )
-                        .await;
-                        let crs = crs_res
-                            .map(|(crs, _)| crs)
-                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        let crs = trusted_setup_crs(params, max_num_bits, req_id, rng).await?;
                         transfer_crs(&base_session, Some(crs), input_party_id).await
                     } else {
                         transfer_crs(&base_session, None, input_party_id).await
@@ -399,9 +385,11 @@ impl<
                 }
             } else {
                 // secure ceremony (insecure = false)
-                // CRS ceremony with production-sized params (e.g. 2048 bits) is CPU-intensive,
-                // each party's turn can take minutes. Increase the timeout to match BK SNS generation
-                // to prevent other parties from timing out and marking the computing party as corrupt.
+                // CRS ceremony with production-sized params (e.g. 2048 bits) is CPU-intensive and
+                // the parties take turns: with 4 parties the whole ceremony took about 45–60 s, and
+                // with 13 parties two concurrent ceremonies took about 16 min on one 18-core machine
+                // (measured 2026-10-20). Each turn takes several seconds, longer on a loaded machine. Increase the timeout to match BK SNS generation to prevent other parties
+                // from timing out and marking the computing party as corrupt.
                 base_session.network.set_timeout_for_bk_sns().await;
                 let real_ceremony = C::default();
                 let internal_pp = real_ceremony
@@ -530,6 +518,31 @@ impl<
             .inner_get_result(request, true)
             .await
     }
+}
+
+/// Computes a CRS by a trusted setup on this party alone, for the insecure endpoint.
+/// The party knows the CRS's secret, so the result is insecure by construction.
+#[cfg(feature = "insecure")]
+async fn trusted_setup_crs(
+    params: DKGParams,
+    max_num_bits: Option<u32>,
+    req_id: &RequestId,
+    mut rng: AesRng,
+) -> anyhow::Result<tfhe::zk::CompactPkeCrs> {
+    let sid = req_id.derive_session_id()?;
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn_fifo(move || {
+        let pke_params = params.compact_pk_enc_params();
+        let out = public_parameters_by_trusted_setup(
+            &pke_params,
+            max_num_bits.map(|x| x as usize),
+            sid,
+            &mut rng,
+        )
+        .and_then(|pp| pp.try_into_tfhe_zk_pok_pp(&pke_params, sid));
+        let _ = send.send(out);
+    });
+    recv.await?
 }
 
 #[cfg(test)]
