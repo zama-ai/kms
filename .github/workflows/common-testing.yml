@@ -132,8 +132,7 @@ jobs:
           # warm cache; forks can't write to the cache anyway.
           save-if: ${{ github.ref == 'refs/heads/main' || github.event.pull_request.head.repo.fork == false }}
 
-      # Fallback when no EFS path is supplied (e.g. the nightly caller in
-      # main.yml): the job still needs fixtures, so generate the full
+      # When no EFS path is supplied, the job still needs fixtures. Generate the
       # insecure+secure set for parties 4,13 locally into ./test-material
       # rather than silently running material-dependent tests with none.
       - name: Generate test material locally (no EFS path provided)

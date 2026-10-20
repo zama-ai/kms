@@ -156,7 +156,7 @@ Schedule entry: `--release -F slow_tests nightly` — nightly-suffixed tests in 
 
 ### Test material
 
-Most test jobs depend on FHE and signing material under `./test-material/`. The shared generator in `main.yml` writes it to EFS for Rust and WASM jobs. `common-testing.yml` generates material locally when its caller provides no EFS path. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).
+Most test jobs depend on FHE and signing material under `./test-material/`. The shared generator in `main.yml` writes it to EFS for the Rust, WASM and `test-core-client-nightly` jobs. `common-testing.yml` generates material locally when its caller provides no EFS path. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).
 
 ---
 
