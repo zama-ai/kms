@@ -1,5 +1,5 @@
 use crate::client::client_wasm::ServerIdentities;
-use crate::client::tests::common::{PollConfig, retrying_poll};
+use crate::client::tests::common::{PollConfig, TestUser, retrying_poll};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
@@ -16,7 +16,7 @@ use crate::util::key_setup::test_tools::{
 use anyhow::Result;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
-use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use kms_grpc::rpc_types::{ClientAddress, protobuf_to_alloy_domain};
 use std::collections::HashMap;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
@@ -37,6 +37,27 @@ async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) -
         },
         4,
         secure,
+        TestUser::Evm,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_decryption_centralized_solana() -> Result<()> {
+    user_decryption_centralized(
+        &TEST_PARAM,
+        &TEST_CENTRAL_KEY_ID,
+        "test_user_decryption_centralized_solana",
+        MaterialType::Testing,
+        false,
+        TestingPlaintext::U8(48),
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+        4,
+        true,
+        TestUser::Solana,
     )
     .await
 }
@@ -60,6 +81,7 @@ async fn test_user_decryption_centralized_precompute_sns(
         },
         4,
         secure,
+        TestUser::Evm,
     )
     .await
 }
@@ -81,6 +103,7 @@ async fn test_user_decryption_centralized_and_write_transcript() -> Result<()> {
         },
         1, // wasm tests are single-threaded
         true,
+        TestUser::Evm,
     )
     .await
 }
@@ -103,6 +126,7 @@ async fn default_user_decryption_centralized_and_write_transcript() -> Result<()
         },
         1, // wasm tests are single-threaded
         true,
+        TestUser::Evm,
     )
     .await
 }
@@ -125,6 +149,7 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
         },
         parallelism,
         secure,
+        TestUser::Evm,
     )
     .await
 }
@@ -149,6 +174,7 @@ async fn default_user_decryption_centralized_no_compression(
         },
         parallelism,
         secure,
+        TestUser::Evm,
     )
     .await
 }
@@ -174,6 +200,7 @@ async fn default_user_decryption_centralized_precompute_sns(
         },
         parallelism,
         secure,
+        TestUser::Evm,
     )
     .await
 }
@@ -189,6 +216,7 @@ pub(crate) async fn user_decryption_centralized(
     enc_config: EncryptionConfig,
     parallelism: usize,
     secure: bool,
+    user: TestUser,
 ) -> Result<()> {
     assert!(parallelism > 0);
     let spec = match material_type {
@@ -202,6 +230,7 @@ pub(crate) async fn user_decryption_centralized(
         .build()
         .await?;
     let mut internal_client = env.create_internal_client(dkg_params).await?;
+    user.set_user(&mut internal_client);
     let (kms_server, kms_client, material_path, _guard) = env.into_parts();
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
         Some(material_path.as_path()),
@@ -317,17 +346,10 @@ pub(crate) async fn user_decryption_centralized(
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),
                 client_address: internal_client.client_address,
-                client_sk: internal_client.client_sk.clone(),
                 degree: 0,
                 params: internal_client.params,
                 fhe_types: vec![msg.fhe_type() as i32],
                 pts: vec![TypedPlaintext::from(msg).bytes.clone()],
-                cts: reqs[0]
-                    .0
-                    .typed_ciphertexts
-                    .iter()
-                    .map(|typed_ct| typed_ct.ciphertext.to_vec())
-                    .collect::<Vec<_>>(),
                 request: Some(reqs[0].clone().0),
                 eph_sk: reqs[0].clone().2,
                 eph_pk: reqs[0].clone().1,
@@ -386,6 +408,33 @@ pub(crate) async fn user_decryption_centralized(
                     .to_string()
                     .contains(ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA)
             );
+            // Signcryption binds the shares to the client address, so a client with another
+            // address of either kind cannot open them.
+            let own_address = internal_client.client_address;
+            for other_address in [
+                ClientAddress::Evm(alloy_primitives::address!(
+                    "d8da6bf26964af9d7eed9e03e53415d37aa96045"
+                )),
+                ClientAddress::Solana([0x22; 32]),
+            ] {
+                internal_client.client_address = other_address;
+                let result = internal_client.process_user_decryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    enc_pk,
+                    enc_sk,
+                    None,
+                    &responses,
+                );
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|e| e.to_string().contains("unsigncrypt_plaintext failed")),
+                    "a client of {other_address} must fail to unsigncrypt the shares of \
+                    {own_address}, got {result:?}"
+                );
+            }
+            internal_client.client_address = own_address;
             internal_client
                 .process_user_decryption_resp(
                     &client_request,

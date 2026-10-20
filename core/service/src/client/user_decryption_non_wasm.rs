@@ -7,7 +7,7 @@ use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
-use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+use kms_grpc::rpc_types::{ClientAddress, alloy_to_protobuf_domain};
 use kms_grpc::{ContextId, EpochId};
 
 impl Client {
@@ -39,10 +39,13 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
-        let _client_sk = some_or_err(
-            self.client_sk.clone(),
-            "missing client signing key".to_string(),
-        )?;
+        // A Solana user holds an ed25519 key, not this ECDSA one.
+        if let ClientAddress::Evm(_) = self.client_address {
+            some_or_err(
+                self.client_sk.as_ref(),
+                "missing client signing key".to_string(),
+            )?;
+        }
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
@@ -62,7 +65,7 @@ impl Client {
                     .expect("Failed to serialize ephemeral encryption key");
                     buf
                 },
-                client_address: self.client_address.to_checksum(None),
+                client_address: self.client_address.to_string(),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),

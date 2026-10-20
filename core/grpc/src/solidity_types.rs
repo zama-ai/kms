@@ -23,6 +23,15 @@ alloy_sol_types::sol! {
     }
 }
 
+// The Solana counterpart of `UserDecryptionLinker`: a Solana user address is a 32-byte public key.
+alloy_sol_types::sol! {
+    struct SolanaUserDecryptionLinker {
+        bytes publicKey;
+        bytes32[] handles;
+        bytes32 userAddress;
+    }
+}
+
 // Solidity struct for decryption result signature
 // Struct needs to match what is in
 // https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18
