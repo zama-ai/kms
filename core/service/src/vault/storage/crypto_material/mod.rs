@@ -8,7 +8,7 @@
 //! - `traits`: Defines core interfaces including the `CryptoMaterialReader` trait and storage traits
 //! - `readers`: Contains implementations of the `CryptoMaterialReader` trait for various types
 //! - `base`: Defines `CryptoMaterialStorage` and its storage operations
-//! - `cached`: The FHE-key cache of `CryptoMaterialStorage` and the methods that keep it in step with storage
+//! - `cached`: Methods of `CryptoMaterialStorage` that use its FHE-key cache
 //! - `utils`: Contains utility functions for cryptographic material management
 //! - `tests`: Contains test suites for validating the storage implementations
 //!

@@ -1,7 +1,3 @@
-//! The FHE-key cache of [`CryptoMaterialStorage`].
-//!
-//! These methods write and read FHE keys and epoch data, keeping the cache in step with storage.
-
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -10,12 +6,9 @@ use super::base::CryptoMaterialStorage;
 use crate::{
     cryptography::signatures::{NodeSigningIdentity, SigningSchemeType},
     engine::{
-        base::{
-            CrsGenMetadata, CurrentPublicMaterialLayout, KeyGenMetadata,
-            compute_info_keygen_from_digests,
-        },
+        base::{CurrentPublicMaterialLayout, KeyGenMetadata, compute_info_keygen_from_digests},
         material_integrity::verify_public_key_digest_from_bytes,
-        service::{FheKeys, epoch_manager::EpochData},
+        service::FheKeys,
     },
     util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
     vault::{
@@ -26,7 +19,7 @@ use crate::{
                 PublicKeySet,
                 base::{BackupPolicy, StorageError, update_meta_store},
             },
-            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
+            delete_at_request_and_epoch_id, delete_at_request_id,
             read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
@@ -39,7 +32,7 @@ use kms_grpc::{
 };
 use tfhe::xof_key_set::CompressedXofKeySet;
 
-/// The FHE-key cache and the methods that keep it in step with storage.
+// Methods that use the FHE-key cache.
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
     CryptoMaterialStorage<PubS, PrivS>
 {
@@ -55,57 +48,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
             ..storage
         }
-    }
-
-    /// Write the epoch data to the storage backend.
-    /// No actions are taken on failure, but the error is returned to the caller for potential handling.
-    pub async fn write_epoch_data(
-        &self,
-        epoch_id: &EpochId,
-        epoch_data: &EpochData,
-    ) -> anyhow::Result<()> {
-        self.write_all::<EpochData, EpochData>(
-            &epoch_id.into(), // using epoch_id as req_id since epoch data is stored under this directly
-            None,
-            None, // no public data for epoch info
-            Some((epoch_data, PrivDataType::EpochData)),
-            true,
-            OP_NEW_EPOCH,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
-    }
-
-    /// Read all epoch data from the storage backend.
-    /// The result is a map of epoch IDs to their corresponding epoch data.
-    /// That is, epochs are flattened and NOT indexed by their associated context ID.
-    pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
-        let priv_storage = self.private_storage.lock().await;
-        let intermediate_res: HashMap<RequestId, EpochData> =
-            read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
-        Ok(intermediate_res
-            .into_iter()
-            .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
-            .collect())
-    }
-
-    /// Write the CRS to the storage backend (for use in connection with resharing).
-    /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
-    pub(crate) async fn resharing_crs_write_no_backup(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        crs_info: CrsGenMetadata,
-    ) -> Result<(), StorageError> {
-        self.write_all::<CrsGenMetadata, CrsGenMetadata>(
-            crs_id,
-            Some(epoch_id),
-            None, // No public data is made when refreshing a CRS
-            Some((&crs_info, PrivDataType::CrsInfo)),
-            false,
-            OP_NEW_EPOCH,
-        )
-        .await
     }
 
     /// Write the keys to the storage backend (for use in connection with resharing).

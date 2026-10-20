@@ -38,7 +38,9 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_CUSTODIAN_CONTEXT};
+use observability::metrics_names::{
+    ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_EPOCH,
+};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
@@ -242,6 +244,57 @@ where
     /// Getter for backup_storage (if present)
     pub fn get_backup_vault(&self) -> Option<Arc<Mutex<Vault>>> {
         self.backup_vault.as_ref().map(Arc::clone)
+    }
+
+    /// Write the epoch data to the storage backend.
+    /// No actions are taken on failure, but the error is returned to the caller for potential handling.
+    pub async fn write_epoch_data(
+        &self,
+        epoch_id: &EpochId,
+        epoch_data: &EpochData,
+    ) -> anyhow::Result<()> {
+        self.write_all::<EpochData, EpochData>(
+            &epoch_id.into(), // using epoch_id as req_id since epoch data is stored under this directly
+            None,
+            None, // no public data for epoch info
+            Some((epoch_data, PrivDataType::EpochData)),
+            true,
+            OP_NEW_EPOCH,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
+    }
+
+    /// Read all epoch data from the storage backend.
+    /// The result is a map of epoch IDs to their corresponding epoch data.
+    /// That is, epochs are flattened and NOT indexed by their associated context ID.
+    pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
+        let priv_storage = self.private_storage.lock().await;
+        let intermediate_res: HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
+        Ok(intermediate_res
+            .into_iter()
+            .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+            .collect())
+    }
+
+    /// Write the CRS to the storage backend (for use in connection with resharing).
+    /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
+    pub(crate) async fn resharing_crs_write_no_backup(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        crs_info: CrsGenMetadata,
+    ) -> Result<(), StorageError> {
+        self.write_all::<CrsGenMetadata, CrsGenMetadata>(
+            crs_id,
+            Some(epoch_id),
+            None, // No public data is made when refreshing a CRS
+            Some((&crs_info, PrivDataType::CrsInfo)),
+            false,
+            OP_NEW_EPOCH,
+        )
+        .await
     }
 
     // =========================
