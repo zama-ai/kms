@@ -105,14 +105,13 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
         for (to_send_role, sk) in ks.iter().enumerate() {
             if to_send_role + 1 != role.one_based() {
                 let sk_vec = sk.sk.iter().map(|item| item.value()).collect_vec();
-                let network_sk_shares = NetworkValue::<LevelOne>::VecRingValue(sk_vec);
+                let send_sk = NetworkValue::<LevelOne>::VecRingValue(sk_vec).to_network()?;
 
                 let networking = Arc::clone(session.network());
-                let send_sk = network_sk_shares.clone();
 
                 set.spawn(async move {
                     let _ = networking
-                        .send(send_sk.to_network(), &Role::indexed_from_zero(to_send_role))
+                        .send(send_sk, &Role::indexed_from_zero(to_send_role))
                         .await;
                 });
             }

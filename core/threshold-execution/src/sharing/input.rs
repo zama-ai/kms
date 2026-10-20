@@ -57,14 +57,10 @@ where
                 output = to_send.into_iter().map(|v| Share::new(*role, v)).collect();
                 continue;
             }
+            let to_send_bytes = NetworkValue::VecRingValue(to_send).to_network()?;
             let networking = Arc::clone(session.network());
             set.spawn(async move {
-                let _ = networking
-                    .send(
-                        NetworkValue::VecRingValue(to_send).to_network(),
-                        &to_send_role,
-                    )
-                    .await;
+                let _ = networking.send(to_send_bytes, &to_send_role).await;
             });
         }
         while (set.join_next().await).is_some() {}
