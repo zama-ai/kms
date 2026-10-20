@@ -361,7 +361,7 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(value.to_network(), &bob).await
+            net_alice.send(value.to_network().unwrap(), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -397,7 +397,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
             net_party_1_set_2
-                .send(value.to_network(), &role_1_set_1)
+                .send(value.to_network().unwrap(), &role_1_set_1)
                 .await
         });
 
@@ -413,7 +413,9 @@ mod tests {
 
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
 
-        let value = NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network();
+        let value = NetworkValue::RingValue(Wrapping::<u64>(1234))
+            .to_network()
+            .unwrap();
         // First send should succeed
         let result1 = net_alice.send(value.clone(), &bob).await;
         assert!(result1.is_ok());

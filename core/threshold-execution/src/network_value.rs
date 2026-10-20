@@ -1,4 +1,3 @@
-#[cfg(any(test, feature = "testing"))]
 use crate::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
     large_execution::{
@@ -16,7 +15,6 @@ use error_utils::anyhow_error_and_log;
 use hashing::{DomainSep, serialize_hash_element};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-#[cfg(any(test, feature = "testing"))]
 use tfhe::zk::CompactPkeCrs;
 use thread_handles::spawn_compute_bound;
 use threshold_types::commitment::{Commitment, Opening};
@@ -26,6 +24,9 @@ pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];
 
 const DSEP_BRACH: DomainSep = *b"BRACHABC";
+
+/// Whether this build may send and receive the testing-only [`NetworkValue`] variants.
+const TESTING_BUILD: bool = cfg!(any(test, feature = "testing"));
 
 /// Captures network values which can (and sometimes should) be broadcast.
 ///
@@ -107,14 +108,23 @@ pub enum AgreeRandomValue {
 
 /// A value that is sent via network.
 ///
-/// IMPORTANT: bincode encodes a variant by its position in the enum *after*
-/// `cfg` stripping. To keep the wire format backward compatible (rolling
-/// upgrades) and identical between builds _without_ the `testing` feature:
-/// - new non-test variants must be appended right after the last non-test
-///   variant, i.e. *before* the `testing`-gated block;
-/// - `testing`-gated variants must always stay at the very end.
+/// IMPORTANT: when adding new _test_ variants, they must be added to the *end*
+/// of the enum for bincode to behave in a backward compatible way.
+/// When adding production variants, they must also be added to the *end* of
+/// the production variants, but _before_ the test variants, i.e. between
+/// `Round1VSS` and `CompressedXofKeySet`.
+/// Otherwise we will have issues when performing a rolling upgrade.
+///
+/// The test variants are `PubKeySet`, `Crs`, `DecompressionKey`,
+/// `SnsCompressionKey` and `CompressedXofKeySet` exist in every build, so that
+/// testing and production builds use the same variant indices. Only a testing
+/// build may send or receive them.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum NetworkValue<Z: Eq + Zero> {
+    PubKeySet(Box<FhePubKeySet>),
+    Crs(Box<CompactPkeCrs>),
+    DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
+    SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),
@@ -125,38 +135,24 @@ pub enum NetworkValue<Z: Eq + Zero> {
     Bot,
     Empty,
     Round1VSS(ExchangedDataRound1<Z>),
-    // Only `testing`-gated variants below this line.
-    #[cfg(any(test, feature = "testing"))]
-    PubKeySet(Box<FhePubKeySet>),
-    #[cfg(any(test, feature = "testing"))]
-    Crs(Box<CompactPkeCrs>),
-    #[cfg(any(test, feature = "testing"))]
-    DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
-    #[cfg(any(test, feature = "testing"))]
-    SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
-    #[cfg(any(test, feature = "testing"))]
     CompressedXofKeySet(Box<tfhe::xof_key_set::CompressedXofKeySet>),
 }
 
 impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::PubKeySet(_pk) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
                 .finish(),
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::Crs(_crs) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
                 .finish(),
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::DecompressionKey(_) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
                 .finish(),
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::SnsCompressionKey(_) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
@@ -177,7 +173,6 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
             NetworkValue::Bot => f.write_str(self.network_type_name()),
             NetworkValue::Empty => f.write_str(self.network_type_name()),
             NetworkValue::Round1VSS(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::CompressedXofKeySet(_) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
@@ -199,15 +194,21 @@ impl<Z: Ring> NetworkValue<Z> {
     //
     // Returned as `Bytes` (wrapping the serialized `Vec` without copying) so the
     // result can be sent to several parties, and retried, with refcount clones only.
-    pub fn to_network(&self) -> Bytes {
-        Bytes::from(bc2wrap::serialize(self).unwrap())
+    //
+    // Returns an error if a production build tries to send a testing-only variant,
+    // or if serialization fails.
+    pub fn to_network(&self) -> anyhow::Result<Bytes> {
+        self.ensure_allowed(TESTING_BUILD)?;
+        let serialized = bc2wrap::serialize(self)
+            .map_err(|e| anyhow_error_and_log(format!("failed to serialize value: {e}")))?;
+        Ok(Bytes::from(serialized))
     }
 
     pub async fn from_network(
         serialized: anyhow::Result<Bytes>,
         serialization_runtime: DeSerializationRunTime,
     ) -> anyhow::Result<Self> {
-        match serialization_runtime {
+        let value = match serialization_runtime {
             DeSerializationRunTime::Tokio => bc2wrap::deserialize_slice::<Self>(&serialized?)
                 .map_err(|_e| anyhow_error_and_log("failed to parse value")),
             DeSerializationRunTime::Rayon => {
@@ -218,20 +219,43 @@ impl<Z: Ring> NetworkValue<Z> {
                 })
                 .await?
             }
-        }
+        }?;
+        value.ensure_allowed(TESTING_BUILD)?;
+        Ok(value)
     }
 }
 
 impl<Z: Eq + Zero> NetworkValue<Z> {
+    /// Returns an error if `self` is a testing-only variant and `testing_build` is false.
+    fn ensure_allowed(&self, testing_build: bool) -> anyhow::Result<()> {
+        if !testing_build {
+            match self {
+                NetworkValue::RingValue(_)
+                | NetworkValue::VecRingValue(_)
+                | NetworkValue::VecPairRingValue(_)
+                | NetworkValue::Send(_)
+                | NetworkValue::EchoBatch(_)
+                | NetworkValue::VoteBatch(_)
+                | NetworkValue::AgreeRandom(_)
+                | NetworkValue::Bot
+                | NetworkValue::Empty
+                | NetworkValue::Round1VSS(_) => {} // production values
+                _ => {
+                    return Err(anyhow_error_and_log(format!(
+                        "network value {} is only allowed in testing builds",
+                        self.network_type_name()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn network_type_name(&self) -> &str {
         match self {
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::PubKeySet(_) => "PubKeySet",
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::Crs(_) => "Crs",
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::DecompressionKey(_) => "DecompressionKey",
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::SnsCompressionKey(_) => "SnsCompressionKey",
             NetworkValue::RingValue(_) => "RingValue",
             NetworkValue::VecRingValue(_) => "VecRingValue",
@@ -243,7 +267,6 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
             NetworkValue::Bot => "Bot",
             NetworkValue::Empty => "Empty",
             NetworkValue::Round1VSS(_) => "Round1VSS",
-            #[cfg(any(test, feature = "testing"))]
             NetworkValue::CompressedXofKeySet(_) => "CompressedXofKeySet",
         }
     }
@@ -251,50 +274,88 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::{
         constants::SMALL_TEST_KEY_PATH, tests::ensure_test_data_setup,
         tfhe_internals::test_feature::KeySet,
     };
     use algebra::base_ring::Z128;
+    use std::{collections::HashSet, num::Wrapping};
     use test_utils::read_element;
     use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
 
-    /// Pins the bincode variant index of every non-`testing` variant to the
-    /// one used by production builds, so that adding or moving variants (gated
-    /// or not) cannot silently break rolling upgrades or interop between
-    /// builds with and without the `testing` feature.
+    /// The variant indices must stay the same as in v0.14.2, which was built with the testing
+    /// feature.
     #[test]
-    fn test_network_value_variant_indices() {
-        let cases: Vec<(NetworkValue<Z128>, u32)> = vec![
-            (NetworkValue::RingValue(Z128::ZERO), 0),
-            (NetworkValue::VecRingValue(vec![]), 1),
-            (NetworkValue::VecPairRingValue(vec![]), 2),
-            (NetworkValue::Send(BroadcastValue::Bot), 3),
-            (NetworkValue::EchoBatch(HashMap::new()), 4),
-            (NetworkValue::VoteBatch(HashMap::new()), 5),
+    fn test_serialization_matches_released_layout() {
+        let ring: Z128 = Wrapping(42);
+        let role = Role::indexed_from_one(1);
+        let cases: Vec<(u32, NetworkValue<Z128>)> = vec![
+            (4, NetworkValue::RingValue(ring)),
+            (5, NetworkValue::VecRingValue(vec![ring])),
+            (6, NetworkValue::VecPairRingValue(vec![(ring, ring)])),
+            (7, NetworkValue::Send(BroadcastValue::Bot)),
             (
-                NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![])),
-                6,
+                8,
+                NetworkValue::EchoBatch(HashMap::from([(role, BroadcastValue::RingValue(ring))])),
             ),
-            (NetworkValue::Bot, 7),
-            (NetworkValue::Empty, 8),
             (
-                NetworkValue::Round1VSS(ExchangedDataRound1::default(1, 0)),
                 9,
+                NetworkValue::VoteBatch(HashMap::from([(role, [7u8; BCAST_HASH_BYTE_LEN])])),
+            ),
+            (
+                10,
+                NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![])),
+            ),
+            (11, NetworkValue::Bot),
+            (12, NetworkValue::Empty),
+            (
+                13,
+                NetworkValue::Round1VSS(ExchangedDataRound1::default(1, 1)),
             ),
         ];
-        for (value, expected_index) in cases {
-            let bytes = value.to_network();
-            // bc2wrap uses the bincode legacy config: the variant index is a little-endian u32 prefix.
-            let index = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+        for (index, value) in cases {
             assert_eq!(
-                index,
-                expected_index,
-                "variant {} changed its wire index",
+                value.to_network().unwrap()[..4],
+                bc2wrap::serialize(&index).unwrap()[..],
+                "{}",
+                value.network_type_name()
+            );
+        }
+
+        // The payload follows the variant index directly.
+        assert_eq!(
+            NetworkValue::RingValue(ring).to_network().unwrap()[..],
+            [
+                bc2wrap::serialize(&4).unwrap(),
+                bc2wrap::serialize(&ring).unwrap()
+            ]
+            .concat()[..]
+        );
+    }
+
+    /// A production build must reject the testing-only variants and accept the other variants.
+    #[test]
+    fn test_production_rejects_testing_only_values() {
+        ensure_test_data_setup();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
+        let pub_key_set = NetworkValue::<Z128>::PubKeySet(Box::new(keys.public_keys));
+        assert!(pub_key_set.ensure_allowed(false).is_err());
+        assert!(pub_key_set.ensure_allowed(true).is_ok());
+        // This test runs in a testing build, so sending must succeed.
+        assert!(pub_key_set.to_network().is_ok());
+
+        let ring: Z128 = Wrapping(42);
+        for value in [
+            NetworkValue::RingValue(ring),
+            NetworkValue::Send(BroadcastValue::Bot),
+            NetworkValue::Bot,
+            NetworkValue::Empty,
+        ] {
+            assert!(
+                value.ensure_allowed(false).is_ok(),
+                "{}",
                 value.network_type_name()
             );
         }
@@ -325,8 +386,11 @@ mod tests {
             assert_eq!(*received_key, pk);
         });
 
-        let task2 =
-            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
+        let task2 = tokio::spawn(async move {
+            net_alice
+                .send(value.to_network().unwrap(), &bob.clone())
+                .await
+        });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }
