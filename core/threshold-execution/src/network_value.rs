@@ -226,17 +226,22 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
     fn ensure_allowed(&self, testing_build: bool) -> anyhow::Result<()> {
         if !testing_build {
             match self {
-                NetworkValue::PubKeySet(_)
-                | NetworkValue::Crs(_)
-                | NetworkValue::DecompressionKey(_)
-                | NetworkValue::SnsCompressionKey(_)
-                | NetworkValue::CompressedXofKeySet(_) => {
+                NetworkValue::RingValue(_)
+                | NetworkValue::VecRingValue(_)
+                | NetworkValue::VecPairRingValue(_)
+                | NetworkValue::Send(_)
+                | NetworkValue::EchoBatch(_)
+                | NetworkValue::VoteBatch(_)
+                | NetworkValue::AgreeRandom(_)
+                | NetworkValue::Bot
+                | NetworkValue::Empty
+                | NetworkValue::Round1VSS(_) => {} // production values
+                _ => {
                     return Err(anyhow_error_and_log(format!(
                         "network value {} is only allowed in testing builds",
                         self.network_type_name()
                     )));
                 }
-                _ => {}
             }
         }
         Ok(())
