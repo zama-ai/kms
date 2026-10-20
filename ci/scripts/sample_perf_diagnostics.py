@@ -15,8 +15,10 @@ from perf_common import (
     tsv,
 )
 
-FINALIZATION_TIMEOUT = 270  # The runner kills the process group after 300 seconds.
+FINALIZATION_TIMEOUT = 270  # Leaves 30 s of margin before the runner kills the process group at 300 s.
 ENA_FINALIZATION_RESERVE = 90  # Preserve time for the existing ENA artifacts.
+# Lets kubectl hit its own request timeout first, so its error and any partial output are kept.
+KUBECTL_GRACE = 5
 
 
 def lifecycle_rows(daemonset, pods, stamp):
@@ -67,7 +69,12 @@ def core_lifecycle_rows(pods, stamp):
     rows = []
     for pod in pods.get("items", []):
         name = pod.get("metadata", {}).get("name")
-        for container in pod.get("status", {}).get("containerStatuses") or []:
+        status = pod.get("status", {})
+        # Native sidecars such as the enclave logger are reported with the init containers.
+        containers = (status.get("containerStatuses") or []) + (
+            status.get("initContainerStatuses") or []
+        )
+        for container in containers:
             state = container.get("state") or {}
             last = (
                 state.get("terminated")
@@ -99,7 +106,7 @@ def capture_before_deadline(namespace, args, deadline, timeout=30):
     timeout = min(timeout, remaining)
     result = best_effort(
         ["kubectl", f"--request-timeout={timeout:.3f}s", "-n", namespace, *args],
-        timeout=timeout,
+        timeout=timeout + KUBECTL_GRACE,
     )
     return result.stdout + result.stderr
 
@@ -124,26 +131,19 @@ def finish_core(namespace, output, deadline):
                 if text is not None:
                     (output / f"{name}-{container.get('name')}-previous.log").write_text(text)
         if any(
-            c.get("name") == "kms-core-enclave-logger"
+            c.get("name") == "kms-core-enclave"
             for c in pod.get("status", {}).get("containerStatuses") or []
         ):
+            # Only the enclave state: /var/log/nitro_enclaves is not a volume, so its logs do
+            # not survive a container restart.
             text = capture_before_deadline(
                 namespace,
-                [
-                    "exec",
-                    name,
-                    "-c",
-                    "kms-core-enclave",
-                    "--",
-                    "sh",
-                    "-c",
-                    "nitro-cli describe-enclaves; cat /var/log/nitro_enclaves/*.log",
-                ],
+                ["exec", name, "-c", "kms-core-enclave", "--", "nitro-cli", "describe-enclaves"],
                 deadline,
                 timeout=120,
             )
             if text is not None:
-                (output / f"{name}-nitro.log").write_text(text)
+                (output / f"{name}-describe-enclaves.txt").write_text(text)
 
     description = capture_before_deadline(
         namespace, ["describe", "pods", "-l", "app=kms-core"], deadline, timeout=120

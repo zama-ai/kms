@@ -272,10 +272,13 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         pods.return_value = {
             "items": [{
                 "metadata": {"name": "pod"},
-                "status": {"containerStatuses": [
-                    {"name": "kms-core-enclave", "restartCount": 1},
-                    {"name": "kms-core-enclave-logger", "restartCount": 0},
-                ]},
+                # The logger is a native sidecar, so the API reports it with the init containers.
+                "status": {
+                    "containerStatuses": [{"name": "kms-core-enclave", "restartCount": 1}],
+                    "initContainerStatuses": [
+                        {"name": "kms-core-enclave-logger", "restartCount": 0},
+                    ],
+                },
             }]
         }
         diagnostics.finish_core("ns", Path("restarts"), diagnostics.time.monotonic() + 270)
@@ -285,7 +288,21 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         self.assertLess(commands.index(previous), next(i for i, args in enumerate(commands) if "describe" in args))
         enclave = next(args for args in commands if "exec" in args)
         self.assertEqual(enclave[enclave.index("-c") + 1], "kms-core-enclave")
-        self.assertEqual(Path("restarts/pod-nitro.log").read_text(), "captured\n")
+        self.assertEqual(enclave[-2:], ["nitro-cli", "describe-enclaves"])
+        self.assertEqual(Path("restarts/pod-describe-enclaves.txt").read_text(), "captured\n")
+
+    @patch.object(diagnostics, "kube_json")
+    @patch.object(diagnostics, "best_effort", return_value=result("captured\n"))
+    def test_core_restart_capture_skips_enclave_state_without_enclave(self, command, pods):
+        pods.return_value = {
+            "items": [{
+                "metadata": {"name": "pod"},
+                "status": {"containerStatuses": [{"name": "kms-core", "restartCount": 0}]},
+            }]
+        }
+        diagnostics.finish_core("ns", Path("restarts"), diagnostics.time.monotonic() + 270)
+        self.assertFalse(any("exec" in call.args[0] for call in command.call_args_list))
+        self.assertFalse(Path("restarts/pod-describe-enclaves.txt").exists())
 
     def test_network_phase_rejects_paths_before_collection(self):
         for phase in ("../outside", "/tmp/outside", "nested/phase", ".", "..", ""):
@@ -584,7 +601,7 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                     "status": {
                         "containerStatuses": [
                             {
-                                "name": "kms-core",
+                                "name": "kms-core-enclave",
                                 "ready": True,
                                 "restartCount": 1,
                                 "state": {"running": {"startedAt": "t2"}},
@@ -597,8 +614,10 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                                     }
                                 },
                             },
+                        ],
+                        "initContainerStatuses": [
                             {"name": "kms-core-enclave-logger", "state": {}},
-                        ]
+                        ],
                     },
                 },
                 {"metadata": {"name": "pending"}, "status": {}},
@@ -607,7 +626,7 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         self.assertEqual(
             diagnostics.core_lifecycle_rows(pods, "now"),
             [
-                ["now", "kms-core-4-core-4", "kms-core", True, 1, "t2", "", "Error", 137, "t0", "t1"],
+                ["now", "kms-core-4-core-4", "kms-core-enclave", True, 1, "t2", "", "Error", 137, "t0", "t1"],
                 ["now", "kms-core-4-core-4", "kms-core-enclave-logger", False, 0, "", "", "", "", "", ""],
             ],
         )
@@ -637,7 +656,8 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         self.assertEqual(
             diagnostics.capture_before_deadline("ns", ["get", "pods"], 100), "captured"
         )
-        self.assertEqual(command.call_args.kwargs["timeout"], 1)
+        self.assertIn("--request-timeout=1.000s", command.call_args.args[0])
+        self.assertEqual(command.call_args.kwargs["timeout"], 1 + diagnostics.KUBECTL_GRACE)
         self.assertEqual(
             diagnostics.capture_before_deadline("ns", ["get", "pods"], 99), None
         )

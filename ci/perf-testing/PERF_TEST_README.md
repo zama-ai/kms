@@ -290,7 +290,7 @@ containing the KMS cores and the first rate-test client pod.
 The artifact also contains readiness, restart counts, and termination details
 in `core-lifecycle.tsv`.
 The `core-restarts/` directory contains pod descriptions, events, and previous
-container logs where available. Enclave runs also capture Nitro diagnostics.
+container logs where available. Enclave runs also capture `nitro-cli describe-enclaves` output.
 The enclave logger reports the server exit status.
 
 Each decrypt scenario also captures its own `eth0` rx/tx counters inside the

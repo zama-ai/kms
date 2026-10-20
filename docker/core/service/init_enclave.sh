@@ -129,8 +129,7 @@ if kms-server --config-file="$KMS_SERVER_CONFIG_FILE" |& logger; then
 else
     SERVER_STATUS=$? SERVER_EXIT_STATUS=${PIPESTATUS[0]}
 fi
-# 137 is SIGKILL (e.g. the OOM killer), 134 is SIGABRT (e.g. a failed allocation), 101 is a panic
-# that reached the main thread.
+# 137 is SIGKILL (e.g. the OOM killer), 134 is SIGABRT (e.g. a failed allocation), 101 is an uncaught panic.
 log "kms-server exited with status $SERVER_EXIT_STATUS"
 
 if [ "$KEYGEN_STATUS" -ne 0 ] && [ "$SERVER_STATUS" -ne 0 ]; then
