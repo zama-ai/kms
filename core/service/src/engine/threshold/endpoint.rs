@@ -274,7 +274,7 @@ where
     async fn new_mpc_context(
         &self,
         request: Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<NewMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
         self.context_manager
             .new_mpc_context(request)

@@ -1390,7 +1390,7 @@ where
     async fn new_custodian_context(
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         Arc::clone(&self.inner).new_custodian_context(request).await
     }
 

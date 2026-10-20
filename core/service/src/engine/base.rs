@@ -420,9 +420,11 @@ impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextPayload {
     }
 }
 
-impl From<&NewMpcContextPayload> for kms::v1::NewMpcContextPayload {
-    fn from(value: &NewMpcContextPayload) -> Self {
-        kms::v1::NewMpcContextPayload {
+impl TryFrom<&NewMpcContextPayload> for kms::v1::NewMpcContextPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &NewMpcContextPayload) -> Result<Self, Self::Error> {
+        Ok(kms::v1::NewMpcContextPayload {
             new_context_id: Some(value.new_context_id.into()),
             previous_context_id: Some(value.previous_context_id.into()),
             node_config_hash: value
@@ -430,7 +432,7 @@ impl From<&NewMpcContextPayload> for kms::v1::NewMpcContextPayload {
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?,
             extra_data: value.extra_data.clone(),
-        }
+        })
     }
 }
 
