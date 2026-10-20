@@ -247,6 +247,11 @@ pub(crate) async fn do_new_mpc_context(
                             "Failed to convert context info to proto: {e}"
                         ))
                     })?),
+                    previous_context_id: todo!(),
+                    node_config_hash: todo!(),
+                    domain: todo!(),
+                    extra_data: todo!(),
+                    signing_schemes: todo!(),
                 }))
                 .await
         });

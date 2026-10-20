@@ -84,6 +84,8 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 /// Domain separator for public decryption operations
 pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+/// Domain separator for creating a context
+pub const DSEP_NEW_CONTEXT: DomainSep = *b"CREA_CTX";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
@@ -370,31 +372,33 @@ pub(crate) fn preproc_payload(prep_id: &RequestId, extra_data: &[u8]) -> PrepKey
     }
 }
 
-/// The result payload that every non-ECDSA scheme signs for an context creation.
+/// The result payload that every non-ECDSA scheme signs for a context creation.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum NewMpcContextPayloadVersions {
-    V0(NewMpcContextPayload),
+pub enum NewMpcContextSignedPayloadVersions {
+    V0(NewMpcContextSignedPayload),
 }
 
 /// The confirmation that a context has been created, in the form non-ECDSA schemes sign it.
+///
+/// The fields are those of the `ContextCreationConfirmation` EIP-712 struct, in the same order.
 ///
 /// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
 /// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
 /// old encoding fail to verify.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(NewMpcContextPayloadVersions)]
-pub struct NewMpcContextPayload {
-    pub new_context_id: ContextId,
+#[versionize(NewMpcContextSignedPayloadVersions)]
+pub struct NewMpcContextSignedPayload {
     pub previous_context_id: ContextId,
+    pub new_context_id: ContextId,
     pub node_config_hash: [u8; 32],
     pub extra_data: Vec<u8>,
 }
 
-impl Named for NewMpcContextPayload {
-    const NAME: &'static str = "NewMpcContextPayload";
+impl Named for NewMpcContextSignedPayload {
+    const NAME: &'static str = "NewMpcContextSignedPayload";
 }
 
-impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextPayload {
+impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextSignedPayload {
     type Error = anyhow::Error;
 
     fn try_from(value: kms::v1::NewMpcContextPayload) -> Result<Self, Self::Error> {
@@ -406,33 +410,29 @@ impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextPayload {
         let new_context_id = value
             .new_context_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("missing context_id"))?
+            .ok_or_else(|| anyhow::anyhow!("missing new_context_id"))?
             .try_into()?;
-        Ok(NewMpcContextPayload {
-            new_context_id,
+        let node_config_hash: [u8; 32] = value
+            .node_config_hash
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?;
+        Ok(NewMpcContextSignedPayload {
             previous_context_id,
-            node_config_hash: value
-                .node_config_hash
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?,
+            new_context_id,
+            node_config_hash,
             extra_data: value.extra_data,
         })
     }
 }
 
-impl TryFrom<&NewMpcContextPayload> for kms::v1::NewMpcContextPayload {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &NewMpcContextPayload) -> Result<Self, Self::Error> {
-        Ok(kms::v1::NewMpcContextPayload {
-            new_context_id: Some(value.new_context_id.into()),
+impl From<&NewMpcContextSignedPayload> for kms::v1::NewMpcContextPayload {
+    fn from(value: &NewMpcContextSignedPayload) -> Self {
+        kms::v1::NewMpcContextPayload {
             previous_context_id: Some(value.previous_context_id.into()),
-            node_config_hash: value
-                .node_config_hash
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?,
+            new_context_id: Some(value.new_context_id.into()),
+            node_config_hash: value.node_config_hash.to_vec(),
             extra_data: value.extra_data.clone(),
-        })
+        }
     }
 }
 

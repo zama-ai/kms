@@ -36,7 +36,7 @@ use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
-use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
+use kms_grpc::kms::v1::{Empty, NewMpcContextPayload, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -80,15 +80,15 @@ where
         &self,
         request: tonic::Request<NewMpcContextRequest>,
         require_pcr_allowlist: bool,
-    ) -> anyhow::Result<(Option<Role>, ContextInfo)> {
+    ) -> anyhow::Result<(Option<Role>, ContextInfo, NewMpcContextPayload)> {
         // first verify that the context is valid
         let kms_grpc::kms::v1::NewMpcContextRequest {
             new_context,
             previous_context_id,
             node_config_hash,
-            domain,
+            domain: _,
             extra_data,
-            signing_schemes,
+            signing_schemes: _,
         } = request.into_inner();
 
         let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
@@ -98,7 +98,14 @@ where
             .verify_context_and_extract_my_role(&new_context, require_pcr_allowlist)
             .await?;
 
-        Ok((my_role, new_context))
+        let payload = NewMpcContextPayload {
+            previous_context_id,
+            new_context_id: Some((*new_context.context_id()).into()),
+            node_config_hash,
+            extra_data,
+        };
+
+        Ok((my_role, new_context, payload))
     }
 
     async fn verify_context_and_extract_my_role(
@@ -816,7 +823,7 @@ where
         &self,
         request: tonic::Request<NewMpcContextRequest>,
     ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
-        let (_my_role, new_context) = self
+        let (_my_role, new_context, payload) = self
             .inner
             .verify_and_extract_new_mpc_context(request, false)
             .await
@@ -891,11 +898,9 @@ where
         );
 
         Ok(Response::new(NewMpcContextResponse {
-            previous_context_id: todo!(),
-            new_context_id: todo!(),
-            node_config_hash: todo!(),
-            extra_data: todo!(),
-            signatures: todo!(),
+            payload: Some(payload),
+            // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
+            signatures: Vec::new(),
         }))
     }
 
@@ -1253,7 +1258,7 @@ where
         &self,
         request: tonic::Request<NewMpcContextRequest>,
     ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
-        let (my_role, new_context) = self
+        let (my_role, new_context, payload) = self
             .inner
             .verify_and_extract_new_mpc_context(request, self.require_pcr_allowlist)
             .await
@@ -1308,11 +1313,9 @@ where
         );
 
         Ok(Response::new(NewMpcContextResponse {
-            previous_context_id: todo!(),
-            new_context_id: todo!(),
-            node_config_hash: todo!(),
-            extra_data: todo!(),
-            signatures: todo!(),
+            payload: Some(payload),
+            // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
+            signatures: Vec::new(),
         }))
     }
 

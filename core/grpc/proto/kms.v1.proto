@@ -690,44 +690,47 @@ message CustodianContext {
 // The KMS signs a ContextCreationConfirmation for the new context,
 // see `NewMpcContextResponse`.
 message NewMpcContextRequest {
+  // The new context
   MpcContext new_context = 1;
 
   // The ID of the context that was active on the canonical ProtocolConfig contract
   // when the new context was defined. It is signed as `previousContextId`.
-  RequestId previous_context_id = 3;
+  RequestId previous_context_id = 2;
 
   // The 32-byte hash keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)),
   // computed by the caller from the NewKmsContext event. It is signed as `nodeConfigHash`.
   // The KMS does not recompute this hash and signs the given value.
-  bytes node_config_hash = 4;
+  bytes node_config_hash = 3;
 
-  // The EIP712 domain of the canonical ProtocolConfig contract.
-  Eip712DomainMsg domain = 5;
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 4;
 
-  // Extra data signed as `extraData`.
-  bytes extra_data = 6;
+  // Extra meta data used in the signature
+  bytes extra_data = 5;
 
-  // The signature schemes to include in the `signatures` field of the response.
-  repeated SigningSchemeType signing_schemes = 7;
+  // The signature schemes to include in the response `signatures` field.
+  repeated SigningSchemeType signing_schemes = 6;
 }
 
+// The fields of the ContextCreationConfirmation signed for a new context:
+// struct ContextCreationConfirmation {
+//     uint256 previousContextId;
+//     uint256 newContextId;
+//     bytes32 nodeConfigHash;
+//     bytes extraData;
+// }
 message NewMpcContextPayload {
-  // Per-scheme KMS signatures, one per scheme requested in the request's
-  // `signing_schemes`, on the following structure:
-  // struct ContextCreationConfirmation {
-  //     uint256 previousContextId;
-  //     uint256 newContextId;
-  //     bytes32 nodeConfigHash;
-  //     bytes extraData;
-  // }
   // The ID of the context that was active when the new context was defined.
   RequestId previous_context_id = 1;
+
   // The ID of the new context.
   RequestId new_context_id = 2;
+
   // keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)) of the new context.
-  // Must be exactly 32 bytes
+  // Exactly 32 bytes.
   bytes node_config_hash = 3;
-  // Extra data signed as `extraData`.
+
+  // Extra meta data used in the signature
   bytes extra_data = 4;
 }
 

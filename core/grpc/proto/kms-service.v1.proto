@@ -379,27 +379,43 @@ service CoreServiceEndpoint {
 
   // Constructs a new MPC context.
   //
-  // That is, updates the internal state and configuration files to support a new MPC context.
+  // That is, updates the internal state and configuration files to support a new MPC context, and returns a
+  // signed ContextCreationConfirmation of it. Every node the request is sent to signs, including nodes of the
+  // previous context that are not part of the new one.
+  //
+  // The request is validated, and the confirmation signed, before anything is stored, hence a failed call
+  // stores nothing.
+  //
+  // The call is idempotent: a repeated call with a `new_context` identical to the stored one stores nothing 
+  // and returns a freshly signed confirmation. A call with a different `new_context` under an existing 
+  // `context_id` fails with `AlreadyExists`.
   //
   // # Parameters
-  // * `new_context` - Struct containing all the data of the request.
-  // * `previous_context_id` - The context active on the canonical ProtocolConfig contract when the new context was defined.
+  // * `new_context` - The new MPC context.
+  // * `previous_context_id` - The context active on the canonical ProtocolConfig contract when the new context
+  //   was defined.
   // * `node_config_hash` - The 32-byte `nodeConfigHash` of the new context, computed from the NewKmsContext event.
-  // * `domain` - The EIP712 domain of the canonical ProtocolConfig contract.
-  // * `extra_data` - Extra data included in the signed message.
-  // * `signing_schemes` - The signature schemes to sign with.
+  // * `domain` - The EIP-712 domain used to sign the response.
+  // * `extra_data` - Extra data bound into the signatures and echoed back in the response.
+  // * `signing_schemes` - The signature schemes to sign the response under.
   //
   // # Returns
-  // * `signatures` - Per-scheme signatures on the ContextCreationConfirmation of the new context.
+  // * `payload` - The signed fields of the ContextCreationConfirmation:
+  //   * `previous_context_id` - The `previous_context_id` of the request.
+  //   * `new_context_id` - The ID of the new context.
+  //   * `node_config_hash` - The `node_config_hash` of the request.
+  //   * `extra_data` - The `extra_data` of the request.
+  // * `signatures` - One signature per scheme in `signing_schemes`, each covering the fields of `payload`.
   //
   // # Conditions
   // ## Pre-condition:
-  // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
-  // * `previous_context_id` must be present and valid [`RequestId`].
+  // * `context_id` in `new_context` must be present and a valid [`RequestId`]. If a context with this ID already
+  //   exists, it must be identical to `new_context`.
+  // * `previous_context_id` must be present and a valid [`RequestId`].
   // * `node_config_hash` must be exactly 32 bytes.
   // * `domain` must be present.
   // ## Post-condition:
-  // * The `context_id` in `request` now represents a new MPC context.
+  // * The `context_id` in `new_context` now represents a new MPC context.
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.NewMpcContextResponse);
 
   // Destroys an MPC context and the epochs associated with it by removing them from memory and storage.
