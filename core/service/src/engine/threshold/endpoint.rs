@@ -11,6 +11,18 @@ use threshold_networking::health_check::HealthCheckStatus;
 
 use tonic::{Request, Response, Status};
 
+// EXPERIMENT: crash kms-server on purpose to check that the perf suite captures the crash.
+// Do not merge.
+static USER_DECRYPT_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const CRASH_AT_CALL: u64 = 200;
+
+fn crash_on_purpose() {
+    let n = USER_DECRYPT_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n == CRASH_AT_CALL {
+        panic!("crash-diagnostics probe: deliberate panic at user-decrypt call {n}");
+    }
+}
+
 // See the proto file for the documentation of each method.
 #[tonic::async_trait]
 impl<PubS, PrivS> CoreServiceEndpoint for ThresholdKms<PubS, PrivS>
@@ -125,6 +137,7 @@ where
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        crash_on_purpose();
         self.user_decryptor
             .user_decrypt(request)
             .await
@@ -147,6 +160,7 @@ where
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
+        crash_on_purpose();
         self.user_decryptor
             .user_decrypt_sync(request)
             .await
