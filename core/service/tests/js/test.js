@@ -106,9 +106,9 @@ test('pke', (_t) => {
     assert.deepEqual(x, pt);
 });
 
-test('threshold user decryption response', (_t) => {
-    // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
-    const { data, client, enc_pk, enc_sk } = loadVector('test-threshold-wasm-transcript.8.json');
+test('user decryption response', (_t) => {
+    // TEST_WASM_TRANSCRIPT_PATH
+    const { data, client, enc_pk, enc_sk } = loadVector('test-wasm-transcript.8.json');
 
     // with verification, threshold inferred from the number of servers (null)
     const pt = process_user_decryption_resp_from_js(

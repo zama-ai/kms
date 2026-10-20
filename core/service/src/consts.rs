@@ -130,9 +130,9 @@ cfg_if::cfg_if! {
     if #[cfg(test)] {
         // These ones should be removed or moved to more relevant positions in the client.
         // The generated files use the suffix `.{plaintext_bits}.json` (see the wasm transcript
-        // generation in the user decryption tests), e.g. `temp/test-threshold-wasm-transcript.8.json`.
-        pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript";
-        pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript";
+        // generation in the user decryption tests), e.g. `temp/test-wasm-transcript.8.json`.
+        pub const TEST_WASM_TRANSCRIPT_PATH: &str = "temp/test-wasm-transcript";
+        pub const DEFAULT_WASM_TRANSCRIPT_PATH: &str = "temp/default-wasm-transcript";
 
 
         pub const TEST_SEC_PAR: u64 = 40;

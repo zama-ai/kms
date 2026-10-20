@@ -761,9 +761,9 @@ pub(crate) async fn user_decryption(
                 agg_resp,
             };
             let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
+                crate::consts::DEFAULT_WASM_TRANSCRIPT_PATH
             } else {
-                crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
+                crate::consts::TEST_WASM_TRANSCRIPT_PATH
             };
             let path = format!("{}.{}.json", path_prefix, msg.bits());
             transcript.write_stable_test_vector_json(&path).unwrap();
