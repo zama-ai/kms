@@ -409,7 +409,8 @@ pub trait SecurityModule {
     fn get_random_sync<const N: usize>(&self) -> anyhow::Result<Zeroizing<[u8; N]>>;
 }
 
-#[expect(clippy::large_enum_variant)]
+// Without `insecure` the enum has one variant and the lint cannot fire.
+#[cfg_attr(feature = "insecure", expect(clippy::large_enum_variant))]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),

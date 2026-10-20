@@ -94,8 +94,6 @@ kmsCore:
   thresholdMode:
     enabled: true
     thresholdValue: 1
-    initializationScript:
-      enabled: true
     peersList:
       - id: 1
         host: kms-threshold-staging-1
@@ -239,8 +237,6 @@ kmsCore:
   thresholdMode:
     enabled: true
     thresholdValue: 1
-    initializationScript:
-      enabled: true
     peersList:
       - id: 1
         host: kms-threshold-staging-1

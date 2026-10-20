@@ -62,7 +62,7 @@ Whilst tests are run automatically in the continuous integration (CI) pipeline, 
 
 All tests executed by the CI (including integration tests) can be run with:
 ```bash
-cargo test --F slow_test
+cargo test -F slow_tests
 ```
 Observe that this will take several hours.
 

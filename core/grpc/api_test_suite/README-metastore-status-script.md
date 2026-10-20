@@ -13,7 +13,7 @@ The script serves as a convenience tool for:
 
 ## System Prerequisites
 
-Before using these scripts, you need a running KMS system. For development setup instructions, see the [Development Environment](../../README.md#development-environment) section in the main README.
+Before using these scripts, you need a running KMS system. For development setup instructions, see the [Running the KMS locally](../../../README.md#running-the-kms-locally) section in the main README.
 
 Also, make sure you have installed the required dependencies:
 

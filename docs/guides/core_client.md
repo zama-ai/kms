@@ -265,7 +265,7 @@ The steps needed are as follows:
   As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument of `custodian-backup-recovery` in step 3.
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
-  Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.
+  Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#recovery-decryption-of-backup). The base64 outputs from the custodians must then be consolidated at the KMS operator.
 1. KMS node recovers the backup decryption key and restores the backup.
   After the custodians have completed the partial decryption the results are communicated _individually_ to the KMS node.
   The KMS uses the custodians recovery request to recover the backup decryption key, which it uses to restore from the backup. This is done with the following command, passing each custodian's base64 output after `-r`:

@@ -68,7 +68,7 @@ In order to bypass this limitation we have automated this `gRPC` benchmarks usin
 
 - [Rust](https://www.rust-lang.org/), the workspace pins the toolchain in
   `rust-toolchain.toml`; the docker build uses the
-  version baked into `docker/nist_testing.dockerfile`.
+  version baked into `core/experiments/docker/nist_testing.dockerfile`.
 - [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation), using `cargo`.
 - [docker](https://www.docker.com/), install it using your preferred method, from a package manager or using Docker Desktop.
 - [protoc](https://protobuf.dev/installation/), install it using your preferred method, e.g., from a package manager.

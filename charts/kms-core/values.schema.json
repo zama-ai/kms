@@ -433,12 +433,6 @@
         "minDecCache": { "type": "integer", "minimum": 0 },
         "numSessionsPreproc": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "decryptionMode": { "$ref": "#/definitions/decryptionMode" },
-        "initializationScript": {
-          "type": "object",
-          "properties": {
-            "enabled": { "type": "boolean" }
-          }
-        },
         "cleanupIntervalSecs": { "type": "integer", "minimum": 0 }
       }
     },

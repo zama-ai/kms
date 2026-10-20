@@ -103,7 +103,6 @@ kmsCore:
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       # Enables mutual attestation of private vault root key policies
       attestPrivateVaultRootKey: false
-    # This value appears in the config file as `threshold`.
     multiplier: 2.0
     maxInterval: 60
     maxElapsedTime: 300
@@ -115,7 +114,7 @@ kmsCore:
     tokioWorkerThreads: 10
     rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
-    # 1 for 4 parties, 4 for 13 parties
+    # 1 for 4 parties, 4 for 13 parties. It appears in the config file as `threshold`.
     thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000

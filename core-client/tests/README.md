@@ -50,7 +50,6 @@
 CI uses `--skip` prefix matching to exclude certain test groups from regular runs:
 - `nightly_*` — skipped in regular CI, run only in nightly schedule
 - `k8s_*` — skipped in native CI, run only in Kind cluster CI
-- `isolated_test_example` — demo test, always skipped in CI
 
 ### CLI commands (`CCCommand`)
 

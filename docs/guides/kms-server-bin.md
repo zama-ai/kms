@@ -255,11 +255,11 @@ cargo run --bin kms-init -- -a http://127.0.0.1:50100 http://127.0.0.1:50200 htt
 ```
 
 Note that this must only be done _once_ per set of nodes. Calling `init` multiple times will result in an error.
-Once the init material is successfully generated, it is stored to disk into the party's private storage, currently under `PRIV-pX/PrssSetup/000..001`, where `pX` denotes the party id, e.g. `p1`, etc.
+`kms-init` creates the default epoch (`0800..0001`) in the default MPC context. Each party stores the epoch's PRSS state in its private storage, under `PRIV-pX/EpochData/0800..0001`, where `pX` denotes the party id, e.g. `p1`, etc.
 
 When a node restarts, it will automatically use init material it finds on disk. This allows failing nodes to re-join an existing set of nodes, without running `init` again.
 
-When a different set of nodes (or a different number of nodes) should run the threshold protocols, `init` must be done again. Currently the only way is to manually delete the init material from disk in `PRIV-pX/PrssSetup/`.
+When a different set of nodes (or a different number of nodes) should run the threshold protocols, create a new MPC context and a new epoch for it with the `kms-core-client` commands described in [MPC Context Management](./core_client.md#mpc-context-management) and [New Epoch (Resharing)](./core_client.md#new-epoch-resharing).
 
 ## Docker and kms-core-client
 
