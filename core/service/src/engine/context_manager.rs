@@ -11,9 +11,11 @@ use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
-    RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
+    RequestIdParsingErr, VerifiedNewMpcContextRequest, parse_grpc_request_id,
+    parse_optional_grpc_request_id, validate_new_mpc_context_request,
+    verify_context_and_extract_my_role,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,
@@ -36,7 +38,7 @@ use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
-use kms_grpc::kms::v1::{Empty, NewMpcContextPayload, NewMpcContextResponse};
+use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -76,36 +78,30 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Validate a `NewMpcContext` request, including its new context, and check that this node can
+    /// sign the confirmation under every requested scheme, before anything is stored.
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
         require_pcr_allowlist: bool,
-    ) -> anyhow::Result<(Option<Role>, ContextInfo, NewMpcContextPayload)> {
-        // first verify that the context is valid
-        let kms_grpc::kms::v1::NewMpcContextRequest {
-            new_context,
-            previous_context_id,
-            node_config_hash,
-            domain: _,
-            extra_data,
-            signing_schemes: _,
-        } = request.into_inner();
-
-        let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
-        let new_context = ContextInfo::try_from(new_context)?;
-        // verify new context
-        let my_role = self
-            .verify_context_and_extract_my_role(&new_context, require_pcr_allowlist)
-            .await?;
-
-        let payload = NewMpcContextPayload {
-            previous_context_id,
-            new_context_id: Some((*new_context.context_id()).into()),
-            node_config_hash,
-            extra_data,
+    ) -> Result<VerifiedNewMpcContextRequest, MetricedError> {
+        let verified = {
+            let private_storage = Arc::clone(&self.crypto_storage.private_storage);
+            let guarded_priv_storage = private_storage.lock().await;
+            validate_new_mpc_context_request(
+                request.into_inner(),
+                &(*guarded_priv_storage),
+                require_pcr_allowlist,
+            )
+            .await?
         };
-
-        Ok((my_role, new_context, payload))
+        signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            OP_NEW_MPC_CONTEXT,
+            Some(verified.new_context.context_id.into()),
+        )?;
+        Ok(verified)
     }
 
     async fn verify_context_and_extract_my_role(
@@ -113,14 +109,10 @@ where
         context: &ContextInfo,
         require_pcr_allowlist: bool,
     ) -> anyhow::Result<Option<Role>> {
-        anyhow::ensure!(
-            !require_pcr_allowlist || !context.pcr_values.is_empty(),
-            "PCR values are required for context {} in enclave deployments",
-            context.context_id()
-        );
         let private_storage = Arc::clone(&self.crypto_storage.private_storage);
         let guarded_priv_storage = private_storage.lock().await;
-        context.verify(&(*guarded_priv_storage)).await
+        verify_context_and_extract_my_role(context, &(*guarded_priv_storage), require_pcr_allowlist)
+            .await
     }
 
     async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -823,13 +815,11 @@ where
         &self,
         request: tonic::Request<NewMpcContextRequest>,
     ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
-        let (_my_role, new_context, payload) = self
+        let verified = self
             .inner
             .verify_and_extract_new_mpc_context(request, false)
-            .await
-            .map_err(|e| {
-                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
-            })?;
+            .await?;
+        let new_context = &verified.new_context;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // Check if the context already exists
@@ -851,12 +841,12 @@ where
         let storage_error = match self
             .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
+            .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
             .await
         {
             Ok(()) => None,
             Err(error) => {
-                if !context_write_persisted(&self.inner.crypto_storage, &new_context, &error).await
+                if !context_write_persisted(&self.inner.crypto_storage, new_context, &error).await
                 {
                     return Err(MetricedError::new(
                         OP_NEW_MPC_CONTEXT,
@@ -898,7 +888,7 @@ where
         );
 
         Ok(Response::new(NewMpcContextResponse {
-            payload: Some(payload),
+            payload: Some((&verified.signed_payload()).into()),
             // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
             signatures: Vec::new(),
         }))
@@ -1258,13 +1248,12 @@ where
         &self,
         request: tonic::Request<NewMpcContextRequest>,
     ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
-        let (my_role, new_context, payload) = self
+        let verified = self
             .inner
             .verify_and_extract_new_mpc_context(request, self.require_pcr_allowlist)
-            .await
-            .map_err(|e| {
-                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
-            })?;
+            .await?;
+        let new_context = &verified.new_context;
+        let my_role = verified.my_role;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // First check if the context already exists
@@ -1290,7 +1279,7 @@ where
             &self.session_maker,
             &self.inner.crypto_storage,
             my_role,
-            &new_context,
+            new_context,
         )
         .await
         .map_err(|e| {
@@ -1313,7 +1302,7 @@ where
         );
 
         Ok(Response::new(NewMpcContextResponse {
-            payload: Some(payload),
+            payload: Some((&verified.signed_payload()).into()),
             // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
             signatures: Vec::new(),
         }))
