@@ -2800,7 +2800,7 @@ mod tests {
             .id(BACKUP_SIGNING_SCHEMES)
             .unwrap();
         let unsign_key = UnifiedUnsigncryptionKey::new_multi(
-            std::sync::Arc::new(custodian1.public_dec_key().clone()),
+            std::sync::Arc::new(custodian1.private_dec_key().clone()),
             custodian1.public_enc_key().clone(),
             server_verf_keys.clone(),
             custodian_id,

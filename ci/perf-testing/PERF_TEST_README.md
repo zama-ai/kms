@@ -33,7 +33,7 @@ for `PublicDecryptSync` and `UserDecryptSync`; async tests submit requests and p
 duration = 60           # measurement window, seconds
 pause = 10              # cooldown after each completed measurement
 maxfail = 0             # max failed requests, % of offered
-maxshed = 0             # max shed (rate-limited) requests, % of offered
+maxshed = 0             # max requests rejected at capacity, % of offered
 pct = 98                # min achieved/target rate, %
 allowfail = false       # false → a breach fails the run; true → warns only
 
@@ -193,7 +193,7 @@ The statuses normally relevant to these tests are:
 
 - `ok` — the RPC succeeded.
 - `unavailable` — commonly an expected result poll whose result is still pending.
-- `resource_exhausted` — KMS admission capacity or rate limiting was exhausted.
+- `resource_exhausted` — KMS admission capacity is exhausted, i.e. when a meta store is full.
 - `not_found` — the requested result is absent, for example after cache eviction;
   unexpected during a healthy run.
 - Any other status is uncommon and should be investigated with the client and

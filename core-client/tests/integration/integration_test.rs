@@ -137,7 +137,6 @@ fn build_test_core_config(
             keychain: None,
         }),
         backup_vault: None,
-        rate_limiter_conf: None,
         bandwidth_benchmark: None,
         threshold: Some(ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
@@ -755,7 +754,6 @@ async fn setup_party_resharing_servers(
         pub_storages,
         priv_storages,
         vaults,
-        None, // rate_limiter_conf
         None, // decryption_mode
     )
     .await;

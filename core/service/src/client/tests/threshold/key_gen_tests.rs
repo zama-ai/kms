@@ -15,6 +15,8 @@ cfg_if::cfg_if! {
 }}
 use crate::client::client_wasm::Client;
 use crate::client::key_gen::tests::check_conformance;
+#[cfg(feature = "slow_tests")]
+use crate::client::test_tools::setup_threshold;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 use crate::client::tests::common::{PollConfig, retrying_poll};
@@ -40,8 +42,6 @@ use crate::testing::setup::threshold::ThresholdTestEnv;
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
-#[cfg(feature = "slow_tests")]
-use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use alloy_dyn_abi::Eip712Domain;
@@ -671,19 +671,6 @@ pub(crate) async fn preproc_and_keygen(
     }
 
     let dkg_param: WrappedDKGParams = parameter.into();
-    // Preproc should use all the tokens in the bucket,
-    // then they're returned to the bucket before keygen starts.
-    // If something is wrong with the rate limiter logic
-    // then the keygen step should fail since there are not enough tokens.
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100 * 2 * iterations, // Ensure the bucket is big enough to carry out the concurrent requests
-        pub_decrypt: 1,
-        user_decrypt: 1,
-        crsgen: 1,
-        preproc: 100,
-        keygen: 100,
-        new_epoch: 1,
-    };
 
     // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
@@ -699,7 +686,6 @@ pub(crate) async fn preproc_and_keygen(
             .with_party_count(amount_parties)
             .with_material_spec(spec)
             .with_prss()
-            .with_rate_limiter(rate_limiter_conf)
             .build()
             .await
             .unwrap();
@@ -749,7 +735,7 @@ pub(crate) async fn preproc_and_keygen(
                 }
             });
         }
-        // Ensure preprocessing is done, otherwise we risk getting blocked by the rate limiter in keygen
+        // Wait for preprocessing before the keygen phase shuts down more parties.
         preprocset.join_all().await;
 
         // Taking back ownership of the clients to remove those we need to crash
@@ -2166,15 +2152,7 @@ async fn restart_threshold_servers_from_material(
     }
 
     let vaults: Vec<Option<crate::vault::Vault>> = (0..num_parties).map(|_| None).collect();
-    Ok(crate::client::test_tools::setup_threshold(
-        1,
-        pub_storages,
-        priv_storages,
-        vaults,
-        None,
-        None,
-    )
-    .await)
+    Ok(setup_threshold(1, pub_storages, priv_storages, vaults, None).await)
 }
 
 #[cfg(feature = "slow_tests")]
