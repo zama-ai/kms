@@ -74,7 +74,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{CachedCryptoMaterialStorage, CryptoMaterialReader, PublicKeySet},
+        crypto_material::{CryptoMaterialReader, CryptoMaterialStorage, PublicKeySet},
     },
 };
 
@@ -127,7 +127,7 @@ pub(crate) struct KeyGenerator<
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
@@ -790,7 +790,7 @@ impl<
     async fn decompression_key_gen_closure<P>(
         epoch_id: &EpochId,
         base_session: &mut BaseSession,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         preprocessing: &mut P,
@@ -857,7 +857,7 @@ impl<
     async fn get_glwe_and_compression_key_shares(
         keyset_added_info: KeySetAddedInfo,
         epoch_id: &EpochId,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     ) -> anyhow::Result<(
         GlweSecretKeyShare<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         CompressionPrivateKeyShares<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1031,7 +1031,7 @@ impl<
         epoch_id: &EpochId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
@@ -1157,7 +1157,6 @@ impl<
         };
 
         if let Err(e) = crypto_storage
-            .inner
             .write_decompression_key(req_id, info, decompression_key, meta_store, meta_permit)
             .await
         {
@@ -1175,7 +1174,7 @@ impl<
 
     async fn compressed_key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         epoch_id: EpochId,
@@ -1232,7 +1231,7 @@ impl<
 
     async fn key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         epoch_id: EpochId,
@@ -1293,7 +1292,7 @@ impl<
         epoch_id: &EpochId,
         mut dkg_sessions: DkgSessions,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
@@ -1718,10 +1717,10 @@ impl<
     /// Reads the tag from an existing keyset in public storage.
     /// Tries CompressedXofKeySet first, then falls back to ServerKey.
     async fn read_existing_key_tag(
-        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
         existing_keyset_id: &RequestId,
     ) -> anyhow::Result<tfhe::Tag> {
-        let pub_storage = crypto_storage.inner.public_storage.lock().await;
+        let pub_storage = crypto_storage.public_storage.lock().await;
 
         let res = if let Ok(compressed_keyset) =
             <CompressedXofKeySet as CryptoMaterialReader>::read_from_storage(
@@ -1757,7 +1756,7 @@ impl<
     /// Errors out if the old `meta_data` has no `PubDataType::PublicKey` entry (e.g. a
     /// pre-dual-storage compressed keyset) or if the digests do not match.
     async fn read_existing_compact_public_key(
-        crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
         existing_keyset_id: &RequestId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<tfhe::CompactPublicKey> {
@@ -1787,7 +1786,7 @@ impl<
         };
 
         let public_key_bytes = {
-            let pub_storage = crypto_storage.inner.public_storage.lock().await;
+            let pub_storage = crypto_storage.public_storage.lock().await;
             pub_storage
                 .load_bytes(existing_keyset_id, &PubDataType::PublicKey.to_string())
                 .await
@@ -1887,8 +1886,7 @@ mod tests {
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
         ) -> Self {
-            let crypto_storage =
-                CachedCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
+            let crypto_storage = CryptoMaterialStorage::from(pub_storage, priv_storage, None);
 
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
@@ -2710,7 +2708,7 @@ mod tests {
         let existing = TestType { i: 3183 };
         match existing_material {
             ExistingKeyMaterial::Public => {
-                let mut public = kg.crypto_storage.inner.public_storage.lock().await;
+                let mut public = kg.crypto_storage.public_storage.lock().await;
                 for data_type in [
                     PubDataType::PublicKey,
                     PubDataType::ServerKey,
@@ -2727,7 +2725,7 @@ mod tests {
                 }
             }
             ExistingKeyMaterial::Private => {
-                let mut private = kg.crypto_storage.inner.private_storage.lock().await;
+                let mut private = kg.crypto_storage.private_storage.lock().await;
                 store_versioned_at_request_and_epoch_id(
                     &mut *private,
                     &key_id,
@@ -2739,14 +2737,8 @@ mod tests {
                 .unwrap();
             }
         }
+        kg.crypto_storage.public_storage.lock().await.clear_events();
         kg.crypto_storage
-            .inner
-            .public_storage
-            .lock()
-            .await
-            .clear_events();
-        kg.crypto_storage
-            .inner
             .private_storage
             .lock()
             .await
@@ -2783,7 +2775,6 @@ mod tests {
         // A cancelled keygen writes and deletes nothing.
         assert!(
             kg.crypto_storage
-                .inner
                 .public_storage
                 .lock()
                 .await
@@ -2792,7 +2783,6 @@ mod tests {
         );
         assert!(
             kg.crypto_storage
-                .inner
                 .private_storage
                 .lock()
                 .await
@@ -2802,7 +2792,7 @@ mod tests {
 
         match existing_material {
             ExistingKeyMaterial::Public => {
-                let public = kg.crypto_storage.inner.public_storage.lock().await;
+                let public = kg.crypto_storage.public_storage.lock().await;
                 for data_type in [
                     PubDataType::PublicKey,
                     PubDataType::ServerKey,
@@ -2816,7 +2806,7 @@ mod tests {
                 }
             }
             ExistingKeyMaterial::Private => {
-                let private = kg.crypto_storage.inner.private_storage.lock().await;
+                let private = kg.crypto_storage.private_storage.lock().await;
                 let stored: TestType = read_versioned_at_request_and_epoch_id(
                     &*private,
                     &key_id,

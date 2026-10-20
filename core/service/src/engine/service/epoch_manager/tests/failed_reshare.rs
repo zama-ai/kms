@@ -17,12 +17,8 @@ use crate::vault::storage::test_support::{
 async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: bool) {
     let mut rng = AesRng::seed_from_u64(45);
     let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-    let crypto_storage = CachedCryptoMaterialStorage::new(
-        FailingRamStorage::new(),
-        FailingRamStorage::new(),
-        None,
-        HashMap::new(),
-    );
+    let crypto_storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
 
     let new_epoch_id = EpochId::new_random(&mut rng);
     let keeper_epoch_id = *DEFAULT_EPOCH_ID;
@@ -49,7 +45,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
         .await;
 
     {
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         let mut guard = public_storage.lock().await;
         for public_type in PubDataType::iter().filter(|data_type| *data_type != PubDataType::CRS) {
             store_versioned_at_request_id(
@@ -156,7 +152,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     let public_before;
     let (compressed_keyset_bytes, public_key_bytes, crs_bytes);
     {
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         let mut guard = public_storage.lock().await;
         compressed_keyset_bytes = guard
             .load_bytes(&key_id, &PubDataType::CompressedXofKeySet.to_string())
@@ -236,7 +232,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
     );
 
     {
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         let guard = public_storage.lock().await;
         assert_eq!(guard.state(), public_before);
         assert!(

@@ -10,8 +10,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt, StorageReader, StoreWriteOutcome,
-        crypto_material::CachedCryptoMaterialStorage, read_context_at_id,
-        s3::ReadOnlyS3StorageGetter,
+        crypto_material::CryptoMaterialStorage, read_context_at_id, s3::ReadOnlyS3StorageGetter,
     },
 };
 use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
@@ -277,7 +276,7 @@ async fn fetch_context_from_storage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
-    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
     context_id: &ContextId,
 ) -> anyhow::Result<ContextInfo> {
     let priv_storage = crypto_storage.get_private_storage();
@@ -291,7 +290,7 @@ async fn fetch_public_fhe_materials_from_peers<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
     key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
@@ -385,7 +384,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
     request_id: &RequestId,
     key_id: &RequestId,
     context_id: &ContextId,
@@ -430,7 +429,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
             anyhow::Result<Vec<u8>>,
             anyhow::Result<Vec<u8>>,
         ) = {
-            let pub_storage = crypto_storage.inner.get_public_storage();
+            let pub_storage = crypto_storage.get_public_storage();
             let guard_storage = pub_storage.lock().await;
             let compressed_keyset_bytes = guard_storage
                 .load_bytes(key_id, &PubDataType::CompressedXofKeySet.to_string())
@@ -530,7 +529,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
             anyhow::Result<Vec<u8>>,
             anyhow::Result<Vec<u8>>,
         ) = {
-            let pub_storage = crypto_storage.inner.get_public_storage();
+            let pub_storage = crypto_storage.get_public_storage();
             let guard_storage = pub_storage.lock().await;
 
             let public_key_bytes = guard_storage
@@ -628,7 +627,7 @@ async fn fetch_public_crs_materials_from_peers<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
     crs_id: &RequestId,
     context_id: &ContextId,
     crs_digests: &[u8],
@@ -661,7 +660,7 @@ pub(crate) async fn get_verified_crs_material<
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
-    crypto_storage: &CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
     request_id: &RequestId,
     crs_id: &RequestId,
     context_id: &ContextId,
@@ -670,7 +669,7 @@ pub(crate) async fn get_verified_crs_material<
 ) -> Result<VerifiedCrsMaterial, MetricedError> {
     // Load raw bytes from own public storage
     let crs_bytes_res: anyhow::Result<Vec<u8>> = {
-        let pub_storage = crypto_storage.inner.get_public_storage();
+        let pub_storage = crypto_storage.get_public_storage();
         let guard_storage = pub_storage.lock().await;
         guard_storage
             .load_bytes(crs_id, &PubDataType::CRS.to_string())
@@ -715,7 +714,7 @@ mod tests {
     use crate::engine::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::service::reshare_utils::get_verified_crs_material;
     use crate::engine::service::reshare_utils::get_verified_fhe_public_materials;
-    use crate::vault::storage::crypto_material::CachedCryptoMaterialStorage;
+    use crate::vault::storage::crypto_material::CryptoMaterialStorage;
     use crate::vault::storage::ram::{FailingRamStorage, RamStorage};
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
@@ -782,7 +781,7 @@ mod tests {
         context_id: ContextId,
         two_nodes: bool,
     ) -> (
-        CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+        CryptoMaterialStorage<RamStorage, RamStorage>,
         HashMap<PubDataType, Vec<u8>>,
         DummyReadOnlyS3StorageGetter,
         (ServerKey, CompactPublicKey),
@@ -828,12 +827,8 @@ mod tests {
         .unwrap();
 
         // create dummy crypto storage
-        let crypto_storage = CachedCryptoMaterialStorage::new(
-            RamStorage::new(),
-            RamStorage::new(),
-            None,
-            HashMap::new(),
-        );
+        let crypto_storage =
+            CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), None);
 
         let context_info = ContextInfo {
             mpc_nodes: four_party_nodes(
@@ -883,7 +878,6 @@ mod tests {
         };
 
         crypto_storage
-            .inner
             .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
@@ -1024,7 +1018,7 @@ mod tests {
 
         {
             // we make sure that keys are present in my own public storage
-            let public_storage = crypto_storage.inner.get_public_storage();
+            let public_storage = crypto_storage.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
                 store_versioned_at_request_id(
@@ -1080,7 +1074,7 @@ mod tests {
             // sunshine
             // if key materials are present locally, we expect giving an empty RO storage getter
             // and an empty key_digests to still work
-            let public_storage = crypto_storage.inner.get_public_storage();
+            let public_storage = crypto_storage.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
                 store_versioned_at_request_id(
@@ -1132,7 +1126,7 @@ mod tests {
         let context_id = ContextId::new_random(&mut rng);
         let (crypto_storage, key_digests, ro_storage_getter, (server_key, public_key)) =
             setup_public_materials_test(key_id, context_id, false).await;
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
 
         {
             let mut storage = public_storage.lock().await;
@@ -1228,7 +1222,7 @@ mod tests {
         context_id: ContextId,
         two_nodes: bool,
     ) -> (
-        CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+        CryptoMaterialStorage<RamStorage, RamStorage>,
         HashMap<PubDataType, Vec<u8>>,
         DummyReadOnlyS3StorageGetter,
         (CompressedXofKeySet, CompactPublicKey),
@@ -1255,12 +1249,8 @@ mod tests {
             .await;
 
         // create dummy crypto storage
-        let crypto_storage = CachedCryptoMaterialStorage::new(
-            RamStorage::new(),
-            RamStorage::new(),
-            None,
-            HashMap::new(),
-        );
+        let crypto_storage =
+            CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), None);
 
         let context_info = ContextInfo {
             mpc_nodes: four_party_nodes(
@@ -1310,7 +1300,6 @@ mod tests {
         };
 
         crypto_storage
-            .inner
             .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
@@ -1454,7 +1443,7 @@ mod tests {
             setup_public_materials_test_compressed(key_id, context_id, false).await;
 
         // store compressed keyset and public key in own public storage
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         {
             let mut guard_storage = public_storage.lock().await;
             store_compressed_materials(
@@ -1502,7 +1491,7 @@ mod tests {
             setup_public_materials_test_compressed(key_id, context_id, false).await;
 
         // store compressed keyset and public key in own public storage
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         {
             let mut guard_storage = public_storage.lock().await;
             store_compressed_materials(
@@ -1695,7 +1684,7 @@ mod tests {
         )
         .await;
 
-        let public_storage = crypto_storage.inner.get_public_storage();
+        let public_storage = crypto_storage.get_public_storage();
         public_storage
             .lock()
             .await

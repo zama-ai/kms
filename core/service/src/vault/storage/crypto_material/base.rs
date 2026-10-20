@@ -163,14 +163,14 @@ pub enum PublicKeySet {
     },
 }
 
-/// A cached generic storage entity for the common data structures
-/// used by the threshold KMS.
+/// Storage for the KMS's cryptographic material.
 ///
 /// This struct provides thread-safe access to public, private, and optional backup storage,
-/// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
+/// along with a cache of the FHE keys this party holds (see `cached.rs`). Cloning is cheap due to
+/// internal Arc usage.
 ///
 /// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
-/// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
+/// meta_store -> public_storage -> private_storage -> backup_vault -> fhe_keys.
 ///
 /// TODO(#3036) Note that holding a MetaStore lock should eventually be sufficient to not require locking multiple things at once.
 pub struct CryptoMaterialStorage<
@@ -189,6 +189,9 @@ pub struct CryptoMaterialStorage<
     /// Serializes setup, destruction and recovery of the custodian context: each reads the anchor,
     /// the keychain and the vault, then rewrites some of them.
     pub(crate) custodian_context_lock: Arc<Mutex<()>>,
+
+    /// Cache of the FHE keys, by key and epoch ID. Lock it after any of the storages above.
+    pub(crate) fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), FheKeys>>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -213,6 +216,7 @@ where
             private_storage,
             backup_vault,
             custodian_context_lock: Arc::new(Mutex::new(())),
+            fhe_keys: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -320,7 +324,7 @@ where
     ///
     /// Returns `Ok(true)` if either layout is fully present, `Ok(false)` if
     /// neither is, or `Err(StorageError)` on a storage backend failure.
-    pub(in crate::vault::storage::crypto_material) async fn fhe_keys_exists(
+    pub(crate) async fn fhe_keys_exists(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
@@ -1350,6 +1354,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
             custodian_context_lock: Arc::clone(&self.custodian_context_lock),
+            fhe_keys: Arc::clone(&self.fhe_keys),
         }
     }
 }

@@ -1,11 +1,10 @@
-//! Threshold cryptographic material storage implementation
+//! The FHE-key cache of [`CryptoMaterialStorage`].
 //!
-//! This module provides the storage implementation for cryptographic material
-//! used in the threshold KMS variant.
+//! These methods write and read FHE keys and epoch data, keeping the cache in step with storage.
 
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 
 use super::base::CryptoMaterialStorage;
 use crate::{
@@ -40,36 +39,22 @@ use kms_grpc::{
 };
 use tfhe::xof_key_set::CompressedXofKeySet;
 
-/// A cached generic storage entity for the threshold KMS.
-/// Cloning this object is cheap since it uses Arc internally.
-pub struct CachedCryptoMaterialStorage<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-> {
-    pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
-    /// Note that `fhe_keys` should be locked after any locking of elements in `inner`.
-    fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), FheKeys>>>,
-}
-
+/// The FHE-key cache and the methods that keep it in step with storage.
 impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-    CachedCryptoMaterialStorage<PubS, PrivS>
+    CryptoMaterialStorage<PubS, PrivS>
 {
-    /// Create a new cached storage device for threshold KMS.
-    pub fn new(
+    /// Wraps the provided storages, with the FHE-key cache seeded with `fhe_keys`.
+    pub fn with_fhe_keys(
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         fhe_keys: HashMap<(RequestId, EpochId), FheKeys>,
     ) -> Self {
+        let storage = Self::from(public_storage, private_storage, backup_vault);
         Self {
-            inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
+            ..storage
         }
-    }
-
-    /// Get an Arc of the private storage device.
-    pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
-        Arc::clone(&self.inner.private_storage)
     }
 
     /// Write the epoch data to the storage backend.
@@ -79,24 +64,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         epoch_data: &EpochData,
     ) -> anyhow::Result<()> {
-        self.inner
-            .write_all::<EpochData, EpochData>(
-                &epoch_id.into(), // using epoch_id as req_id since epoch data is stored under this directly
-                None,
-                None, // no public data for epoch info
-                Some((epoch_data, PrivDataType::EpochData)),
-                true,
-                OP_NEW_EPOCH,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
+        self.write_all::<EpochData, EpochData>(
+            &epoch_id.into(), // using epoch_id as req_id since epoch data is stored under this directly
+            None,
+            None, // no public data for epoch info
+            Some((epoch_data, PrivDataType::EpochData)),
+            true,
+            OP_NEW_EPOCH,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
     }
 
     /// Read all epoch data from the storage backend.
     /// The result is a map of epoch IDs to their corresponding epoch data.
     /// That is, epochs are flattened and NOT indexed by their associated context ID.
     pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
-        let priv_storage = self.inner.private_storage.lock().await;
+        let priv_storage = self.private_storage.lock().await;
         let intermediate_res: HashMap<RequestId, EpochData> =
             read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
         Ok(intermediate_res
@@ -113,16 +97,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         crs_info: CrsGenMetadata,
     ) -> Result<(), StorageError> {
-        self.inner
-            .write_all::<CrsGenMetadata, CrsGenMetadata>(
-                crs_id,
-                Some(epoch_id),
-                None, // No public data is made when refreshing a CRS
-                Some((&crs_info, PrivDataType::CrsInfo)),
-                false,
-                OP_NEW_EPOCH,
-            )
-            .await
+        self.write_all::<CrsGenMetadata, CrsGenMetadata>(
+            crs_id,
+            Some(epoch_id),
+            None, // No public data is made when refreshing a CRS
+            Some((&crs_info, PrivDataType::CrsInfo)),
+            false,
+            OP_NEW_EPOCH,
+        )
+        .await
     }
 
     /// Write the keys to the storage backend (for use in connection with resharing).
@@ -134,7 +117,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         keys: FheKeys,
     ) -> Result<(), StorageError> {
         let res = self
-            .inner
             .write_all::<FheKeys, FheKeys>(
                 key_id,
                 Some(epoch_id),
@@ -152,16 +134,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         res
     }
 
-    /// Check if the threshold FHE keys exist for a given key and epoch ID.
-    /// The check is agnostic to whether the keys are compressed or not.
-    pub(crate) async fn fhe_keys_exists(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> Result<bool, StorageError> {
-        self.inner.fhe_keys_exists(key_id, epoch_id).await
-    }
-
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn write_fhe_keys(
         &self,
@@ -175,7 +147,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> Result<(), StorageError> {
         let meta_res = keys.meta_data.clone();
         let res = self
-            .inner
             .handle_fhe_keys(
                 key_id,
                 epoch_id,
@@ -248,9 +219,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         let updated_fhe_keys =
             with_overwriting_claim(&dkg_pubinfo_meta_store, old_key_id, async || {
                 // Lock order: pub -> priv -> backup.
-                let mut pub_storage = self.inner.public_storage.lock().await;
-                let mut priv_storage = self.inner.private_storage.lock().await;
-                let mut back_vault = match self.inner.backup_vault {
+                let mut pub_storage = self.public_storage.lock().await;
+                let mut priv_storage = self.private_storage.lock().await;
+                let mut back_vault = match self.backup_vault {
                     Some(ref x) => Some(x.lock().await),
                     None => None,
                 };
@@ -464,8 +435,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
     ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), FheKeys>, FheKeys>> {
         // First refresh. If the key is already in the cache then this is cheap
-        self.inner
-            .refresh_fhe_private_material::<FheKeys>(Arc::clone(&self.fhe_keys), req_id, epoch_id)
+        self.refresh_fhe_private_material::<FheKeys>(Arc::clone(&self.fhe_keys), req_id, epoch_id)
             .await?;
         CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
@@ -473,24 +443,5 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             self.fhe_keys.clone(),
         )
         .await
-    }
-}
-
-// we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Clone
-    for CachedCryptoMaterialStorage<PubS, PrivS>
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            fhe_keys: Arc::clone(&self.fhe_keys),
-        }
-    }
-}
-impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-    From<&CachedCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
-{
-    fn from(value: &CachedCryptoMaterialStorage<PubS, PrivS>) -> Self {
-        value.inner.clone()
     }
 }

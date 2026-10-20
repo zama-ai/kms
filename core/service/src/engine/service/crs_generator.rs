@@ -44,7 +44,7 @@ use crate::{
         MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
         update_err_req_in_meta_store,
     },
-    vault::storage::{Storage, StorageExt, crypto_material::CachedCryptoMaterialStorage},
+    vault::storage::{Storage, StorageExt, crypto_material::CryptoMaterialStorage},
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -68,7 +68,7 @@ pub(crate) struct CrsGenerator<
     C: Ceremony + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
@@ -115,7 +115,6 @@ impl<
         // Ensure that no CRS already exists for a given request.
         let already_exists = self
             .crypto_storage
-            .inner
             .crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
@@ -339,7 +338,7 @@ impl<
         mut base_session: BaseSession,
         rng: AesRng,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
@@ -432,7 +431,6 @@ impl<
                 );
                 // write_crs consumes the permit via update_meta_store internally
                 let res = crypto_storage
-                    .inner
                     .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)
                     .await;
                 let elapsed_time = Instant::now().duration_since(crs_start_timer);
@@ -590,8 +588,7 @@ mod tests {
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
         ) -> Self {
-            let crypto_storage =
-                CachedCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
+            let crypto_storage = CryptoMaterialStorage::from(pub_storage, priv_storage, None);
 
             let tracker = Arc::new(TaskTracker::new());
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
@@ -902,7 +899,6 @@ mod tests {
         assert!(
             !crs_gen
                 .crypto_storage
-                .inner
                 .crs_exists(&req_id, &unknown_epoch)
                 .await
                 .unwrap()
@@ -1139,7 +1135,7 @@ mod tests {
         let existing = TestType { i: 3183 };
         match existing_material {
             ExistingCrsMaterial::Public => {
-                let mut public = crs_gen.crypto_storage.inner.public_storage.lock().await;
+                let mut public = crs_gen.crypto_storage.public_storage.lock().await;
                 store_versioned_at_request_id(
                     &mut *public,
                     &req_id,
@@ -1150,7 +1146,7 @@ mod tests {
                 .unwrap();
             }
             ExistingCrsMaterial::Private => {
-                let mut private = crs_gen.crypto_storage.inner.private_storage.lock().await;
+                let mut private = crs_gen.crypto_storage.private_storage.lock().await;
                 store_versioned_at_request_and_epoch_id(
                     &mut *private,
                     &req_id,
@@ -1201,7 +1197,7 @@ mod tests {
 
         match existing_material {
             ExistingCrsMaterial::Public => {
-                let public = crs_gen.crypto_storage.inner.public_storage.lock().await;
+                let public = crs_gen.crypto_storage.public_storage.lock().await;
                 let stored: TestType =
                     read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
                         .await
@@ -1209,7 +1205,7 @@ mod tests {
                 assert_eq!(stored, existing);
             }
             ExistingCrsMaterial::Private => {
-                let private = crs_gen.crypto_storage.inner.private_storage.lock().await;
+                let private = crs_gen.crypto_storage.private_storage.lock().await;
                 let stored: TestType = read_versioned_at_request_and_epoch_id(
                     &*private,
                     &req_id,

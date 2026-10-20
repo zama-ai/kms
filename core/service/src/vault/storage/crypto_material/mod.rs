@@ -1,15 +1,14 @@
 //! Cryptographic material storage implementation for the KMS.
 //!
-//! This module provides a comprehensive storage solution for cryptographic material used in the KMS,
-//! with a specialized implementation for threshold cryptography. It handles the secure storage,
-//! retrieval, and management of cryptographic keys and related material.
+//! This module provides a comprehensive storage solution for cryptographic material used in the KMS.
+//! It handles the secure storage, retrieval, and management of cryptographic keys and related material.
 //!
 //! # Module Organization
 //!
 //! - `traits`: Defines core interfaces including the `CryptoMaterialReader` trait and storage traits
 //! - `readers`: Contains implementations of the `CryptoMaterialReader` trait for various types
-//! - `base`: Provides the base implementation of the `CryptoMaterialStorage` abstraction
-//! - `cached`: Implements storage for threshold KMS cryptographic operations
+//! - `base`: Defines `CryptoMaterialStorage` and its storage operations
+//! - `cached`: The FHE-key cache of `CryptoMaterialStorage` and the methods that keep it in step with storage
 //! - `utils`: Contains utility functions for cryptographic material management
 //! - `tests`: Contains test suites for validating the storage implementations
 //!
@@ -24,7 +23,6 @@
 //! ```rust,ignore
 //! use kms_core::vault::storage::crypto_material::{
 //!     CryptoMaterialStorage,
-//!     CachedCryptoMaterialStorage,
 //!     CryptoMaterialReader
 //! };
 //! // ...
@@ -44,7 +42,6 @@ mod tests;
 pub use base::CryptoMaterialStorage;
 pub use base::PublicKeySet;
 pub(crate) use base::StorageError;
-pub use cached::CachedCryptoMaterialStorage;
 pub use traits::CryptoMaterialReader;
 pub use traits::PrivateCryptoMaterialReader;
 pub use utils::*;

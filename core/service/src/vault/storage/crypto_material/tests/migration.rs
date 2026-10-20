@@ -12,7 +12,7 @@ use crate::{
 };
 
 async fn store_migrated_compressed_material(
-    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     new_key_id: &RequestId,
     new_epoch_id: &EpochId,
     compressed_keyset: &CompressedXofKeySet,
@@ -21,7 +21,6 @@ async fn store_migrated_compressed_material(
 ) {
     {
         let mut pub_storage = crypto_storage
-            .inner
             .public_storage
             .try_lock()
             .expect("no other task should be using this lock");
@@ -44,7 +43,6 @@ async fn store_migrated_compressed_material(
     }
     {
         let mut priv_storage = crypto_storage
-            .inner
             .private_storage
             .try_lock()
             .expect("no other task should be using this lock");
@@ -97,13 +95,12 @@ fn assert_current_metadata_extra_data(meta_data: &KeyGenMetadata, expected_extra
 }
 
 async fn assert_migrated_public_material(
-    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     old_key_id: &RequestId,
     new_key_id: &RequestId,
     expected_server_key_bytes: &[u8],
 ) {
     let pub_storage = crypto_storage
-        .inner
         .public_storage
         .try_lock()
         .expect("no other task should be using this lock");
@@ -158,12 +155,11 @@ async fn assert_migrated_public_material(
 }
 
 async fn load_public_material_bytes(
-    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     key_id: &RequestId,
     data_type: PubDataType,
 ) -> Vec<u8> {
     let pub_storage = crypto_storage
-        .inner
         .public_storage
         .try_lock()
         .expect("no other task should be using this lock");
@@ -180,7 +176,7 @@ async fn load_public_material_bytes(
 /// bytes into the migrated keyset (mirroring the production invariant
 /// that the old compact PK is preserved at `new_key_id`).
 async fn setup_pre_migration_uncompressed(
-    crypto_storage: &CachedCryptoMaterialStorage<RamStorage, RamStorage>,
+    crypto_storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     old_key_id: &RequestId,
     epoch_id: &EpochId,
     sk: &PrivateSigKey,
@@ -212,7 +208,6 @@ async fn setup_pre_migration_uncompressed(
     // Private storage: FheKeys at (old_key_id, epoch_id).
     {
         let mut priv_storage = crypto_storage
-            .inner
             .private_storage
             .try_lock()
             .expect("no other task should be using this lock");
@@ -229,7 +224,6 @@ async fn setup_pre_migration_uncompressed(
     // Public storage: PublicKey + ServerKey at old_key_id.
     {
         let mut pub_storage = crypto_storage
-            .inner
             .public_storage
             .try_lock()
             .expect("no other task should be using this lock");
@@ -759,7 +753,6 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     // and must NOT have received the new CompressedXofKeySet.
     {
         let pub_storage = crypto_storage
-            .inner
             .public_storage
             .try_lock()
             .expect("no other task should be using this lock");
@@ -900,7 +893,6 @@ async fn test_copy_compressed_key_updates_backup_vault() {
     // Backup vault must now hold the migrated FheKeys at
     // (old_key_id, epoch_id).
     let backup_vault = crypto_storage
-        .inner
         .backup_vault
         .as_ref()
         .unwrap_or_else(|| panic!("backup vault should be configured for old_key_id={old_key_id}"));

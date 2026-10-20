@@ -78,7 +78,7 @@ use crate::{
     vault::{
         Vault, adopt_custodian_context,
         storage::{
-            Storage, StorageExt, crypto_material::CachedCryptoMaterialStorage,
+            Storage, StorageExt, crypto_material::CryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
             read_all_recovery_material, s3::RealReadOnlyS3StorageGetter,
             select_data_from_max_epoch,
@@ -742,7 +742,7 @@ where
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
-    let crypto_storage = CachedCryptoMaterialStorage::new(
+    let crypto_storage = CryptoMaterialStorage::with_fhe_keys(
         public_storage,
         private_storage,
         backup_storage,
@@ -778,7 +778,7 @@ where
     // since the PRSS requires a context to be present.
     let context_manager = ContextManager::new(
         base_kms.new_instance(),
-        crypto_storage.inner.clone(),
+        crypto_storage.clone(),
         custodian_meta_store,
         session_maker.clone(),
         require_pcr_allowlist,
@@ -855,7 +855,7 @@ where
 
     let backup_operator = BackupOperator::new(
         base_kms.new_instance(),
-        crypto_storage.inner.clone(),
+        crypto_storage.clone(),
         security_module,
     );
 
@@ -864,11 +864,7 @@ where
     // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
     // existing values are not overwritten or backed up again
-    if !crypto_storage
-        .inner
-        .update_backup_vault(false, OP_BOOT)
-        .await
-    {
+    if !crypto_storage.update_backup_vault(false, OP_BOOT).await {
         anyhow::bail!("Failed to update backup vault when booting");
     }
     // Start updating system metrics
@@ -927,7 +923,7 @@ fn update_kms_system_metrics<PubS, PrivS>(
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    crypto_storage: CachedCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     refresh_interval: std::time::Duration,
 ) -> tokio::task::JoinHandle<()>
 where

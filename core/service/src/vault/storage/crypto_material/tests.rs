@@ -47,10 +47,7 @@ use crate::{
     util::meta_store::MetaStore,
     vault::storage::{
         StorageReader, StorageReaderExt,
-        crypto_material::{
-            CachedCryptoMaterialStorage, CryptoMaterialStorage, check_data_exists,
-            check_data_exists_at_epoch,
-        },
+        crypto_material::{CryptoMaterialStorage, check_data_exists, check_data_exists_at_epoch},
         delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
         read_custodian_context_anchor, read_recovery_material_at_id,
@@ -88,13 +85,8 @@ fn dummy_info() -> KeyGenMetadata {
 
 fn ram_cached_storage(
     backup_vault: Option<crate::vault::Vault>,
-) -> CachedCryptoMaterialStorage<RamStorage, RamStorage> {
-    CachedCryptoMaterialStorage::new(
-        RamStorage::new(),
-        RamStorage::new(),
-        backup_vault,
-        HashMap::new(),
-    )
+) -> CryptoMaterialStorage<RamStorage, RamStorage> {
+    CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), backup_vault)
 }
 
 /// Returns a signing key, the test domain, a compressed keyset tagged with `key_id`, its compact
@@ -291,7 +283,7 @@ async fn write_crs() {
 #[tokio::test]
 async fn read_public_key_from_storage() {
     let crypto_storage = ram_cached_storage(None);
-    let pub_storage = crypto_storage.inner.public_storage.clone();
+    let pub_storage = crypto_storage.public_storage.clone();
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
@@ -330,7 +322,6 @@ async fn write_fhe_keys_failed_storage_sets_terminal_error() {
     };
 
     crypto_storage
-        .inner
         .public_storage
         .lock()
         .await
@@ -438,7 +429,7 @@ async fn write_fhe_keys_meta_update() {
         assert!(guard.has_existed(&req_id));
     }
     {
-        let guard = crypto_storage.inner.public_storage.lock().await;
+        let guard = crypto_storage.public_storage.lock().await;
         let pk_exists = guard
             .data_exists(&req_id, &PubDataType::PublicKey.to_string())
             .await
@@ -453,7 +444,7 @@ async fn write_fhe_keys_meta_update() {
         );
     }
     {
-        let guard = crypto_storage.inner.private_storage.lock().await;
+        let guard = crypto_storage.private_storage.lock().await;
         let key_info_exists = guard
             .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
             .await
@@ -550,7 +541,7 @@ async fn write_fhe_keys_failed_storage() {
         setup_cached_store(&req_id, FailingRamStorage::new());
     let meta_store = MetaStore::new_unlimited();
 
-    let pub_storage = crypto_storage.inner.public_storage.clone();
+    let pub_storage = crypto_storage.public_storage.clone();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let permit = {
         let mut guard = meta_store.write().await;
@@ -623,13 +614,8 @@ async fn read_guarded_fhe_keys_not_found() {
         .unwrap()
         .into();
 
-    // Create a threshold storage with no keys in the cache and no keys in storage
-    let crypto_storage = CachedCryptoMaterialStorage::new(
-        RamStorage::new(),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
+    // Create a storage with no keys in the cache and no keys in storage
+    let crypto_storage = CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), None);
 
     // Try to read a non-existent key - should return an error
     let result = crypto_storage
@@ -694,7 +680,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     );
 
     {
-        let mut guard = crypto_storage.inner.public_storage.lock().await;
+        let mut guard = crypto_storage.public_storage.lock().await;
         delete_at_request_id(&mut *guard, &req_id, &PubDataType::PublicKey.to_string())
             .await
             .unwrap();
@@ -747,15 +733,14 @@ fn setup_cached_store<PubS>(
     req_id: &RequestId,
     public_storage: PubS,
 ) -> (
-    CachedCryptoMaterialStorage<PubS, RamStorage>,
+    CryptoMaterialStorage<PubS, RamStorage>,
     FheKeys,
     FhePubKeySet,
 )
 where
     PubS: Storage + Send + Sync + 'static,
 {
-    let crypto_storage =
-        CachedCryptoMaterialStorage::new(public_storage, RamStorage::new(), None, HashMap::new());
+    let crypto_storage = CryptoMaterialStorage::from(public_storage, RamStorage::new(), None);
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
 
