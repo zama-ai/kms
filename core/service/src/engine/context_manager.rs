@@ -8,6 +8,8 @@ use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
+use crate::cryptography::signing::composite::sign_result_entries;
+use crate::engine::base::{DSEP_NEW_CONTEXT, stored_scheme_signatures_to_proto};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -31,6 +33,8 @@ use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
+use alloy_primitives::B256;
+use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
@@ -40,6 +44,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::solidity_types::ContextCreationConfirmation;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
@@ -102,6 +107,47 @@ where
             Some(verified.new_context.context_id.into()),
         )?;
         Ok(verified)
+    }
+
+    /// Sign the `ContextCreationConfirmation` of `verified` under every requested scheme.
+    fn confirm_new_mpc_context(
+        &self,
+        verified: &VerifiedNewMpcContextRequest,
+    ) -> Result<NewMpcContextResponse, MetricedError> {
+        let context_id: RequestId = verified.new_context.context_id.into();
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            OP_NEW_MPC_CONTEXT,
+            Some(context_id),
+        )?;
+        let eip712_hash = ContextCreationConfirmation::new(
+            &verified.previous_context_id,
+            &verified.new_context.context_id,
+            B256::from(verified.node_config_hash),
+            verified.extra_data.clone(),
+        )
+        .eip712_signing_hash(&verified.domain);
+        let payload = verified.signed_payload();
+        let signatures = sign_result_entries(
+            &identity,
+            &verified.signing_schemes,
+            &DSEP_NEW_CONTEXT,
+            &eip712_hash,
+            &payload,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(context_id),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        Ok(NewMpcContextResponse {
+            payload: Some((&payload).into()),
+            signatures: stored_scheme_signatures_to_proto(&signatures),
+        })
     }
 
     async fn verify_context_and_extract_my_role(
@@ -823,20 +869,32 @@ where
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // Check if the context already exists
-        if self
+        if let Ok(stored_context) = self
             .inner
             .crypto_storage
             .read_context_info(new_context.context_id())
             .await
-            .is_ok()
         {
-            return Err(MetricedError::new(
-                OP_NEW_MPC_CONTEXT,
-                Some((*new_context.context_id()).into()),
-                anyhow::anyhow!("Context already exists"),
-                tonic::Code::AlreadyExists,
-            ));
+            // A context is stored under `new_context.context_id()`
+            // Ensure its content matches what is given in this request
+            if stored_context != verified.new_context {
+                return Err(MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(verified.new_context.context_id.into()),
+                    anyhow::anyhow!("A different context with the same ID already exists"),
+                    tonic::Code::AlreadyExists,
+                ));
+            }
+            tracing::warn!(
+                context_id = %verified.new_context.context_id,
+                "MPC context already exists; confirming its creation again"
+            );
+            let response = self.inner.confirm_new_mpc_context(&verified)?;
+            return Ok(Response::new(response));
         }
+
+        // Sign first, so that a signing failure stores nothing.
+        let response = self.inner.confirm_new_mpc_context(&verified)?;
 
         let storage_error = match self
             .inner
@@ -846,8 +904,7 @@ where
         {
             Ok(()) => None,
             Err(error) => {
-                if !context_write_persisted(&self.inner.crypto_storage, new_context, &error).await
-                {
+                if !context_write_persisted(&self.inner.crypto_storage, new_context, &error).await {
                     return Err(MetricedError::new(
                         OP_NEW_MPC_CONTEXT,
                         Some((*new_context.context_id()).into()),
@@ -887,11 +944,7 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(NewMpcContextResponse {
-            payload: Some((&verified.signed_payload()).into()),
-            // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
-            signatures: Vec::new(),
-        }))
+        Ok(Response::new(response))
     }
 
     async fn destroy_mpc_context(
@@ -1257,24 +1310,56 @@ where
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // First check if the context already exists
-        if self
+        let stored_context = self
             .inner
             .crypto_storage
             .read_context_info(new_context.context_id())
             .await
-            .is_ok()
-            || self
-                .session_maker
-                .context_exists(new_context.context_id())
-                .await
-        {
-            return Err(MetricedError::new(
-                OP_NEW_MPC_CONTEXT,
-                Some(new_context.context_id.into()),
-                anyhow::anyhow!("Context with ID already exists"),
-                tonic::Code::AlreadyExists,
-            ));
+            .ok();
+        let in_session_maker = self
+            .session_maker
+            .context_exists(new_context.context_id())
+            .await;
+        match (stored_context, in_session_maker) {
+            (None, false) => {
+                // The context does not exist anywhere
+            }
+            (Some(stored_context), true) => {
+                // A context is stored under `new_context.context_id()`
+                // Ensure its content matches what is given in this request
+                if stored_context != verified.new_context {
+                    return Err(MetricedError::new(
+                        OP_NEW_MPC_CONTEXT,
+                        Some(verified.new_context.context_id.into()),
+                        anyhow::anyhow!("A different context with the same ID already exists"),
+                        tonic::Code::AlreadyExists,
+                    ));
+                }
+                tracing::warn!(
+                    context_id = %verified.new_context.context_id,
+                    "MPC context already exists; confirming its creation again"
+                );
+                let response = self.inner.confirm_new_mpc_context(&verified)?;
+                return Ok(Response::new(response));
+            }
+            // Only a fully created context is confirmed again, otherwise we fail
+            (stored_context, in_session_maker) => {
+                return Err(MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(new_context.context_id.into()),
+                    anyhow::anyhow!(
+                        "Context with ID already exists, but only partially \
+                         (in storage: {}, in session maker: {in_session_maker})",
+                        stored_context.is_some()
+                    ),
+                    tonic::Code::AlreadyExists,
+                ));
+            }
         }
+
+        // Sign first, so that a signing failure stores nothing.
+        let response = self.inner.confirm_new_mpc_context(&verified)?;
+
         atomic_update_context(
             &self.session_maker,
             &self.inner.crypto_storage,
@@ -1301,11 +1386,7 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(NewMpcContextResponse {
-            payload: Some((&verified.signed_payload()).into()),
-            // TODO(#3238): sign the ContextCreationConfirmation under the requested schemes.
-            signatures: Vec::new(),
-        }))
+        Ok(Response::new(response))
     }
 
     async fn destroy_mpc_context(
