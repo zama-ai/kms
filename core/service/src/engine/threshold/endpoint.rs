@@ -19,7 +19,9 @@ const CRASH_AT_CALL: u64 = 200;
 fn crash_on_purpose() {
     let n = USER_DECRYPT_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if n == CRASH_AT_CALL {
-        panic!("crash-diagnostics probe: deliberate panic at user-decrypt call {n}");
+        // Release builds unwind panics and tokio contains them, so abort to kill kms-server.
+        eprintln!("crash-diagnostics probe: deliberate abort at user-decrypt call {n}");
+        std::process::abort();
     }
 }
 
