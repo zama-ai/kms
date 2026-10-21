@@ -79,7 +79,9 @@ data:
     {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- if .Values.kmsCore.addressOverride }}
+      {{- if .Values.kmsPeers.name }}
+    tls_subject = {{ .Values.kmsPeers.name | quote }}
+      {{- else if .Values.kmsCore.addressOverride }}
     tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ .Values.kmsPeers.id}}"
       {{- else }}
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
