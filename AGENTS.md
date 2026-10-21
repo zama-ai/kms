@@ -8,7 +8,7 @@ Rules and expectations for AI coding agents working in this repository. This fil
 
 ## Topic files
 
-- [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md) — trust model and not-findings list, code map, gRPC semantics, and cross-module invariants (epochs and contexts, signing, storage, backup, backward compatibility, deployment). Read before any change that touches service structure, persisted types, storage, or protocol flows, and before any security review.
+- [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md) — trust summary, code map, and cross-module invariants. Read the code map and task-relevant sections before changing service structure, persisted types, storage, or protocol flows. Apply the trust summary in every review; read the linked trust model before security review.
 - [EDITING.md](./ai-docs/EDITING.md) — rules for every change: process and scope, error handling, compatibility and gRPC changes, review checklist, tests, and the required fmt/clippy checks. Read before making any change or reviewing one.
 - [PROSE.md](./ai-docs/PROSE.md) — how to write prose: code comments and rustdoc, markdown files, GitHub issues and PR text, and chat replies to your human. Read before you write any of them.
 - [COMMANDS.md](./ai-docs/COMMANDS.md) — test selection, feature flags, backward-compatibility targets, and pointers for compose, test material, the client, and LFS. Read before running tests or Makefile targets.

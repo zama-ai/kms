@@ -7,23 +7,12 @@ This file records navigation and cross-module invariants. Read linked source or 
 
 ## Communication interfaces and trust model
 
-Read the [trust model](../docs/explanations/trust_model.md) before security review.
+Apply this summary in every review. Read the [trust model](../docs/explanations/trust_model.md) for attestation details, report scope, and exclusions before security review or reporting a security finding.
 
 - **Service interface**: `CoreServiceEndpoint`, default port 50100. Infrastructure lets exactly one KMS connector reach it. The same operator runs the connector and the core, so the two trust each other by definition. The interface has no application-level TLS, authentication, or authorization, and is never publicly reachable. Do not add these controls unless your human asks.
 - **Core-to-core interface**: `threshold-networking`, default port 50001. Production uses mTLS, peer allowlists, and sender identity bound to the certificate CN. TLS-off requires the `insecure` feature or a `cfg(test)` build.
 - Authenticated MPC peers remain adversarial: at most `t` of `n` may be malicious, so peer message content is adversarial input. Every attack that works with at most `t` malicious parties is in scope, including bypassing TLS, attestation, or sender binding.
-- Nitro `tls.auto` additionally checks attestation against a context's PCR allowlist. PCR0, PCR1, and PCR2 must all match one entry; a configured `eif_signing_cert` also constrains PCR8. Real enclave deployments reject a new context with an empty allowlist and skip a stored one at startup; mock and non-enclave deployments permit empty allowlists.
-- TLS roots belong to a context and an MPC identity. Each root is checked only against its own context's PCR allowlist; a handshake succeeds when one complete root-plus-PCR check succeeds. Registering an already-active context ID is rejected; it never replaces that context's roots or PCRs. Destroying a context retains roots that other live contexts use.
 - Connector ACL checks and upstream ciphertext proofs do not make all request fields trusted. Externally supplied ciphertexts and handles, user public keys, EIP-712 signatures and domains, and parameter selectors remain untrusted. Crashes, stalls, unbounded allocations, or confidentiality failures through them are in scope, even though the request arrives over the service interface.
-- Findings must cite the analyzed commit or tag and verified file and line locations.
-
-Not findings — these describe the design:
-
-- Missing authentication, authorization, or rate limiting on the service interface.
-- Any attack in which the connector itself is the attacker.
-- Repeated decryption of the same ciphertexts under a known request ID. The gateway contracts bind each request ID to its ciphertexts and connector retries resend the same payload, so the core assumes a known ID carries the same ciphertexts as before.
-- Attacks that need more than `t` malicious parties.
-- Code outside production: experimental BGV/BFV in [core/threshold-bgv/](../core/threshold-bgv/), harnesses in [core/experiments/](../core/experiments/), and anything else marked experimental.
 
 ## Code map
 
@@ -138,6 +127,7 @@ Read the [compatibility guide](../docs/developer/backward_compatibility.md) befo
 - Upgrades roll: for a while, some cores run release i and the rest i+1. Public and user decryption must keep working throughout.
 - Constructive calls (key/CRS generation, context/epoch creation) and destructive calls (context/epoch destruction) never run during a rolling upgrade, and never concurrently. Concurrent calls indicate a contract bug; the core may reject them but must leave storage consistent.
 - `core-client` is a test tool, used only with cores of its own release and never during upgrades.
+- WASM clients upgrade last; decryption responses must remain readable by the previous release's WASM client.
 - Package Dockerfiles consume the shared `kms-binaries` image through `KMS_BINARIES_IMAGE`; see [docker/kms-binaries/Dockerfile](../docker/kms-binaries/Dockerfile).
 - [HealthState](../observability/src/health.rs) drives gRPC and HTTP probes. Readiness depends on startup/shutdown, **not peers or MPC state**, because Kubernetes routes peer traffic only to ready pods. Liveness fails on faults requiring restart.
 - Deployment details: [Helm chart](../charts/kms-core/), [compose guide](../docker-compose.md). Protocol background: [Noah's Ark](https://eprint.iacr.org/2023/815).
