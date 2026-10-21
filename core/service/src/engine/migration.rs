@@ -434,6 +434,15 @@ fn parse_migration_map(
     }
     // kms-init always creates the default epoch under the default context, so a default context
     // without it is an operator error.
+    if seen_epochs.contains(&*DEFAULT_EPOCH_ID)
+        && !context_to_epoch_map.contains_key(&*DEFAULT_MPC_CONTEXT)
+    {
+        anyhow::bail!(
+            "Default epoch ID {} must belong to default context ID {}",
+            *DEFAULT_EPOCH_ID,
+            *DEFAULT_MPC_CONTEXT
+        );
+    }
     if let Some(context_id) = context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT) {
         if !context_id.contains(&DEFAULT_EPOCH_ID) {
             anyhow::bail!(
