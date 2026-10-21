@@ -291,9 +291,11 @@ The artifact also contains readiness, restart counts, and termination details
 in `core-lifecycle.tsv`.
 The `core-restarts/` directory contains pod descriptions, events, and previous
 container logs where available. Enclave runs also capture `nitro-cli describe-enclaves` output.
-Before a restart, the `kms-core-enclave` `preStop` hook copies `/var/log/nitro_enclaves`
-into the container log, so it appears in `kms-core-enclave-previous.log`.
-The enclave logger reports the server exit status.
+During kubelet-managed stops, the `kms-core-enclave` `preStop` hook attempts to copy
+`/var/log/nitro_enclaves` into the container log for collection through `kubectl logs --previous`.
+NOTE: Log rotation or further restarts can remove evidence, so this is best-effort.
+Exit code 143 means SIGTERM reached the outer shell.
+The enclave logger reports the server exit status when logging succeeds.
 
 Each decrypt scenario also captures its own `eth0` rx/tx counters inside the
 Argo test pod. The core client samples them around the measurement window, and

@@ -386,9 +386,12 @@ spec:
               # it can't be a separate container because
               # we had to serve kms-gen-keys.toml on the same port earlier
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
+              # Exit 143 records SIGTERM to this shell, independently of the enclave's exit status.
+              # Use an interruptible wait so sleep does not delay the trap.
+              trap 'exit 143' TERM
               while true; do
                 nitro-cli describe-enclaves > /var/log/nitro_enclaves/status
-                sleep 60
+                sleep 60 & wait $!
               done
           {{- else }}
           name: kms-core
