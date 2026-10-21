@@ -10,7 +10,7 @@ This file records navigation and cross-module invariants. Read linked source or 
 Read the [trust model](../docs/explanations/trust_model.md) before security review.
 
 - **Service interface**: `CoreServiceEndpoint`, default port 50100. Infrastructure lets exactly one KMS connector reach it. The same operator runs the connector and the core, so the two trust each other by definition. The interface has no application-level TLS, authentication, or authorization, and is never publicly reachable. Do not add these controls unless your human asks.
-- **Core-to-core interface**: `threshold-networking`, default port 50001. Production uses mTLS, peer allowlists, and sender identity bound to the certificate CN. TLS-off requires the `insecure` feature.
+- **Core-to-core interface**: `threshold-networking`, default port 50001. Production uses mTLS, peer allowlists, and sender identity bound to the certificate CN. TLS-off requires the `insecure` feature or a `cfg(test)` build.
 - Authenticated MPC peers remain adversarial: at most `t` of `n` may be malicious, so peer message content is adversarial input. Every attack that works with at most `t` malicious parties is in scope, including bypassing TLS, attestation, or sender binding.
 - Nitro `tls.auto` additionally checks attestation against a context's PCR allowlist. PCR0, PCR1, and PCR2 must all match one entry; a configured `eif_signing_cert` also constrains PCR8. Real enclave deployments reject a new context with an empty allowlist and skip a stored one at startup; mock and non-enclave deployments permit empty allowlists.
 - TLS roots belong to a context and an MPC identity. Each root is checked only against its own context's PCR allowlist; a handshake succeeds when one complete root-plus-PCR check succeeds. Registering an already-active context ID is rejected; it never replaces that context's roots or PCRs. Destroying a context retains roots that other live contexts use.
@@ -43,7 +43,7 @@ Workspace membership and dependencies: [Cargo.toml](../Cargo.toml). Test policy:
 
 ## Test fixtures
 
-Threshold fixtures supply the default epoch and PRSS setup per party. `TestMaterialSpec::threshold_basic` includes them; `with_prss()` adds them to signing-only fixtures. Servers never create epochs at boot; request fresh epochs through `new_mpc_epoch`.
+Threshold fixtures supply the default epoch and PRSS setup per party. `TestMaterialSpec::threshold_basic` includes them; `ThresholdTestEnvBuilder::with_prss()` adds them to signing-only fixtures. Servers never create epochs at boot; request fresh epochs through `new_mpc_epoch`.
 
 ## gRPC surface
 
@@ -60,21 +60,21 @@ Source of truth: [kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto)
 
 ## Epoch and context lifecycle
 
-- `NewMpcEpoch(previous_epoch=...)` performs resharing. Validate each preprocessing ID against stored `KeyGenMetadata` before protocol execution.
+- `NewMpcEpoch(previous_epoch=...)` performs resharing. The caller-supplied preprocessing ID enters the EIP-712 struct signed for the new epoch, so validate each one against stored `KeyGenMetadata` before protocol execution.
 - Reshared keys require a public-key digest and exactly one server-key/compressed-keyset digest, all nonempty.
 - Match old/new parties by MPC identity, not URL; overlapping parties use the new context URL. Reject identity/signer conflicts. A changed signing key requires a new MPC identity and separate core.
 - Old/overlapping parties must hold input material; new-only parties need not.
 - Epoch creation holds shared lifecycle leases through protocol execution and persistence: on the target context and the target epoch, and for a reshare also on the source context and the source epoch. Destruction requires exclusive leases; conflicts return `FailedPrecondition`, including before epoch registration.
 - A party serializes reshare storage and rollback with one lock. Rollback removes only that request's new epoch material. Remove epoch registration only after its private key/CRS entries are gone.
 - Delete newly created public material only after private cleanup succeeds. Retain preexisting public material. Failed private deletion preserves epoch/public state for retry.
-- `DestroyMpcEpoch` erases the whole epoch. `DestroyMpcContext` snapshots registered epochs, erases shares, then removes context and TLS roots. Connector owns the authoritative context/epoch mapping.
+- `DestroyMpcEpoch` erases the whole epoch and rejects the node's last remaining epoch. `DestroyMpcContext` rejects the last remaining context, snapshots registered epochs, erases shares, then removes context and TLS roots. Connector owns the authoritative context/epoch mapping.
 - Context updates serialize the existence check with the storage, cache, and session updates. Failed deletion retains in-memory state when the persistent context remains.
 
 ## Signing and randomness
 
 - Persisted ECDSA `SigningKey` is the on-chain identity. Independent `SigningSeed` derives non-ECDSA keys; both use `SIGNING_KEY_ID` and are not epoched.
 - `NodeSigningIdentity` combines them in memory and is never persisted. Seedless legacy nodes support ECDSA only; other schemes return `MissingRootSeed`.
-- Only `kms-gen-keys` creates seeds. Fresh identities derive ECDSA from the seed; upgraded nodes retain their ECDSA key. Startup backfills public verification material without creating a seed.
+- Only `kms-gen-keys` creates seeds. Its `overwrite` option deletes the signing key, the seed, and the published verification material together. Fresh identities derive ECDSA from the seed; upgraded nodes retain their ECDSA key. Startup backfills public verification material without creating a seed.
 - Publish scheme-specific keys/addresses in `TypedVerfKey` / `TypedVerfAddress` under `signing_material_id(scheme)`. Legacy ECDSA `VerfKey` / `VerfAddress` remain for existing consumers; new readers use typed material.
 - Clients verify every requested signing scheme against published peer keys; missing schemes fail verification.
 - Custodian backup uses `BACKUP_PKE_SCHEME` (MLKEM1024-P384) and every scheme in `BACKUP_SIGNING_SCHEMES` (ECDSA + ML-DSA-87). User decryption accepts ML-KEM-512 only.
@@ -110,7 +110,7 @@ Peer repair: [public_material_sync.rs](../core/service/src/engine/public_materia
 ## Backup and recovery
 
 - Versioned `BackupCiphertext`, tagged by `RequestId` and `PrivDataType`, stores private material in the backup vault. `KeychainProxy` ([vault/keychain/](../core/service/src/vault/keychain/)) selects the keychain that protects the wrapping key.
-- `AwsKms` keychain: the wrapping key is an AWS KMS CMK. It is the default and bootstrap path; `RestoreFromBackup` completes restoration on it.
+- `AwsKms` keychain: the wrapping key is an AWS KMS CMK. `RestoreFromBackup` completes restoration on it. The private vault must be readable at boot, so it rejects a `SecretSharing` keychain ([conf/mod.rs](../core/service/src/conf/mod.rs)).
 - `SecretSharing` keychain: the wrapping key is Shamir-shared across custodians, driven by [kms-custodian](../core/service/src/bin/kms-custodian.rs) and the `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit` / `CustodianBackupRecovery` RPCs.
 - Secret-sharing backup needs an installed custodian context. Require unique custodian encryption/verification keys and complete backup schemes. Custodian keys derive from 256-bit mnemonic entropy.
 - `RecoveryValidationMaterial` lives unencrypted at `RecoveryMaterial/<context_id>` in the **backup vault**, outside encrypted backup namespaces. Encrypting it under the recovery key would be circular. Verify its composite signature and storage/payload context IDs.
@@ -129,7 +129,7 @@ Read the [compatibility guide](../docs/developer/backward_compatibility.md) befo
 - Persisted versioned types use `tfhe-versionable` layouts/upgrades and `Named`; [bc2wrap](../bc2wrap/) pins binary encoding. Preserve historical variants and wire compatibility.
 - [backward-compatibility/](../backward-compatibility/) is a separate workspace because historical dependencies conflict. Pinned generators produce LFS vectors and `.ron` manifests; current loaders replay them.
 - Frozen generators are nondeterministic: do not regenerate their vectors. See [COMMANDS.md](./COMMANDS.md#backward-compatibility) and [adding releases](../backward-compatibility/ADDING_NEW_VERSIONS.md).
-- Storage-path migrations must verify copies before deleting originals and verify deletion afterward. The 0.15 CRS migration removes the flat entry only after it matches the default-epoch copy. As a consequence, pre-0.14 releases can no longer load that CRS metadata.
+- Storage-path migrations must verify copies before deleting originals and verify deletion afterward. The 0.15 CRS migration removes the flat entry only after it matches the default-epoch copy; on a mismatch startup fails, and an operator must remove the wrong copy. As a consequence, pre-0.14 releases can no longer load that CRS metadata.
 - Custodian fixtures start at 0.15. The earlier format break was a pre-deployment exception, not permission for future compatibility breaks.
 
 ## Deployment invariants

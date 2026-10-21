@@ -9,8 +9,8 @@ CI runs `cargo nextest run --profile ci --no-fail-fast`, one process per test. P
 
 | Command | Scope / caveat |
 |---|---|
-| `cargo nextest run -F testing` | Secure/default surface; some integration tests require Redis |
-| `cargo nextest run -F testing --lib` | Unit tests; excludes Redis integration tests |
+| `cargo nextest run -F testing` | Secure/default surface |
+| `cargo nextest run -F testing --lib` | Unit tests only |
 | `cargo nextest run -F testing -p <crate> <pattern>` | Focused test |
 | `cargo nextest run -p kms-core-client -F e2e` | Client e2e, including insecure keygen and CRS |
 | `cargo nextest run -p kms-core-client -F e2e,slow_tests` | Adds PRSS, preprocessing, insecure fast paths |
@@ -33,7 +33,7 @@ Dylint: `make install-dylint`, then `make lint-dylint`.
 ## Backward compatibility
 
 - `make test-backward-compatibility`: pulls LFS, then tests stored vectors.
-- `make test-backward-compatibility-local`: tests local vectors without LFS pull. **Use after regeneration; the other target overwrites generated data.**
+- `make test-backward-compatibility-local`: tests local vectors without LFS pull. Use it to test vectors you just regenerated.
 - `make backward-snapshot-check BASE_REF=origin/main`: detects removed variants and suspicious layout/upgrade changes.
 - `make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md`: writes the report.
 - `make generate-backward-compatibility-all`: regenerates only deterministic versions.

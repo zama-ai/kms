@@ -23,7 +23,7 @@
 
 ## Compatibility and API
 
-- Keep internal protobuf and core-to-core communication compatible: a KMS released from `main` after your change must still talk to the previous release.
+- Keep core-to-core communication ([gnetworking.proto](../core/threshold-networking/protos/gnetworking.proto) and the MPC messages it carries) compatible: a core released from `main` after your change must still talk to a core from the previous release.
 - Preserve backward compatibility. Version all non-test data in public, private, and backup storage with `tfhe-versionable`.
 - Before changing persisted types, read the [compatibility guide](../docs/developer/backward_compatibility.md) and [harness overview](./ARCHITECTURE.md#backward-compatibility).
 - Modifying or removing existing gRPC fields, or changing their data format, is breaking: alert your human for infra and downstream tracking.
@@ -38,13 +38,13 @@
 - Use one name per concept across the touched files.
 - Check comments for the common failures: narrating the change, commenting trivial code, and comments the change made stale.
 - Check the [PR checklist](../.github/PULL_REQUEST_TEMPLATE.md); flag applicable items you cannot verify.
-- For security review, follow the [trust model](./ARCHITECTURE.md#communication-interfaces-and-trust-model), including its not-findings list. Cross-reference [OWASP ASVS](https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/OWASP_Application_Security_Verification_Standard_5.0.0_en.pdf) and the [MPC pitfalls](https://mpcsec.org/SKILL.md).
+- Apply the [trust model](./ARCHITECTURE.md#communication-interfaces-and-trust-model), including its not-findings list, in every review. For security review, also cross-reference [OWASP ASVS](https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/OWASP_Application_Security_Verification_Standard_5.0.0_en.pdf) and the [MPC pitfalls](https://mpcsec.org/SKILL.md).
 
 ## Verification
 
 - Update or add tests when you change behavior. Never break existing tests intentionally.
 - Every `pub` and `pub(crate)` item needs at least one positive test; critical code also needs negative tests. Reject trivial or redundant tests. Changes to production code must not reduce coverage.
-- Prefer reusable scaffolding and stubs over duplicated per-test setup.
+- Prefer reusable scaffolding and stubs over duplicated per-test setup. Moving existing tests onto shared scaffolding is an allowed exception to the smallest-diff rule.
 - Run affected tests, including non-`slow_tests` tests in modified files, before reporting completion.
 
 For code, dependency, or build changes, also run:
@@ -55,5 +55,6 @@ cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
+When a doc states behavior, names, or commands, verify each against the code or Makefile.
 For documentation-only changes, check the diff, links, and consistency; Cargo checks are unnecessary.
 Disclose narrower checks, failures, and checks not run. See [COMMANDS.md](./COMMANDS.md) for test features and compatibility traps.

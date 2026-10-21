@@ -9,5 +9,5 @@ Applies to comments, docs, PRs, issues, and chat. [EDITING.md](./EDITING.md) and
 - Keep function docs brief and local to that function; link to callees instead of repeating their internals.
 - Start rustdoc with a one-sentence present-tense summary ("Returns the signature over `payload`."), not "This function". Document non-obvious errors and panics; use `[Type]` links where possible.
 - Cite a spec, paper, or issue for crypto and protocol constraints; omit derivations.
-- Preserve accurate comments and move them with their code. Use `TODO(#<issue-number>): <what is missing>`.
+- Preserve accurate comments and move them with their code. Do not reword a correct comment. Use `TODO(#<issue-number>): <what is missing>`.
 - Use verified relative links within repository Markdown. Index new `ai-docs/` files in [AGENTS.md](../AGENTS.md).
