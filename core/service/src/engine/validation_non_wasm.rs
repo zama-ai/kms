@@ -1167,7 +1167,7 @@ pub(crate) struct VerifiedNewMpcContextRequest {
     /// `new_context` for the first context.
     pub previous_context_id: ContextId,
     /// The `nodeConfigHash` of the new context, signed as given.
-    pub node_config_hash: B256,
+    pub node_config_hash: [u8; 32],
     /// The EIP-712 domain the confirmation is signed under.
     pub domain: Eip712Domain,
     /// Extra data bound into the signatures and echoed back in the response.
@@ -1182,7 +1182,7 @@ impl VerifiedNewMpcContextRequest {
         NewMpcContextSignedPayload {
             previous_context_id: self.previous_context_id,
             new_context_id: self.new_context.context_id,
-            node_config_hash: self.node_config_hash.0,
+            node_config_hash: self.node_config_hash,
             extra_data: self.extra_data.clone(),
         }
     }
@@ -1218,7 +1218,7 @@ async fn unpack_new_mpc_context_req<S: StorageReader>(
     let new_context = ContextInfo::try_from(new_context)?;
     let previous_context_id: ContextId =
         parse_optional_grpc_request_id(&req.previous_context_id, RequestIdParsingErr::Context)?;
-    let node_config_hash = B256::try_from(req.node_config_hash.as_slice()).map_err(|_| {
+    let node_config_hash: [u8; 32] = req.node_config_hash.as_slice().try_into().map_err(|_| {
         anyhow::anyhow!(
             "node_config_hash must be 32 bytes, got {}",
             req.node_config_hash.len()
