@@ -16,7 +16,6 @@ use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
-use crate::util::rate_limiter::RateLimiterConfig;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
@@ -205,16 +204,6 @@ pub async fn decryption_threshold(
 ) {
     assert!(parallelism > 0);
 
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100 * parallelism,
-        pub_decrypt: 100,
-        user_decrypt: 1,
-        crsgen: 1,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
-
     // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
     // default epoch (PRSS) comes from the fixture with the key shares.
     let spec = if dkg_params == TEST_PARAM {
@@ -228,7 +217,6 @@ pub async fn decryption_threshold(
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)
-        .with_rate_limiter(rate_limiter_conf)
         .with_prss();
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);

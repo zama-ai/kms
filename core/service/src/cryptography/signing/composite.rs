@@ -66,6 +66,8 @@ use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signatures::eip712_sign_hash;
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 #[cfg(feature = "non-wasm")]
 use alloy_primitives::B256;
@@ -255,8 +257,8 @@ where
 /// rebuilds the preimage from the entries it receives and requires every scheme
 /// the verifier asked for to be among them, so the signed set may be larger.
 ///
-/// `schemes` may be given in any order; the entries come back ordered by
-/// scheme.
+/// `schemes` may be given in any order; the entries come back in canonical order,
+/// with ECDSA first when present.
 #[cfg(feature = "non-wasm")]
 pub fn sign_result_entries<T>(
     identity: &NodeSigningIdentity,
@@ -276,13 +278,8 @@ where
         .iter()
         .map(|&scheme| {
             let signature = match scheme {
-                SigningSchemeType::Ecdsa256k1 => {
-                    crate::cryptography::signing::ecdsa::eip712_sign_hash(
-                        identity.ecdsa(),
-                        eip712_hash,
-                    )
-                    .map_err(|e| SigningError::Sign(e.to_string()))?
-                }
+                SigningSchemeType::Ecdsa256k1 => eip712_sign_hash(identity.ecdsa(), eip712_hash)
+                    .map_err(|e| SigningError::Sign(e.to_string()))?,
                 _ => identity
                     .unified_sign_with(scheme, dsep, &signed)?
                     .to_bytes(),
@@ -489,6 +486,54 @@ mod tests {
             assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
             assert!(unified_verify(DSEP, eip712_hash.as_slice(), &sig, &vk).is_err());
         }
+    }
+
+    #[test]
+    fn result_entries_sign_the_eip712_hash() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let identity = seeded_identity(&mut rng);
+        let hash = B256::from([0x11u8; 32]);
+        let signature = eip712_sign_hash(identity.ecdsa(), &hash).unwrap();
+        let entries = sign_result_entries(
+            &identity,
+            &[SigningSchemeType::Ecdsa256k1],
+            DSEP,
+            &hash,
+            &msg(),
+        )
+        .unwrap();
+        assert_eq!(entries[0].signature, signature);
+    }
+
+    /// Result entries use the same ordering convention as [`sign_composite`]:
+    /// by scheme, duplicate-free, whatever order the request arrived in.
+    #[test]
+    fn result_entries_are_ordered_by_scheme() {
+        let mut rng = AesRng::seed_from_u64(21);
+        let identity = seeded_identity(&mut rng);
+        let requested = [
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ed25519,
+        ];
+        let entries = sign_result_entries(
+            &identity,
+            &requested,
+            DSEP,
+            &B256::from([0x11u8; 32]),
+            &msg(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
+            [
+                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeType::Ed25519,
+                SigningSchemeType::MlDsa65,
+            ]
+        );
     }
 
     /// An empty set is a caller mistake, not a request for no signatures: a

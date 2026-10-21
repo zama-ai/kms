@@ -1,13 +1,14 @@
 pub use super::signed_payload::UserDecSignedPayload;
 use super::signed_payload::user_dec_payload;
-use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+use crate::cryptography::signatures::PublicSigKey;
+use crate::cryptography::signatures::eip712_sign_hash;
 use crate::cryptography::signatures::internal_sign;
-use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::composite::sign_result_entries;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::typed_signature::StoredTypedSignature;
 use crate::engine::rng_source::RngSource;
@@ -18,7 +19,7 @@ use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
+use hashing::{DomainSep, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
@@ -64,6 +65,10 @@ use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_types::rng::AesRng;
 use tracing::error;
+
+// Bench helpers
+#[cfg(feature = "testing")]
+pub mod pdec_bench;
 
 // Domain separators for cryptographic operations to ensure domain separation
 
@@ -486,9 +491,7 @@ pub(crate) fn stored_scheme_signatures_to_proto(
     signatures.iter().map(TypedSignature::from).collect()
 }
 
-/// Sign a public result: the deprecated ECDSA/EIP-712 `external_signature`, and —
-/// independently — the per-scheme `signatures` for exactly the schemes the
-/// client requested.
+/// Sign a public result under exactly the requested schemes and populate the deprecated EIP-712 field.
 ///
 /// `external_signature` is produced whether or not ECDSA was requested, because
 /// it is part of the released wire contract until it goes away in 0.16.
@@ -505,15 +508,15 @@ where
     T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let eip712_hash = sol_type.eip712_signing_hash(domain);
-    let external_signature =
-        crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)?;
-    let signatures = crate::cryptography::signing::composite::sign_result_entries(
-        identity,
-        schemes,
-        dsep,
-        &eip712_hash,
-        payload,
-    )?;
+    let signatures = sign_result_entries(identity, schemes, dsep, &eip712_hash, payload)?;
+    // The deprecated field is required even when the request does not include ECDSA.
+    let external_signature = match signatures
+        .first()
+        .filter(|entry| entry.scheme == SigningSchemeType::Ecdsa256k1)
+    {
+        Some(entry) => entry.signature.clone(),
+        None => eip712_sign_hash(identity.ecdsa(), &eip712_hash)?,
+    };
     Ok((external_signature, signatures))
 }
 
@@ -1190,26 +1193,6 @@ impl BaseKmsStruct {
     /// Returns the shared source for session construction and refresh.
     pub(crate) fn rng_source(&self) -> Arc<RngSource> {
         Arc::clone(&self.rng_source)
-    }
-}
-
-impl BaseKms for BaseKmsStruct {
-    /// sign `msg` using the KMS' private signing key
-    fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        match self.signing_identity.as_ref() {
-            None => anyhow::bail!("KMS has no signing key"),
-            Some(identity) => internal_sign(dsep, msg, identity.ecdsa()),
-        }
-    }
-
-    fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
-    where
-        T: ?Sized + AsRef<[u8]>,
-    {
-        Ok(hash_element(domain_separator, msg))
     }
 }
 

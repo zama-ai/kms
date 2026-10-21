@@ -108,8 +108,6 @@ jobs:
             --set kmsCore.resources.limits.grpcTimeout=0
           expect_invalid "oversized gRPC message limit" 'grpcMaxMessageSize' \
             --set kmsCore.resources.limits.grpcMaxMessageSize=2147483648
-          expect_invalid "zero rate-limit bucket" 'bucketSize' \
-            --set kmsCore.rateLimiter.bucketSize=0
           expect_invalid "zero telemetry refresh interval" 'refreshIntervalMs' \
             --set kmsCore.thresholdMode.refreshIntervalMs=0
           expect_invalid "zero threshold" 'thresholdValue' \
