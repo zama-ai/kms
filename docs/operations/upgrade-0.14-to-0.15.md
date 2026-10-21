@@ -44,13 +44,14 @@ Each epoch belongs to the context that the new-MPC-epoch request used when it cr
 - Default context ID: `0x0700000000000000000000000000000000000000000000000000000000000001`
 - Default epoch ID: `0x0800000000000000000000000000000000000000000000000000000000000001`
 
-Most parties have only this epoch. If you created more epochs, for example through resharing, list each of them under the context that its request used.
+Most parties have only this epoch. If you created more epochs, for example through resharing, list each of them under the context that its request used. A party that joined through a later context, for example a rebuilt node, can lack the default epoch. Do not list the default epoch or the default context for such a party.
 
 ## Write the migration config
 
 The config is a list of contexts. Each context lists the epochs that belong to it. These rules apply:
 
-- The config must contain the default context, and the default context must contain the default epoch.
+- The config must list each epoch in private storage, and only those epochs.
+- If the config lists the default context, the default context must contain the default epoch.
 - An epoch ID must occur under one context only.
 - A context ID must occur one time only, and each context must list at least one epoch.
 - IDs are hex strings. The `0x` prefix is optional.
@@ -93,8 +94,7 @@ The core stops at startup with one of these errors if the migration config is mi
 | `Migration config must be provided for 0.15.x migration when PRSS data is present` | Private storage holds legacy PRSS data, and the config has no migration section. Add the migration config. |
 | `Migration config does not cover N stored epoch(s) with PRSS data: ...` | The config does not list all stored epochs. Add the listed epochs. |
 | `Migration config references N epoch(s) that have no PRSS data on disk: ...` | The config lists epochs that are not in private storage. Remove the listed epochs. On a fresh installation, remove the complete migration config. |
-| `Default context ID ... should be part of the migration config` | The config does not contain the default context. Add it. |
-| `Default epoch ID ... should be part of the migration config for default context ID ...` | The default context does not list the default epoch. Add it. |
+| `Default context ID ... must contain the default epoch ID ...` | The config lists the default context without the default epoch. Add the default epoch. If private storage has no default epoch, remove the default context. |
 | `Duplicate epoch ID ... found in migration config` or `Duplicate context ID ... found in migration config` | An ID occurs more than one time. Remove the duplicate. |
 
 ## Generate the root signing seed
