@@ -2059,6 +2059,10 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
+    /// Destroy the epoch named in `request` and return the signed confirmation.
+    ///
+    /// The request is validated before anything is erased, so an
+    /// invalid request leaves the epoch untouched.
     pub(crate) async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,

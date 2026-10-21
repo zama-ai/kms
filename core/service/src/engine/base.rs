@@ -19,7 +19,7 @@ use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
+use hashing::{DomainSep, hash_versioned, serialize_hash_element};
 use kms_grpc::EpochId;
 use kms_grpc::RequestId;
 use kms_grpc::kms;
