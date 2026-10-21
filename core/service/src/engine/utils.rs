@@ -404,6 +404,8 @@ impl MetricedError {
             "asynchronous request failed"
         );
 
+        #[cfg(test)]
+        UNRETURNABLE_ERROR_CALL_COUNT.with(|c| c.set(c.get() + 1));
         // Increment the method specific metric
         METRICS.increment_error_counter(op_metric, ERR_ASYNC);
     }
@@ -474,6 +476,7 @@ impl From<MetricedError> for Status {
 #[cfg(test)]
 thread_local! {
     static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static UNRETURNABLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many errors have been recorded on the current thread so far.
@@ -484,6 +487,13 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn handle_error_call_count() -> usize {
     HANDLE_ERROR_CALL_COUNT.with(|c| c.get())
+}
+
+/// Returns the number of asynchronous errors that [`MetricedError::handle_unreturnable_error`]
+/// recorded on the current thread.
+#[cfg(test)]
+pub(crate) fn unreturnable_error_call_count() -> usize {
+    UNRETURNABLE_ERROR_CALL_COUNT.with(|c| c.get())
 }
 
 /// Serialize an element to a base64 string using safe serialization.
@@ -524,8 +534,8 @@ mod tests {
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
     use crate::vault::storage::{Storage, ram::RamStorage};
 
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     /// The availability response includes CRS metadata stored under an epoch.
     #[tokio::test]

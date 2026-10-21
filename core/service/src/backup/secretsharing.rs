@@ -150,11 +150,11 @@ pub(crate) fn reconstruct(
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use algebra::randomness_check::execute_all_randomness_tests_tight;
     use algebra::{sharing::share::Share, structure_traits::One};
     use proptest::prelude::*;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use super::*;
 
@@ -240,6 +240,7 @@ mod tests {
                 let mut shares = share(&mut rng, &secret, n, t).unwrap();
 
                 for block in &mut shares {
+                    #[allow(clippy::needless_range_loop)]
                     for i in n-t..n {
                         let owner = block.shares[i].owner();
                         let bad_value = block.shares[i].value() + ResiduePolyF4Z64::ONE;

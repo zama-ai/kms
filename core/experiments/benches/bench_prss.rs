@@ -1,9 +1,9 @@
-use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
 use std::sync::Arc;
+use threshold_types::rng::AesRng;
 
 const B_SWITCH_SQUASH: u128 = 1u128 << 70;
 use threshold_execution::{
@@ -50,7 +50,7 @@ fn bench_prss(c: &mut Criterion) {
         })
         .unwrap();
 
-    let mut state = prss.new_prss_session_state(sid);
+    let mut state = prss.new_prss_session_state(sid, bench_role).unwrap();
 
     for size in &sizes {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {

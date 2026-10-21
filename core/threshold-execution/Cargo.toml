@@ -9,7 +9,6 @@ description = "Execution runtime for MPC protocols, including distributed key ge
 
 [dependencies]
 aes.workspace = true
-aes-prng.workspace = true
 algebra.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

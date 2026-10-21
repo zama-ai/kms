@@ -538,8 +538,8 @@ mod tests {
     use std::num::Wrapping;
     use threshold_types::role::Role;
 
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use crate::error_correction::{
         FieldHints, ReconstructionHints, error_correction_with_field_hints,

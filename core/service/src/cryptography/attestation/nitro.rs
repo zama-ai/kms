@@ -114,11 +114,11 @@ mod tests {
 
     #[test]
     fn fixed_size_random_response_is_checked_before_copying() {
-        let bytes = extract_random::<{ aes_prng::SEED_SIZE }>(NSMResponse::GetRandom {
+        let bytes = extract_random::<{ threshold_types::rng::SEED_SIZE }>(NSMResponse::GetRandom {
             random: vec![0xA5; 256],
         })
         .unwrap();
-        assert_eq!(*bytes, [0xA5; aes_prng::SEED_SIZE]);
+        assert_eq!(*bytes, [0xA5; threshold_types::rng::SEED_SIZE]);
         assert!(
             extract_random::<16>(NSMResponse::GetRandom {
                 random: vec![0; 255]

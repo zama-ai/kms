@@ -6,15 +6,14 @@ use super::{
 };
 
 use crate::{
+    communication::broadcast::{Broadcast, SyncReliableBroadcast},
+    constants::{PRSS_GEN_PAR_MIN_CHUNK, PRSS_SIZE_MAX, STATSEC},
+    large_execution::vss::{SecureVss, Vss},
     network_value::BroadcastValue,
-    {
-        communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        constants::{PRSS_SIZE_MAX, STATSEC},
-        large_execution::vss::{SecureVss, Vss},
-        runtime::sessions::{
-            base_session::BaseSessionHandles, session_parameters::ParameterHandles,
-        },
-        small_execution::prf::{PhiAes, chi, phi_range, psi},
+    runtime::sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
+    small_execution::prf::{
+        CHI_COUNTER_BITS, PHI_COUNTER_BITS, PHI_MAX_BOUND, PSI_COUNTER_BITS, PhiAes,
+        accumulate_chi_counters, accumulate_psi_counters, check_counter_range, chi, phi_range, psi,
     },
 };
 use algebra::{
@@ -25,7 +24,7 @@ use algebra::{
 use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -59,8 +58,8 @@ pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
             .ok_or_else(|| anyhow_error_and_log("No PRZS value returned!"))
     }
 
-    async fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z> {
-        self.mask_next_vec(party_id, bd, 1)
+    async fn mask_next(&mut self, party_id: Role, base_bound: u128) -> anyhow::Result<Z> {
+        self.mask_next_vec(party_id, base_bound, 1)
             .await?
             .into_iter()
             .next()
@@ -77,7 +76,7 @@ pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
     async fn mask_next_vec(
         &mut self,
         party_id: Role,
-        bd: u128,
+        base_bound: u128,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>>;
 
@@ -100,7 +99,13 @@ pub trait DerivePRSSState<Z>: ProtocolDescription + Clone + Send + Sync {
     /// that is a PRSS state.
     /// A PRSS state is something that implements [`PRSSPrimitives`].
     type OutputType: PRSSPrimitives<Z> + 'static;
-    fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType;
+    /// Derives session keys and prepares coefficients for the node's own `role`.
+    /// Returns an error if the setup does not contain that party's required data.
+    fn new_prss_session_state(
+        &self,
+        sid: SessionId,
+        role: Role,
+    ) -> anyhow::Result<Self::OutputType>;
 }
 
 /// Trait to capture the init phase of the PRSS.
@@ -362,11 +367,17 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
     }
 }
 
+/// Prepared data for the local party. All subset arrays follow the epoch setup's order.
 #[derive(Debug, Clone)]
-pub(crate) struct PrfAes {
-    phi_aes: PhiAes,
-    psi_aes: PsiAes,
-    chi_aes: ChiAes,
+pub(crate) struct SessionPrfs<Z> {
+    role: Role,
+    psi: Box<[PsiAes]>,
+    /// Each subset's polynomial f_A evaluated at this party's point alpha_i.
+    f_a_at_role: Box<[Z]>,
+    phi: Box<[PhiAes]>,
+    chi: Box<[ChiAes]>,
+    /// This party's powers of alpha, starting with alpha^0.
+    alpha_powers: Box<[Z]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -552,14 +563,15 @@ pub struct PRSSCounters {
 
 /// PRSS state for use within a given session.
 /// Secure implementation of the [`PRSSPrimitives`] trait.
+/// Generation and check methods panic if the supplied role differs from the prepared role.
 #[derive(Debug, Clone)]
 pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
     /// set of counters that increases on every call to the respective .next()
     pub(crate) counters: PRSSCounters,
     /// PRSSSetup
     pub(crate) prss_setup: PRSSSetup<Z>,
-    /// the initialized PRFs for each set
-    pub(crate) prfs: Arc<Vec<PrfAes>>,
+    /// Prepared keys and coefficients retained by the session and its compute tasks.
+    pub(crate) prfs: Arc<SessionPrfs<Z>>,
     pub(crate) broadcast: B,
 }
 
@@ -623,6 +635,150 @@ where
     Ok(compute_powers_list(&parties, threshold))
 }
 
+/// Number of consecutive counters each PRSS/PRZS kernel encrypts with one AES call per subset key.
+/// F4 gives 4 blocks per counter, so 16 counters fill the x86 VAES-512 backend batch of 16 four-block registers.
+const PRF_COUNTER_GROUP: usize = 16;
+
+/// Computes PRSS values without submitting a task or advancing session counters. Each node computes its own shares
+/// using subset keys and coefficients prepared for its role when the session was constructed.
+/// The caller checks that all `amount` counters are below `2^PSI_COUNTER_BITS`.
+fn compute_prss<Z: Ring + PRSSConversions>(
+    prfs: &SessionPrfs<Z>,
+    prss_ctr: u128,
+    amount: usize,
+) -> Vec<Z> {
+    let mut shares = vec![Z::ZERO; amount];
+    // Rayon counts groups, while the setting counts output values.
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(PRF_COUNTER_GROUP);
+    shares
+        .par_chunks_mut(PRF_COUNTER_GROUP)
+        .with_min_len(min_groups)
+        .enumerate()
+        .for_each(|(group, outputs)| {
+            let ctr = prss_ctr + (group * PRF_COUNTER_GROUP) as u128;
+            let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+            // Hot loop: one AES call per subset key covers the whole group.
+            for (psi_key, &f_a_at_role) in prfs.psi.iter().zip(&prfs.f_a_at_role) {
+                if outputs.len() == PRF_COUNTER_GROUP {
+                    accumulate_psi_counters(psi_key, ctr, f_a_at_role, &mut sums);
+                } else {
+                    // Cold: the short final group. Evaluate only requested counters; padding could pass the limit.
+                    for (offset, sum) in sums[..outputs.len()].iter_mut().enumerate() {
+                        let ctr = ctr + offset as u128;
+                        accumulate_psi_counters(
+                            psi_key,
+                            ctr,
+                            f_a_at_role,
+                            std::array::from_mut(sum),
+                        );
+                    }
+                }
+            }
+            outputs.copy_from_slice(&sums[..outputs.len()]);
+        });
+    shares
+}
+
+/// Computes PRZS values without submitting a task or advancing session counters, like [`compute_prss`].
+/// The caller checks that all `amount` counters are below `2^CHI_COUNTER_BITS` when `threshold` is nonzero.
+fn compute_przs<Z: Ring + PRSSConversions>(
+    prfs: &SessionPrfs<Z>,
+    threshold: u8,
+    przs_ctr: u128,
+    amount: usize,
+) -> Vec<Z> {
+    let threshold = threshold as usize;
+    // No chi evaluations at threshold zero; chunks_exact requires a nonzero size.
+    if threshold == 0 {
+        return vec![Z::ZERO; amount];
+    }
+    // Per-set invariants, computed once instead of per element: the products
+    // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
+    // Store one row per subset in a single allocation, in the same order as chi.
+    let mut fa_alpha = Vec::with_capacity(prfs.f_a_at_role.len() * threshold);
+    for f_a_at_role in &prfs.f_a_at_role {
+        for alpha_j in &prfs.alpha_powers[1..threshold + 1] {
+            fa_alpha.push(*f_a_at_role * *alpha_j);
+        }
+    }
+
+    let mut shares = vec![Z::ZERO; amount];
+    let min_groups = (*PRSS_GEN_PAR_MIN_CHUNK).div_ceil(PRF_COUNTER_GROUP);
+    shares
+        .par_chunks_mut(PRF_COUNTER_GROUP)
+        .with_min_len(min_groups)
+        .enumerate()
+        .for_each(|(group, outputs)| {
+            let ctr = przs_ctr + (group * PRF_COUNTER_GROUP) as u128;
+            let mut sums = [Z::ZERO; PRF_COUNTER_GROUP];
+            // Hot loop: one AES call per (subset key, threshold index) covers the whole group.
+            for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold)) {
+                for (j_idx, &fa_alpha_j) in coefficients.iter().enumerate() {
+                    let j = (j_idx + 1) as u8;
+                    if outputs.len() == PRF_COUNTER_GROUP {
+                        accumulate_chi_counters(chi_aes, ctr, j, fa_alpha_j, &mut sums);
+                    } else {
+                        // Cold: the short final group, as in compute_prss.
+                        for (offset, sum) in sums[..outputs.len()].iter_mut().enumerate() {
+                            let ctr = ctr + offset as u128;
+                            accumulate_chi_counters(
+                                chi_aes,
+                                ctr,
+                                j,
+                                fa_alpha_j,
+                                std::array::from_mut(sum),
+                            );
+                        }
+                    }
+                }
+            }
+            outputs.copy_from_slice(&sums[..outputs.len()]);
+        });
+    shares
+}
+
+/// Computes PRSS-Mask values without submitting a task or advancing session counters, like [`compute_prss`].
+/// The caller checks that all `2 * amount` counters are below `2^PHI_COUNTER_BITS` and that `sampling_bound` is at
+/// most `2^126`.
+fn compute_mask<Z: Ring + PRSSConversions>(
+    prfs: &SessionPrfs<Z>,
+    mask_ctr: u128,
+    amount: usize,
+    sampling_bound: u128,
+) -> Vec<Z> {
+    // Element `idx` is the f_A-weighted sum over all sets of phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This
+    // matches repeated scalar calls while still batching each chunk's AES-PRF evaluations.
+    let chunk = *PRSS_GEN_PAR_MIN_CHUNK;
+    let mut res = vec![Z::ZERO; amount];
+    res.par_chunks_mut(chunk)
+        .enumerate()
+        .for_each(|(chunk_idx, out)| {
+            let lo = chunk_idx * chunk;
+            // Hot loop: one AES call per subset key covers the chunk's counter range.
+            for (&f_a_at_role, phi_aes) in prfs.f_a_at_role.iter().zip(prfs.phi.iter()) {
+                // Element `idx` consumes two distinct phi counters, matching one scalar mask_next().
+                let phi_vals = phi_range(
+                    phi_aes,
+                    mask_ctr + 2 * lo as u128,
+                    2 * out.len(),
+                    sampling_bound,
+                );
+
+                for (j, out_elem) in out.iter_mut().enumerate() {
+                    let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
+                    // mul_by_i128 scales by the signed scalar via from_i128, so it is a
+                    // cheap coefficient scale for ResiduePoly yet still correct for base
+                    // rings whose modulus does not divide 2^128 (e.g. the BGV prime
+                    // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
+                    // negative phi on such rings (the wrong large mask would wrap mod q and
+                    // corrupt the decrypted plaintext).
+                    *out_elem += f_a_at_role.mul_by_i128(phi);
+                }
+            }
+        });
+    res
+}
+
 #[async_trait]
 impl<Z, B> PRSSPrimitives<Z> for PRSSState<Z, B>
 where
@@ -635,70 +791,34 @@ where
     ///
     /// __NOTE__ : using [`STATSEC`] const.
     ///
-    /// __NOTE__ : The output share is not uniformly random,
-    /// and this method will panic if executed for Z an extension of Z64.
+    /// __NOTE__ : The output share is not uniformly random, and this method will panic if executed for Z an extension
+    /// of Z64.
     #[instrument(name="Mask.Next",skip_all,fields(batch_size=?amount))]
     async fn mask_next_vec(
         &mut self,
         party_role: Role,
-        bd: u128,
+        base_bound: u128,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
-        let bd1 = bd << STATSEC;
-
-        //Cheap to clone as everything is an Arc or atomic types
-        let prfs = self.prfs.clone();
-        let prss_setup = self.prss_setup.clone();
+        assert_eq!(party_role, self.prfs.role);
+        // Expand the protocol's base bound by the statistical security factor. Check before shifting so that a large
+        // bound cannot lose its high bits.
+        if base_bound > PHI_MAX_BOUND >> STATSEC {
+            return Err(anyhow_error_and_log(format!(
+                "mask.next: bound {base_bound} times 2^{STATSEC} exceeds 2^126"
+            )));
+        }
+        let sampling_bound = base_bound << STATSEC;
+        // The Rayon task owns this handle so it can outlive the awaiting future.
+        let prfs = Arc::clone(&self.prfs);
         let mask_ctr = self.counters.mask_ctr;
+        // Each element consumes two phi counters. Check the whole range once; phi_range asserts it.
+        check_counter_range("phi", mask_ctr, 2 * amount as u128, PHI_COUNTER_BITS)?;
 
-        // Element `idx` is the f_A-weighted sum over all sets of
-        // phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This matches repeated
-        // scalar calls while still batching each chunk's AES-PRF evaluations.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            let chunk = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).max(1);
-            let mut res = vec![Z::ZERO; amount];
-            res.par_chunks_mut(chunk)
-                .enumerate()
-                .try_for_each(|(chunk_idx, out)| -> anyhow::Result<()> {
-                    let lo = chunk_idx * chunk;
-                    for (i, set) in prss_setup.sets.iter().enumerate() {
-                        if !set.parties.contains(&party_role) {
-                            return Err(anyhow_error_and_log(format!(
-                                "Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!"
-                            )));
-                        }
-                        let aes_prf = prfs.get(i).ok_or_else(|| {
-                            anyhow_error_and_log("PRFs not properly initialized!".to_string())
-                        })?;
-                        // compute f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
-                        let f_a = set.f_a_points[&party_role];
-
-                        // One pipelined AES call for the chunk's counter range. Element `idx`
-                        // consumes two distinct phi counters, matching one scalar mask_next().
-                        let phi_vals = phi_range(
-                            &aes_prf.phi_aes,
-                            mask_ctr + 2 * lo as u128,
-                            2 * out.len(),
-                            bd1,
-                        )?;
-
-                        for (j, out_elem) in out.iter_mut().enumerate() {
-                            let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
-                            // mul_by_i128 scales by the signed scalar via from_i128, so it is a
-                            // cheap coefficient scale for ResiduePoly yet still correct for base
-                            // rings whose modulus does not divide 2^128 (e.g. the BGV prime
-                            // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
-                            // negative phi on such rings (the wrong large mask would wrap mod q and
-                            // corrupt the decrypted plaintext).
-                            *out_elem += f_a.mul_by_i128(phi);
-                        }
-                    }
-                    Ok(())
-                })?;
-            Ok(res)
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+        let res =
+            spawn_compute_bound(move || compute_mask(&prfs, mask_ctr, amount, sampling_bound))
+                .instrument(tracing::Span::current())
+                .await?;
 
         // Advance the counter by two per element, matching one mask_next() call per
         // element (each consumes two phi counters).
@@ -710,52 +830,23 @@ where
     /// PRSS.Next() for a single party
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
-    /// and we want to avoid creating too many telemetry spans
+    /// and we want to avoid creating too many telemetry spans.
+    /// Submits the synchronous kernel to Rayon; advances the counter only on success.
     #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
     async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
-        //Cheap to clone as everything is an Arc or atomic types
-        let prfs = self.prfs.clone();
-        let prss_setup = self.prss_setup.clone();
+        assert_eq!(party_role, self.prfs.role);
+        if amount == 0 {
+            return Ok(Vec::new());
+        }
         let prss_ctr = self.counters.prss_ctr;
+        // Check the whole range once; the PRFs assert it.
+        check_counter_range("psi", prss_ctr, amount as u128, PSI_COUNTER_BITS)?;
+        // The Rayon task owns this handle so it can outlive the awaiting future.
+        let prfs = Arc::clone(&self.prfs);
 
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = prss_ctr + idx`.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            if amount == 0 {
-                return Ok(Vec::new());
-            }
-
-            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
-            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
-            for (i, set) in prss_setup.sets.iter().enumerate() {
-                if !set.parties.contains(&party_role) {
-                    return Err(anyhow_error_and_log(format!(
-                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
-                    )));
-                }
-                let aes_prf = prfs.get(i).ok_or_else(|| {
-                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
-                })?;
-                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
-                set_data.push((aes_prf, set.f_a_points[&party_role]));
-            }
-
-            (0..amount)
-                .into_par_iter()
-                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
-                .map(|idx| {
-                    let ctr = prss_ctr + idx as u128;
-                    let mut res = Z::ZERO;
-                    for &(aes_prf, f_a) in &set_data {
-                        let psi = psi(&aes_prf.psi_aes, ctr)?;
-                        res += f_a * psi;
-                    }
-                    Ok(res)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+        let res = spawn_compute_bound(move || compute_prss(&prfs, prss_ctr, amount))
+            .instrument(tracing::Span::current())
+            .await?;
 
         self.counters.prss_ctr += amount as u128;
 
@@ -775,59 +866,27 @@ where
         threshold: u8,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
-        //Cheap to clone as everything is an Arc or atomic types
-        let prfs = self.prfs.clone();
-        let prss_setup = self.prss_setup.clone();
+        assert_eq!(party_role, self.prfs.role);
+        if self.prfs.alpha_powers.len() <= threshold as usize {
+            return Err(anyhow_error_and_log(format!(
+                "przs.next: missing alpha powers for party {party_role} at threshold {threshold}"
+            )));
+        }
+        if amount == 0 {
+            return Ok(Vec::new());
+        }
         let przs_ctr = self.counters.przs_ctr;
+        // Check the whole range once; the PRFs assert it. Threshold zero evaluates no chi.
+        if threshold > 0 {
+            check_counter_range("chi", przs_ctr, amount as u128, CHI_COUNTER_BITS)?;
+        }
+        // The Rayon task owns this handle so it can outlive the future.
+        let prfs = Arc::clone(&self.prfs);
 
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = przs_ctr + idx`.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            if amount == 0 {
-                return Ok(Vec::new());
-            }
-
-            // Per-set invariants, computed once instead of per element: the products
-            // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
-            let mut set_data: Vec<(&PrfAes, Vec<Z>)> = Vec::with_capacity(prss_setup.sets.len());
-            for (i, set) in prss_setup.sets.iter().enumerate() {
-                if !set.parties.contains(&party_role) {
-                    return Err(anyhow_error_and_log(format!(
-                        "Called przs.next() with party role {party_role} that is not in a precomputed set of parties!"
-                    )));
-                }
-                let aes_prf = prfs.get(i).ok_or_else(|| {
-                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
-                })?;
-                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
-                let f_a = set.f_a_points[&party_role];
-                let mut fa_alpha = Vec::with_capacity(threshold as usize);
-                for j in 1..=threshold {
-                    // power of alpha_i^j
-                    let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
-                    fa_alpha.push(f_a * alpha_j);
-                }
-                set_data.push((aes_prf, fa_alpha));
-            }
-
-            (0..amount)
-                .into_par_iter()
-                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
-                .map(|idx| {
-                    let ctr = przs_ctr + idx as u128;
-                    let mut res = Z::ZERO;
-                    for (aes_prf, fa_alpha) in &set_data {
-                        for (j_idx, fa_alpha_j) in fa_alpha.iter().enumerate() {
-                            let chi = chi(&aes_prf.chi_aes, ctr, (j_idx + 1) as u8)?;
-                            res += *fa_alpha_j * chi;
-                        }
-                    }
-                    Ok(res)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+        // Element `idx` uses `ctr = przs_ctr + idx`.
+        let res = spawn_compute_bound(move || compute_przs(&prfs, threshold, przs_ctr, amount))
+            .instrument(tracing::Span::current())
+            .await?;
 
         self.counters.przs_ctr += amount as u128;
 
@@ -842,19 +901,21 @@ where
         session: &mut S,
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>> {
+        assert_eq!(session.my_role(), self.prfs.role);
         let sets = &self.prss_setup.sets;
 
-        //Compute all psi values for subsets I am part of
+        if sets.len() != self.prfs.psi.len() {
+            return Err(anyhow_error_and_log(
+                "prss.check: subset and PRF counts differ",
+            ));
+        }
+
+        check_counter_range("psi", ctr, 1, PSI_COUNTER_BITS)?;
+        // Cold path: one psi per subset for a single counter.
         let mut psi_values = Vec::with_capacity(sets.len());
-        for (i, cur_set) in sets.iter().enumerate() {
-            if let Some(aes_prf) = &self.prfs.get(i) {
-                let psi = vec![psi(&aes_prf.psi_aes, ctr)?];
-                psi_values.push((cur_set.parties.clone(), psi));
-            } else {
-                return Err(anyhow_error_and_log(
-                    "PRFs not properly initialized!".to_string(),
-                ));
-            }
+        for (cur_set, psi_key) in sets.iter().zip(self.prfs.psi.iter()) {
+            let psi = vec![psi(psi_key, ctr)];
+            psi_values.push((cur_set.parties.clone(), psi));
         }
 
         //Broadcast (as sender and receiver) all the psi values
@@ -884,20 +945,24 @@ where
         session: &mut S,
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>> {
+        assert_eq!(session.my_role(), self.prfs.role);
         let sets = &self.prss_setup.sets;
+        if sets.len() != self.prfs.chi.len() {
+            return Err(anyhow_error_and_log(
+                "przs.check: subset and PRF counts differ",
+            ));
+        }
+        if session.threshold() > 0 {
+            check_counter_range("chi", ctr, 1, CHI_COUNTER_BITS)?;
+        }
+        // Cold path: one chi per subset and threshold index for a single counter.
         let mut chi_values = Vec::with_capacity(sets.len());
-        for (i, cur_set) in sets.iter().enumerate() {
-            if let Some(aes_prf) = &self.prfs.get(i) {
-                let mut chi_list = Vec::with_capacity(session.threshold() as usize);
-                for j in 1..=session.threshold() {
-                    chi_list.push(chi(&aes_prf.chi_aes, ctr, j)?);
-                }
-                chi_values.push((cur_set.parties.clone(), chi_list.clone()));
-            } else {
-                return Err(anyhow_error_and_log(
-                    "PRFs not properly initialized!".to_string(),
-                ));
+        for (cur_set, chi_aes) in sets.iter().zip(self.prfs.chi.iter()) {
+            let mut chi_list = Vec::with_capacity(session.threshold() as usize);
+            for j in 1..=session.threshold() {
+                chi_list.push(chi(chi_aes, ctr, j));
             }
+            chi_values.push((cur_set.parties.clone(), chi_list));
         }
 
         let broadcast_result = self
@@ -1170,28 +1235,59 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
     /// initializes a PRSS state for a new session
     /// PRxS counters are set to zero
     /// PRFs are initialized with agreed keys XORed with the session id
-    fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType {
-        let mut prfs = Vec::new();
+    fn new_prss_session_state(
+        &self,
+        sid: SessionId,
+        role: Role,
+    ) -> anyhow::Result<Self::OutputType> {
+        // Keep only our own row. The request's threshold is checked separately,
+        // since it is supplied to przs_next_vec rather than this constructor.
+        let alpha_powers = role
+            .get_from(&self.alpha_powers)
+            .filter(|powers| !powers.is_empty())
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "Cannot prepare PRSS session {sid}: missing alpha powers for party {role}"
+                ))
+            })?
+            .clone()
+            .into_boxed_slice();
+        let mut psi = Vec::with_capacity(self.sets.len());
+        let mut f_a_at_role = Vec::with_capacity(self.sets.len());
+        let mut phi = Vec::with_capacity(self.sets.len());
+        let mut chi = Vec::with_capacity(self.sets.len());
 
         // initialize AES PRFs once with random agreed keys and sid
         for set in self.sets.iter() {
-            let chi_aes = ChiAes::new(&set.set_key, sid);
-            let psi_aes = PsiAes::new(&set.set_key, sid);
-            let phi_aes = PhiAes::new(&set.set_key, sid);
-
-            prfs.push(PrfAes {
-                phi_aes,
-                psi_aes,
-                chi_aes,
-            });
+            if !set.parties.contains(&role) {
+                return Err(anyhow_error_and_log(format!(
+                    "Cannot prepare PRSS session {sid}: party {role} is not in a precomputed set of parties"
+                )));
+            }
+            let coefficient = *role.get_from(&set.f_a_points).ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "Cannot prepare PRSS session {sid}: missing coefficient for party {role}"
+                ))
+            })?;
+            psi.push(PsiAes::new(&set.set_key, sid));
+            f_a_at_role.push(coefficient);
+            phi.push(PhiAes::new(&set.set_key, sid));
+            chi.push(ChiAes::new(&set.set_key, sid));
         }
 
-        PRSSState {
+        Ok(PRSSState {
             counters: PRSSCounters::default(),
             prss_setup: self.clone(),
-            prfs: Arc::new(prfs),
+            prfs: Arc::new(SessionPrfs {
+                role,
+                psi: psi.into_boxed_slice(),
+                f_a_at_role: f_a_at_role.into_boxed_slice(),
+                phi: phi.into_boxed_slice(),
+                chi: chi.into_boxed_slice(),
+                alpha_powers,
+            }),
             broadcast: SyncReliableBroadcast::default(),
-        }
+        })
     }
 }
 
@@ -1226,7 +1322,6 @@ mod tests {
         },
         small_execution::agree_random::{AbortSecureAgreeRandom, DummyAgreeRandom},
     };
-    use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         randomness_check::execute_all_randomness_tests_loose,
@@ -1236,17 +1331,563 @@ mod tests {
         },
         structure_traits::{One, Zero},
     };
-    use futures_util::future::{join, join_all};
+    use futures_util::{
+        FutureExt,
+        future::{join, join_all},
+    };
     use hashing::hash_element_w_size;
     use rand::SeedableRng;
+    use rayon::iter::IntoParallelIterator;
     use rstest::rstest;
     use std::num::Wrapping;
+    use std::panic::AssertUnwindSafe;
     use std::sync::Arc;
     use test_utils::read_element;
     use tfhe::{FheUint8, set_server_key};
+    use threshold_types::rng::AesRng;
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 
     use tokio::task::JoinSet;
+
+    #[tokio::test]
+    async fn test_prepared_session_matches_epoch_data() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(3);
+            let threshold = 2;
+            let setup = PRSSSetup::<Z>::testing_party_epoch_init(7, threshold, role)
+                .await
+                .unwrap();
+
+            for sid in [SessionId::from(42), SessionId::from(1337)] {
+                // Derive the reference directly from epoch data, independently of
+                // the prepared arrays, to catch key/coefficient ordering mistakes.
+                let keys: Vec<_> = setup
+                    .sets
+                    .iter()
+                    .map(|set| {
+                        (
+                            PsiAes::new(&set.set_key, sid),
+                            ChiAes::new(&set.set_key, sid),
+                            PhiAes::new(&set.set_key, sid),
+                        )
+                    })
+                    .collect();
+                let state = setup.new_prss_session_state(sid, role).unwrap();
+                for amount in [0, 1, 17, 2049] {
+                    let start = 255;
+                    let mut expected_prss = vec![Z::ZERO; amount];
+                    for (set, (psi_key, _, _)) in setup.sets.iter().zip(&keys) {
+                        let f_a = set.f_a_points[&role];
+                        for (idx, value) in expected_prss.iter_mut().enumerate() {
+                            let ctr = start + idx as u128;
+                            *value += f_a * psi(psi_key, ctr);
+                        }
+                    }
+                    assert_eq!(compute_prss(&state.prfs, start, amount), expected_prss);
+                    let mut request = state.clone();
+                    request.counters.prss_ctr = start;
+                    assert_eq!(
+                        request.prss_next_vec(role, amount).await.unwrap(),
+                        expected_prss
+                    );
+                    assert_eq!(request.counters.prss_ctr, start + amount as u128);
+
+                    // Check thresholds 0, 1, and 2 against expected values derived directly from the epoch data.
+                    for requested_threshold in 0..=threshold {
+                        let mut expected_przs = vec![Z::ZERO; amount];
+                        for (set, (_, chi_key, _)) in setup.sets.iter().zip(&keys) {
+                            let f_a = set.f_a_points[&role];
+                            for (idx, value) in expected_przs.iter_mut().enumerate() {
+                                let ctr = start + idx as u128;
+                                for (j, alpha_power) in setup.alpha_powers[&role]
+                                    .iter()
+                                    .enumerate()
+                                    .skip(1)
+                                    .take(requested_threshold)
+                                {
+                                    *value += (f_a * *alpha_power) * chi(chi_key, ctr, j as u8);
+                                }
+                            }
+                        }
+                        request.counters.przs_ctr = start;
+                        assert_eq!(
+                            request
+                                .przs_next_vec(role, requested_threshold as u8, amount)
+                                .await
+                                .unwrap(),
+                            expected_przs
+                        );
+                        assert_eq!(request.counters.przs_ctr, start + amount as u128);
+                    }
+
+                    // Noise-flooding masks use the Z128 rings. Exercise the phi
+                    // array separately so all three PRF domains retain their mapping.
+                    if Z::NUM_BITS_STAT_SEC_BASE_RING == 128 {
+                        let mut expected_mask = vec![Z::ZERO; amount];
+                        for (set, (_, _, phi_key)) in setup.sets.iter().zip(&keys) {
+                            let phi =
+                                phi_range(phi_key, start, 2 * amount, B_SWITCH_SQUASH << STATSEC);
+                            for (idx, value) in expected_mask.iter_mut().enumerate() {
+                                *value += set.f_a_points[&role]
+                                    .mul_by_i128(phi[2 * idx] + phi[2 * idx + 1]);
+                            }
+                        }
+                        request.counters.mask_ctr = start;
+                        assert_eq!(
+                            request
+                                .mask_next_vec(role, B_SWITCH_SQUASH, amount)
+                                .await
+                                .unwrap(),
+                            expected_mask
+                        );
+                        assert_eq!(request.counters.mask_ctr, start + 2 * amount as u128);
+                    }
+                }
+            }
+        }
+
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    // Scalar reference keeps the per-counter traversal independent of the batched implementation.
+    fn compute_prss_scalar<Z: Ring + PRSSConversions>(
+        psi_keys: &[PsiAes],
+        f_a_at_role: &[Z],
+        prss_ctr: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        // Written independently of check_counter_range: the last counter must stay below 2^112.
+        if amount > 0 && prss_ctr + amount as u128 > 1 << 112 {
+            anyhow::bail!("psi counter range exceeded");
+        }
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
+        Ok((0..amount)
+            .into_par_iter()
+            .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
+            .map(|idx| {
+                let ctr = prss_ctr + idx as u128;
+                let mut res = Z::ZERO;
+                for (psi_key, f_a_at_role) in psi_keys.iter().zip(f_a_at_role) {
+                    res += *f_a_at_role * psi(psi_key, ctr);
+                }
+                res
+            })
+            .collect())
+    }
+
+    fn compute_przs_scalar<Z: Ring + PRSSConversions>(
+        prfs: &SessionPrfs<Z>,
+        threshold: u8,
+        przs_ctr: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        let threshold = threshold as usize;
+        // No chi evaluations at threshold zero; chunks_exact requires a nonzero size.
+        if threshold == 0 {
+            return Ok(vec![Z::ZERO; amount]);
+        }
+        // Written independently of check_counter_range: the last counter must stay below 2^104.
+        if amount > 0 && przs_ctr + amount as u128 > 1 << 104 {
+            anyhow::bail!("chi counter range exceeded");
+        }
+        // Per-set invariants, computed once instead of per element: the products
+        // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
+        // Store one row per subset in a single allocation, in the same order as chi.
+        let mut fa_alpha = Vec::with_capacity(prfs.f_a_at_role.len() * threshold);
+        for f_a_at_role in &prfs.f_a_at_role {
+            for alpha_j in &prfs.alpha_powers[1..threshold + 1] {
+                fa_alpha.push(*f_a_at_role * *alpha_j);
+            }
+        }
+
+        Ok((0..amount)
+            .into_par_iter()
+            .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
+            .map(|idx| {
+                let ctr = przs_ctr + idx as u128;
+                let mut res = Z::ZERO;
+                for (chi_aes, coefficients) in prfs.chi.iter().zip(fa_alpha.chunks_exact(threshold))
+                {
+                    for (j_idx, fa_alpha_j) in coefficients.iter().enumerate() {
+                        res += *fa_alpha_j * chi(chi_aes, ctr, (j_idx + 1) as u8);
+                    }
+                }
+                res
+            })
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn test_prepared_batched_matches_scalar() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let initial = setup
+                    .new_prss_session_state(SessionId::from(42), role)
+                    .unwrap();
+                let limit = 1_u128 << 112;
+                // Full groups, every tail length, Rayon splitting, and counter exhaustion. Nonzero starts also
+                // exercise byte carries in AES inputs.
+                for (start, amount) in [
+                    (255, 0),
+                    (255, 1),
+                    (255, 2),
+                    (255, 3),
+                    (255, 4),
+                    (255, 5),
+                    (255, 6),
+                    (255, 7),
+                    (255, 8),
+                    (255, 9),
+                    (255, 10),
+                    (255, 11),
+                    (255, 12),
+                    (255, 13),
+                    (255, 14),
+                    (255, 15),
+                    (255, 16),
+                    (255, 17),
+                    (255, 31),
+                    (255, 32),
+                    (255, 33),
+                    (255, 2049),
+                    (limit - 16, 16),
+                    (limit - 16, 17),
+                    (limit - 8, 8),
+                    (limit - 8, 9),
+                    (limit - 4, 4),
+                    (limit - 7, 7),
+                    (limit - 3, 4),
+                    (limit - 4, 5),
+                    (limit, 0),
+                    (limit, 1),
+                ] {
+                    let mut scalar = initial.clone();
+                    let mut batched = initial.clone();
+                    scalar.counters.prss_ctr = start;
+                    batched.counters.prss_ctr = start;
+                    let expected = compute_prss_scalar(
+                        &scalar.prfs.psi,
+                        &scalar.prfs.f_a_at_role,
+                        start,
+                        amount,
+                    );
+                    if expected.is_ok() {
+                        scalar.counters.prss_ctr += amount as u128;
+                    }
+                    let actual = batched.prss_next_vec(role, amount).await;
+                    match (expected, actual) {
+                        (Ok(expected), Ok(actual)) => assert_eq!(actual, expected),
+                        (Err(_), Err(_)) => assert_eq!(batched.counters.prss_ctr, start),
+                        mismatch => panic!("start={start}, amount={amount}: {mismatch:?}"),
+                    }
+                    assert_eq!(batched.counters.prss_ctr, scalar.counters.prss_ctr);
+                    assert_eq!(batched.counters.przs_ctr, scalar.counters.przs_ctr);
+                    assert_eq!(batched.counters.mask_ctr, scalar.counters.mask_ctr);
+                }
+                let mut batched = initial.clone();
+                for amount in [0, 4] {
+                    assert!(
+                        AssertUnwindSafe(batched.prss_next_vec(Role::indexed_from_one(2), amount))
+                            .catch_unwind()
+                            .await
+                            .is_err()
+                    );
+                    assert_eq!(batched.counters.prss_ctr, 0);
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    #[tokio::test]
+    async fn test_przs_batched_matches_scalar() {
+        async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let initial = setup
+                    .new_prss_session_state(SessionId::from(42), role)
+                    .unwrap();
+                let limit = 1_u128 << 104;
+                // Threshold zero must keep producing zero shares without evaluating chi, even at its counter limit.
+                for requested_threshold in 0..=threshold as u8 {
+                    for (start, amount) in [
+                        (255, 0),
+                        (255, 1),
+                        (255, 2),
+                        (255, 3),
+                        (255, 4),
+                        (255, 5),
+                        (255, 6),
+                        (255, 7),
+                        (255, 8),
+                        (255, 9),
+                        (255, 10),
+                        (255, 11),
+                        (255, 12),
+                        (255, 13),
+                        (255, 14),
+                        (255, 15),
+                        (255, 16),
+                        (255, 17),
+                        (255, 31),
+                        (255, 32),
+                        (255, 33),
+                        (255, 2049),
+                        (limit - 16, 16),
+                        (limit - 16, 17),
+                        (limit - 8, 8),
+                        (limit - 8, 9),
+                        (limit - 4, 4),
+                        (limit - 7, 7),
+                        (limit - 3, 4),
+                        (limit - 4, 5),
+                        (limit, 0),
+                        (limit, 1),
+                    ] {
+                        let mut batched = initial.clone();
+                        batched.counters.przs_ctr = start;
+                        let expected =
+                            compute_przs_scalar(&batched.prfs, requested_threshold, start, amount);
+                        let expected_ctr = if expected.is_ok() {
+                            start + amount as u128
+                        } else {
+                            start
+                        };
+                        let actual = batched
+                            .przs_next_vec(role, requested_threshold, amount)
+                            .await;
+                        match (expected, actual) {
+                            (Ok(expected), Ok(actual)) => assert_eq!(actual, expected),
+                            (Err(_), Err(_)) => {}
+                            mismatch => panic!(
+                                "threshold={requested_threshold}, start={start}, amount={amount}: {mismatch:?}"
+                            ),
+                        }
+                        assert_eq!(batched.counters.przs_ctr, expected_ctr);
+                        assert_eq!(batched.counters.prss_ctr, initial.counters.prss_ctr);
+                        assert_eq!(batched.counters.mask_ctr, initial.counters.mask_ctr);
+                    }
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
+    }
+
+    #[tokio::test]
+    async fn test_prepared_session_rejects_invalid_setup() {
+        let role = Role::indexed_from_one(2);
+        let sid = SessionId::from(42);
+        let mut setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        // Role 2's setup includes the subset {2, 3, 4}, which excludes role 1.
+        let error = setup
+            .new_prss_session_state(sid, Role::indexed_from_one(1))
+            .err()
+            .expect("another party's setup must be rejected");
+        assert!(error.to_string().contains("is not in a precomputed set"));
+
+        for missing_row in [false, true] {
+            let mut invalid_setup = setup.clone();
+            let powers = Arc::make_mut(&mut invalid_setup.alpha_powers);
+            if missing_row {
+                powers.clear();
+            } else {
+                powers[&role].clear();
+            }
+            let error = invalid_setup
+                .new_prss_session_state(sid, role)
+                .err()
+                .expect("missing alpha powers must be rejected");
+            assert!(error.to_string().contains("missing alpha powers"));
+        }
+
+        Arc::make_mut(&mut setup.sets)[0].f_a_points.clear();
+        let error = setup
+            .new_prss_session_state(sid, role)
+            .err()
+            .expect("a missing coefficient must be rejected");
+        assert!(error.to_string().contains("missing coefficient"));
+    }
+
+    #[tokio::test]
+    async fn test_prepared_session_errors_preserve_counters() {
+        let role = Role::indexed_from_one(2);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let mut state = setup
+            .new_prss_session_state(SessionId::from(42), role)
+            .unwrap();
+        let wrong_role = Role::indexed_from_one(1);
+        let mut wrong_session = get_networkless_base_session_for_parties(4, 1, wrong_role);
+        // Role mismatches are caller bugs. Each assertion must run before any
+        // computation or counter change, including for empty requests.
+        assert!(
+            AssertUnwindSafe(state.prss_check(&mut wrong_session, 0))
+                .catch_unwind()
+                .await
+                .is_err()
+        );
+        assert!(
+            AssertUnwindSafe(state.przs_check(&mut wrong_session, 0))
+                .catch_unwind()
+                .await
+                .is_err()
+        );
+        for amount in [0, 1] {
+            assert!(
+                AssertUnwindSafe(state.prss_next_vec(wrong_role, amount))
+                    .catch_unwind()
+                    .await
+                    .is_err()
+            );
+            assert!(
+                AssertUnwindSafe(state.przs_next_vec(wrong_role, 1, amount))
+                    .catch_unwind()
+                    .await
+                    .is_err()
+            );
+            assert!(
+                AssertUnwindSafe(state.mask_next_vec(wrong_role, B_SWITCH_SQUASH, amount))
+                    .catch_unwind()
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(state.counters.prss_ctr, 0);
+        assert_eq!(state.counters.przs_ctr, 0);
+        assert_eq!(state.counters.mask_ctr, 0);
+
+        for amount in [0, 1] {
+            let error = state.przs_next_vec(role, 2, amount).await.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("przs.next: missing alpha powers")
+            );
+            assert_eq!(state.counters.przs_ctr, 0);
+        }
+
+        let limit = 1_u128 << 112;
+        state.counters.prss_ctr = limit - 1;
+        assert!(state.prss_next_vec(role, 2).await.is_err());
+        assert_eq!(state.counters.prss_ctr, limit - 1);
+        assert_eq!(state.prss_next_vec(role, 1).await.unwrap().len(), 1);
+        assert_eq!(state.counters.prss_ctr, limit);
+        assert!(state.prss_next_vec(role, 1).await.is_err());
+        assert_eq!(state.counters.prss_ctr, limit);
+        // Empty requests consume no randomness, including at the counter limit.
+        assert!(state.prss_next_vec(role, 0).await.unwrap().is_empty());
+        assert_eq!(state.counters.prss_ctr, limit);
+
+        // PRZS checks its range only when it evaluates chi.
+        let limit = 1_u128 << 104;
+        state.counters.przs_ctr = limit - 1;
+        assert!(state.przs_next_vec(role, 1, 2).await.is_err());
+        assert_eq!(state.counters.przs_ctr, limit - 1);
+        assert_eq!(state.przs_next_vec(role, 1, 1).await.unwrap().len(), 1);
+        assert_eq!(state.counters.przs_ctr, limit);
+        assert!(state.przs_next_vec(role, 1, 1).await.is_err());
+        assert_eq!(
+            state.przs_next_vec(role, 0, 1).await.unwrap(),
+            vec![ResiduePolyF4Z128::ZERO]
+        );
+
+        // Each mask element consumes two phi counters.
+        let limit = 1_u128 << 120;
+        state.counters.mask_ctr = limit - 3;
+        assert!(state.mask_next_vec(role, B_SWITCH_SQUASH, 2).await.is_err());
+        assert_eq!(state.counters.mask_ctr, limit - 3);
+        assert_eq!(
+            state
+                .mask_next_vec(role, B_SWITCH_SQUASH, 1)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(state.counters.mask_ctr, limit - 1);
+        // A bound whose sampling bound exceeds 2^126 is rejected before shifting.
+        state.counters.mask_ctr = 0;
+        let error = state
+            .mask_next_vec(role, (PHI_MAX_BOUND >> STATSEC) + 1, 1)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 2^126"));
+        assert_eq!(state.counters.mask_ctr, 0);
+    }
+
+    #[tokio::test]
+    async fn test_prepared_session_checks_reject_counters_past_the_limit() {
+        let role = Role::indexed_from_one(2);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let state = setup
+            .new_prss_session_state(SessionId::from(42), role)
+            .unwrap();
+        let mut session = get_networkless_base_session_for_parties(4, 1, role);
+        // Both checks must fail before evaluating a PRF or broadcasting.
+        let error = state.prss_check(&mut session, 1 << 112).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("psi counters must stay below 2^112")
+        );
+        let error = state.przs_check(&mut session, 1 << 104).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("chi counters must stay below 2^104")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_prepared_session_checks_reject_mismatched_arrays() {
+        let role = Role::indexed_from_one(2);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let mut state = setup
+            .new_prss_session_state(SessionId::from(42), role)
+            .unwrap();
+        let mut session = get_networkless_base_session_for_parties(4, 1, role);
+
+        // Both checks must reject incomplete keys before attempting a broadcast.
+        let mut invalid_prss = state.clone();
+        Arc::make_mut(&mut invalid_prss.prfs).psi = Box::default();
+        let error = invalid_prss.prss_check(&mut session, 0).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("prss.check: subset and PRF counts differ")
+        );
+        Arc::make_mut(&mut state.prfs).chi = Box::default();
+        let error = state.przs_check(&mut session, 0).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("przs.check: subset and PRF counts differ")
+        );
+    }
 
     // async helper function that creates the prss setups
     async fn setup_prss_sess<Z: ErrorCorrect + Invert, P: PRSSInit<Z> + Clone + 'static>(
@@ -1323,7 +1964,7 @@ mod tests {
             .await
             .unwrap();
 
-            let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid, *p).unwrap();
 
             assert_eq!(state.counters.mask_ctr, 0);
 
@@ -1401,7 +2042,7 @@ mod tests {
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key));
         runtime.setup_sks(key_shares);
 
-        let mut seed = [0_u8; aes_prng::SEED_SIZE];
+        let mut seed = [0_u8; threshold_types::rng::SEED_SIZE];
         // create sessions for each prss party
         let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = join_all(roles.iter().map(|p| {
             seed[0] = p.one_based() as u8;
@@ -1476,7 +2117,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut state = prss.new_prss_session_state(sid);
+        let mut state = prss.new_prss_session_state(sid, role_one).unwrap();
 
         assert_eq!(state.counters.mask_ctr, 0);
 
@@ -1518,7 +2159,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut scalar_state = prss.new_prss_session_state(sid, role_one).unwrap();
         let mut batch_state = scalar_state.clone();
 
         // `amount` sequential scalar mask_next() calls ...
@@ -1573,7 +2214,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut scalar_state = prss.new_prss_session_state(sid, role_one).unwrap();
         let mut batch_state = scalar_state.clone();
 
         let mut scalar_values = Vec::with_capacity(amount);
@@ -1619,7 +2260,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut scalar_state = prss.new_prss_session_state(sid, role_one).unwrap();
         let mut batch_state = scalar_state.clone();
 
         let mut scalar_values = Vec::with_capacity(amount);
@@ -1737,7 +2378,7 @@ mod tests {
                     .await
                     .unwrap();
 
-            let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid, p).unwrap();
 
             assert_eq!(state.counters.przs_ctr, 0);
 
@@ -1773,7 +2414,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid, p).unwrap();
 
             // check that counters are initialized with sid
             assert_eq!(state.counters.prss_ctr, 0);
@@ -1819,7 +2460,7 @@ mod tests {
         let mut psi_sum = ResiduePolyF4Z128::ZERO;
         for (idx, _set) in all_sets.iter().enumerate() {
             let psi_aes = PsiAes::new(&keys[idx], sid);
-            let psi: ResiduePolyF4Z128 = psi(&psi_aes, 0).unwrap();
+            let psi: ResiduePolyF4Z128 = psi(&psi_aes, 0);
             psi_sum += psi
         }
         tracing::info!("reconstructed psi sum: {:?}", psi_sum);
@@ -2175,7 +2816,9 @@ mod tests {
                 .init(&mut session)
                 .await
                 .unwrap();
-        let state = prss_setup.new_prss_session_state(session.session_id());
+        let state = prss_setup
+            .new_prss_session_state(session.session_id(), session.my_role())
+            .unwrap();
 
         // clone state so we can iterate over the PRFs and call next/compute at the same time.
         let mut cloned_state = state.clone();
@@ -2184,7 +2827,7 @@ mod tests {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
             let psi_next = cloned_state.prss_next(role).await.unwrap();
 
-            let local_psi = psi(&state.prfs[i].psi_aes, state.counters.prss_ctr).unwrap();
+            let local_psi = psi(&state.prfs.psi[i], state.counters.prss_ctr);
             let local_psi_value = vec![local_psi];
             let true_psi_vals = HashMap::from([(&set.parties, &local_psi_value)]);
 
@@ -2491,7 +3134,9 @@ mod tests {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
             let secure_prss_init = PRSSHonest::default();
             let setup = secure_prss_init.init(&mut session).await.unwrap();
-            let mut state = setup.new_prss_session_state(session.session_id());
+            let mut state = setup
+                .new_prss_session_state(session.session_id(), session.my_role())
+                .unwrap();
             let role = session.my_role();
             let threshold = session.threshold();
             let prss_output_shares = state
@@ -2534,7 +3179,9 @@ mod tests {
         let mut task_malicious =
             |mut session: SmallSession<Z>, malicious_prss_init: PRSSMalicious| async move {
                 let setup = malicious_prss_init.init(&mut session).await.unwrap();
-                let mut state = setup.new_prss_session_state(session.session_id());
+                let mut state = setup
+                    .new_prss_session_state(session.session_id(), session.my_role())
+                    .unwrap();
                 let role = session.my_role();
                 let threshold = session.threshold();
                 let prss_output_shares = state

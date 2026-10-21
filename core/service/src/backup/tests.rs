@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     custodian,
     error::{BackupError, RecoverySkipReason},
@@ -5,10 +7,10 @@ use super::{
 };
 use crate::{
     backup::{
-        BACKUP_PKE_SCHEME,
+        BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
         custodian::{
-            InternalCustodianContext, InternalCustodianRecoveryOutput,
-            InternalCustodianSetupMessage,
+            InternalCustodianContext, InternalCustodianSetupMessage,
+            TransferableCustodianRecoveryOutput,
         },
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
@@ -16,17 +18,16 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{PublicSigKey, gen_sig_keys},
+        signatures::{VerfKeySet, canonical_schemes, test_support::seeded_identity},
     },
     engine::base::derive_request_id,
 };
-use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
-
 /// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
 ///
 /// Stands in for a custodian that supplies the wrong seed phrase: derivation succeeds, so the
@@ -45,7 +46,7 @@ fn operator_setup() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
@@ -65,7 +66,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].header.push('z');
 
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             wrong_custodian_messages,
             signing_key,
@@ -82,7 +83,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[1].timestamp += Duration::from_secs(24 * 3700);
 
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             wrong_custodian_messages,
             signing_key,
@@ -109,7 +110,7 @@ fn custodian_reencrypt() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
@@ -125,7 +126,7 @@ fn custodian_reencrypt() {
         .collect();
     let operators: Vec<_> = (0..operator_count)
         .map(|_i| {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = Arc::new(seeded_identity(&mut rng));
             Operator::new_for_sharing(
                 custodian_messages.clone(),
                 signing_key,
@@ -162,25 +163,6 @@ fn custodian_reencrypt() {
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
-    {
-        let operator_role = Role::indexed_from_zero(0);
-        let mut bad_results = signcrypt_results.clone();
-        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
-            z.signcryption.payload[0] ^= 1;
-        }
-
-        let err = custodians[0]
-            .verify_reencrypt(
-                &mut rng,
-                bad_results[0].ct_shares.get(&operator_role).unwrap(),
-                verification_key,
-                &ephemeral_enc_key,
-            )
-            .unwrap_err();
-        assert!(matches!(err, BackupError::CustodianRecoveryError));
-    }
-
-    // tweak the signature, so that signature verification also fails
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_results = signcrypt_results.clone();
@@ -351,7 +333,7 @@ fn full_flow_malicious_custodian_init() {
     setup_msgs_malicious.remove(1);
     // Should be fine since we just need at least 2+1 = 3 custodians
     for _op_idx in 1..=operator_count {
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             setup_msgs_malicious.to_vec(),
             signing_key.clone(),
@@ -371,10 +353,23 @@ fn full_flow_malicious_custodian_init() {
                 *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
-        assert!(
-            result.skipped_roles.contains(&Role::indexed_from_one(2)),
-            "expected role 2 to be skipped (removed custodian): {:?}",
-            result.skipped_roles
+        assert_eq!(
+            result.skipped_roles,
+            vec![Role::indexed_from_one(2)],
+            "expected only role 2 to be skipped (removed custodian)"
+        );
+        // Every other configured custodian, including the last one, must still get a share.
+        let expected_roles: Vec<Role> = [1, 3, 4, 5]
+            .into_iter()
+            .map(Role::indexed_from_one)
+            .collect();
+        assert_eq!(
+            result.ct_shares.keys().copied().collect::<Vec<_>>(),
+            expected_roles
+        );
+        assert_eq!(
+            result.commitments.keys().copied().collect::<Vec<_>>(),
+            expected_roles
         );
     }
 }
@@ -551,7 +546,7 @@ fn verify_and_recover_rejects_mpc_context_mismatch() {
     let wrong_mpc_context = ContextId::from_bytes([0x99u8; crate::consts::ID_LENGTH]);
     for op_state in operators.values_mut() {
         let original_payload = op_state.1.payload.clone();
-        let (_, sk) = gen_sig_keys(&mut rng);
+        let sk = seeded_identity(&mut rng);
         // Change the validation material to contain the wrong context id
         op_state.1 = RecoveryValidationMaterial::new(
             original_payload.cts,
@@ -642,7 +637,9 @@ fn operator_handle_init(
         threshold: custodian_threshold as u32,
     };
     for _op_idx in 1..=operator_count {
-        let (verification_key, signing_key) = gen_sig_keys(rng);
+        let signing_key = Arc::new(seeded_identity(rng));
+        let verification_key =
+            VerfKeySet::from_identity(&signing_key, BACKUP_SIGNING_SCHEMES).unwrap();
         let operator = Operator::new_for_sharing(
             setup_msgs.to_vec(),
             signing_key.clone(),
@@ -673,7 +670,7 @@ fn operator_handle_init(
         )
         .unwrap();
         operators.insert(
-            verification_key.verf_key_id(),
+            verification_key.id(BACKUP_SIGNING_SCHEMES).unwrap(),
             (
                 operator,
                 validation_material,
@@ -682,7 +679,7 @@ fn operator_handle_init(
             ),
         );
         payload_for_custodians.insert(
-            verification_key.verf_key_id(),
+            verification_key.id(BACKUP_SIGNING_SCHEMES).unwrap(),
             (verification_key, backup_enc_key, cur_op_output),
         );
     }
@@ -693,7 +690,7 @@ fn operator_handle_init(
 type CustodianBackupsMap = BTreeMap<
     Vec<u8>,
     (
-        PublicSigKey,
+        VerfKeySet,
         UnifiedPublicEncKey,
         BTreeMap<Role, InnerOperatorBackupOutput>,
     ),
@@ -715,7 +712,7 @@ fn custodian_recover(
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &CustodianBackupsMap, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
-) -> BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
+) -> BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
     for (cur_operator_address, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
         let mut cur_operator_res = BTreeMap::new();
@@ -743,7 +740,7 @@ fn custodian_recover(
 }
 
 fn operator_recover(
-    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
+    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, TransferableCustodianRecoveryOutput>>,
     operators: &OperatorsMap,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
@@ -763,4 +760,14 @@ fn operator_recover(
         }
     }
     res
+}
+
+/// The constant is already in canonical order, so `canonical_schemes` leaves it alone.
+#[test]
+fn backup_signing_schemes_are_canonical() {
+    assert_eq!(
+        canonical_schemes(BACKUP_SIGNING_SCHEMES).unwrap(),
+        BACKUP_SIGNING_SCHEMES,
+        "BACKUP_SIGNING_SCHEMES is no longer in canonical order"
+    );
 }

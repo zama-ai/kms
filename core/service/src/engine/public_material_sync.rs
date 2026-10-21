@@ -470,11 +470,11 @@ mod tests {
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::{DummyReadOnlyS3Storage, DummyReadOnlyS3StorageGetter};
     use crate::vault::storage::store_context_at_id;
-    use aes_prng::AesRng;
     use hashing::hash_element;
     use kms_grpc::ContextId;
     use rand::SeedableRng;
     use std::cell::RefCell;
+    use threshold_types::rng::AesRng;
 
     const PUBLIC_KEY_BYTES: &[u8] = b"public key bytes";
     const SERVER_KEY_BYTES: &[u8] = b"server key bytes";

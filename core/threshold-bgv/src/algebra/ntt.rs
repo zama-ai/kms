@@ -221,8 +221,8 @@ mod tests {
     use super::*;
     use algebra::structure_traits::{Sample, Zero};
 
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     fn naive_mul<T>(a: &[T], b: &[T], n: usize) -> Vec<T>
     where

@@ -6,9 +6,9 @@
 #[path = "../../utilities.rs"]
 mod utilities;
 
-use aes_prng::AesRng;
 use rand::prelude::*;
 use tfhe::{CompactPublicKey, FheUint64, ReRandomizationContext, prelude::*, set_server_key};
+use threshold_types::rng::AesRng;
 use utilities::{ALL_PARAMS, generate_tfhe_keys, set_plan};
 
 /// This one uses overflowing sub to remove the need for comparison

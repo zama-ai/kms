@@ -14,7 +14,6 @@ use crate::{
         },
     },
 };
-use aes_prng::AesRng;
 use kms_grpc::{
     EpochId, RequestId,
     rpc_types::{PrivDataType, PubDataType},
@@ -32,6 +31,7 @@ use threshold_execution::tfhe_internals::{
     public_keysets::FhePubKeySet,
     test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
 };
+use threshold_types::rng::AesRng;
 use tokio::sync::{Mutex, RwLock};
 
 use super::base::{BackupPolicy, StorageError, update_meta_store};

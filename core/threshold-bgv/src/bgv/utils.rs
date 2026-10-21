@@ -21,9 +21,9 @@ use tokio::time::timeout_at;
 
 pub fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
     use rand::SeedableRng;
-    let mut rng = aes_prng::AesRng::seed_from_u64(0);
+    let mut rng = threshold_types::rng::AesRng::seed_from_u64(0);
 
-    let (pk, sk) = keygen::<aes_prng::AesRng, LevelEll, LevelKsw, N65536>(
+    let (pk, sk) = keygen::<threshold_types::rng::AesRng, LevelEll, LevelKsw, N65536>(
         &mut rng,
         crate::constants::PLAINTEXT_MODULUS.get().0,
     );

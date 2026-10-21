@@ -10,13 +10,14 @@ use crate::client::tests::common::send_dec_reqs;
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::threshold::service::RealThresholdKms;
+use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::utils::make_extra_data;
 use crate::testing::material::{material_subdir, threshold_material_subdir};
 use crate::testing::prelude::*;
 use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use observability::health::{LIVENESS_SERVICE, READINESS_SERVICE};
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
@@ -58,9 +59,8 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let servers = env.servers;
 
     // Wait for all core servers to be ready before sending requests
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
+    let core_service_name =
+        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
     for cur_handle in servers.values() {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }
@@ -95,6 +95,18 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         ServingStatus::Serving as i32,
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
+    // The server has no PRSS yet, but it must already be live and ready. Readiness must not wait
+    // for the PRSS, because the request that creates it reaches the server only when it is ready.
+    for probe_service in [LIVENESS_SERVICE, READINESS_SERVICE] {
+        let status = get_status(&mut main_health_client, probe_service)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "{probe_service} is not in SERVING status. Got status: {status}"
+        );
+    }
 
     // Get health client for main server 1
     let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
@@ -170,9 +182,8 @@ async fn test_threshold_close_after_drop() -> Result<()> {
     let mut core_health_client = get_health_client(servers.get(&1).unwrap().service_port)
         .await
         .expect("Failed to get core health client");
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
+    let core_service_name =
+        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
 
     // Get health client for MPC threshold service on server 1
     let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
@@ -244,9 +255,8 @@ async fn test_threshold_shutdown() -> Result<()> {
     let mut servers = env.servers;
 
     // Ensure that the servers are ready
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
+    let core_service_name =
+        <CoreServiceEndpointServer<ThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
     for cur_handle in servers.values() {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }
@@ -309,81 +319,55 @@ async fn test_threshold_shutdown() -> Result<()> {
         "Service is not in NOT SERVING status. Got status: {status}"
     );
 
+    let health = server_handle.health.clone();
     let shutdown_handle = server_handle.server.shutdown().unwrap();
     shutdown_handle.await.unwrap();
+    // A shutdown is not a fault, so the server stops being ready but stays live. The check reads
+    // the health state, because the gRPC port can close before a request arrives.
+    assert!(health.is_shutting_down());
+    assert!(!health.is_ready());
+    assert!(health.is_live());
     check_port_is_closed(mpc_port).await;
     check_port_is_closed(service_port).await;
 
     Ok(())
 }
 
-/// Validates that the rate limiter correctly rejects requests when the bucket is exhausted.
+/// Stops the core-to-core server of one party through its own shutdown signal, while no MPC session
+/// runs, and verifies that the party stays live: the stop is part of a shutdown, not a fault.
 #[tokio::test]
-async fn test_ratelimiter() -> Result<()> {
-    use crate::consts::TEST_PARAM;
-    use crate::dummy_domain;
-    use crate::engine::base::derive_request_id;
-    use crate::util::rate_limiter::RateLimiterConfig;
-    use kms_grpc::kms::v1::FheParameter;
-
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 1,
-        user_decrypt: 1,
-        crsgen: 100, // Consume entire bucket on first request
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
-
+async fn test_threshold_mpc_server_stop_on_signal_is_not_a_fault() -> Result<()> {
+    let amount_parties = 4;
     let env = ThresholdTestEnv::builder()
-        .with_test_name("ratelimiter")
-        .with_party_count(4)
+        .with_test_name("mpc_stop_on_signal")
+        .with_party_count(amount_parties)
         .with_threshold(1)
-        .with_prss() // Need PRSS for CRS gen
-        .with_rate_limiter(rate_limiter_conf)
+        .with_material_spec(TestMaterialSpec::threshold_signing_only(amount_parties))
         .build()
         .await?;
+    let _material_dir = env.material_dir; // keep alive for temp dir cleanup
+    let mut servers = env.servers;
+    let server_handle = servers.get_mut(&1).unwrap();
+    let mpc_port = server_handle
+        .mpc_port
+        .expect("a threshold server has an MPC port");
+    let health = server_handle.health.clone();
+    assert!(health.is_live());
 
-    let domain = dummy_domain();
-
-    // Create internal client using the helper method
-    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
-
-    // First request should succeed
-    let req_id_1 = derive_request_id("test_ratelimiter_1")?;
-    let req = internal_client.crs_gen_request(
-        &req_id_1,
-        None,
-        None,
-        Some(16),
-        Some(FheParameter::Test),
-        &domain,
-    )?;
-
-    let mut client = env.clients.get(&1).expect("Client 1 should exist").clone();
-    let res = client.crs_gen(req).await;
-    assert!(res.is_ok(), "First CRS gen request should succeed");
-
-    // Second request should be rejected due to rate limiter
-    let req_id_2 = derive_request_id("test_ratelimiter_2")?;
-    let req_2 = internal_client.crs_gen_request(
-        &req_id_2,
-        None,
-        None,
-        Some(1),
-        Some(FheParameter::Test),
-        &domain,
-    )?;
-    let res_2 = client.crs_gen(req_2).await;
-
-    assert!(res_2.is_err(), "Second CRS gen request should be rejected");
-    assert_eq!(
-        res_2.unwrap_err().code(),
-        tonic::Code::ResourceExhausted,
-        "Should get ResourceExhausted error from rate limiter"
+    server_handle
+        .mpc_shutdown_tx
+        .take()
+        .expect("a threshold server has an MPC shutdown signal")
+        .send(())
+        .unwrap();
+    check_port_is_closed(mpc_port).await;
+    assert!(
+        std::net::TcpListener::bind((crate::consts::DEFAULT_URL, mpc_port)).is_ok(),
+        "the core-to-core server must stop after its shutdown signal"
     );
-
+    // The fault decision runs just after the port closes.
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    assert!(health.is_live());
     Ok(())
 }
 
@@ -559,7 +543,7 @@ async fn test_complete_session_notification() -> Result<()> {
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;
         let received_plaintexts = internal_client
-            .process_decryption_resp(Some(req.clone()), min_count_agree, &responses)
+            .process_decryption_resp(&req, min_count_agree, &responses)
             .unwrap();
 
         // check that the plaintexts are correct

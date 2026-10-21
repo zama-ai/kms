@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use algebra::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
 use algebra::sharing::share::Share;
 use algebra::structure_traits::RingWithExceptionalSequence;
@@ -15,6 +14,7 @@ use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
 use threshold_bgv::algebra::levels::LevelOne;
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 fn bench_decode_z2(c: &mut Criterion) {

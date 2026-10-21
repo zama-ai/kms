@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
@@ -10,6 +9,7 @@ use observability::metrics_names::{
 };
 use std::sync::Arc;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_types::rng::AesRng;
 use tokio_util::sync::CancellationToken;
 
 use tokio::sync::RwLock;
@@ -20,7 +20,7 @@ use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
 use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
@@ -36,10 +36,8 @@ use crate::vault::storage::{Storage, StorageExt};
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<CrsGenRequest>,
     insecure: bool,
 ) -> Result<Response<Empty>, MetricedError> {
@@ -51,7 +49,6 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
-    let permit = service.rate_limiter.start_crsgen(op_tag).await?;
     let timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -104,7 +101,6 @@ pub async fn crs_gen_impl<
     service.tracker.spawn(
         async move {
             let _timer = timer;
-            let _permit = permit;
             crs_gen_background(
                 meta_permit,
                 token,
@@ -133,10 +129,8 @@ pub async fn crs_gen_impl<
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
     insecure: bool,
 ) -> Result<Response<CrsGenResult>, MetricedError> {
@@ -201,10 +195,8 @@ pub async fn get_crs_gen_result_impl<
 pub async fn abort_crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
     let request_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
@@ -609,31 +601,6 @@ mod tests {
         let get_result =
             get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into()), false).await;
         assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
-        kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
-        let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let request = CrsGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            epoch_id: Some(epoch_id.into()),
-            context_id: None,
-            params: FheParameter::Test.into(),
-            domain: Some(domain),
-            extra_data: vec![],
-            max_num_bits: None,
-        };
-        let err = crs_gen_impl(&kms, Request::new(request), false)
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

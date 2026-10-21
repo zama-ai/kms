@@ -8,7 +8,6 @@ license.workspace = true
 description = "Experimental BGV/BFV FHE schemes with distributed key generation, threshold decryption, and supporting algebraic primitives (NTT, cyclotomic rings, CRT)."
 
 [dependencies]
-aes-prng.workspace = true
 algebra.workspace = true
 anyhow.workspace = true
 bc2wrap.workspace = true

@@ -8,10 +8,14 @@ license.workspace = true
 description = "Types used across crates in 'threshold'"
 
 [dependencies]
+# Requests the `zeroize` feature for the `aes` cipher that `AesRng` uses through `tfhe-csprng`.
+aes.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 hashing.workspace = true
+rand.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
+tfhe-csprng.workspace = true
 tfhe-versionable.workspace = true
 zeroize.workspace = true

@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use aes_prng::AesRng;
 use algebra::{
     base_ring::{Z64, Z128},
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
+use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
 
 use crate::{
@@ -53,7 +53,8 @@ where
             .init(&mut base_session)
             .await?;
         let session_id = base_session.session_id();
-        Self::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
+        let prss_state = prss_setup.new_prss_session_state(session_id, base_session.my_role())?;
+        Self::new_from_prss_state(base_session, prss_state)
     }
 
     pub fn new_from_prss_state(

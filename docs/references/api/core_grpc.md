@@ -948,10 +948,10 @@ Health status levels:
 
 This endpoint is useful for:
 - Health monitoring and alerting
-- Load balancer health checks
-- Kubernetes readiness/liveness probes
 - Debugging connectivity issues
 - Operational dashboards
+
+Do not use this endpoint for Kubernetes probes or load balancer health checks. Its result depends on the peers, so a network fault could take every node out of service at the same time. The Kubernetes probes use the `liveness` and `readiness` gRPC health services. See [Health Endpoints](../../operations/advanced/metrics.md#health-endpoints).
 
 The endpoint performs real-time connectivity checks to peers and returns current system status.
 

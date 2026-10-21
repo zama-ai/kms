@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes};
+use crate::engine::base::{DSEP_PUBDATA_CRS, crs_payload};
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -128,15 +128,14 @@ impl Client {
                 actual_digest.clone(),
                 extra_data.clone(),
             );
-            let payload_bytes =
-                crs_payload_bytes(request_id, max_num_bits as u32, &actual_digest, &extra_data)?;
+            let payload = crs_payload(request_id, max_num_bits as u32, &actual_digest, &extra_data);
             let (_party_id, signer) = match self.verify_result_signatures(
                 &result.signatures,
                 &result.external_signature,
                 &sol_type,
                 domain,
                 &DSEP_PUBDATA_CRS,
-                &payload_bytes,
+                &payload,
             ) {
                 Ok(found) => found,
                 Err(e) => {
@@ -228,19 +227,19 @@ impl Client {
             actual_digest.clone(),
             extra_data.clone(),
         );
-        let payload_bytes = crs_payload_bytes(
+        let payload = crs_payload(
             &request_id,
             max_num_bits as u32,
             &actual_digest,
             &extra_data,
-        )?;
+        );
         if let Err(e) = self.verify_result_signatures(
             &crs_gen_result.signatures,
             &crs_gen_result.external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_CRS,
-            &payload_bytes,
+            &payload,
         ) {
             tracing::warn!(
                 "Could not verify the signatures for crs handle {}: {e}",

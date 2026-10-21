@@ -284,9 +284,9 @@ mod tests {
     use crate::algebra::levels::LevelOne;
     use crate::algebra::ntt::{Const, N65536};
     use crate::constants::PLAINTEXT_MODULUS;
-    use aes_prng::AesRng;
     use algebra::structure_traits::Sample;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[test]
     fn test_rem_limb() {

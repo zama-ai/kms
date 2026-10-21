@@ -2,7 +2,6 @@ use crate::{
     engine::{
         base::compute_preprocessing_signatures,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
-        traits::{BackupOperator, ContextManager},
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
@@ -44,13 +43,10 @@ use tonic::{Request, Response};
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let _permit = service.rate_limiter.start_preproc().await?;
     let _timer = METRICS
         .time_operation(OP_KEYGEN_PREPROC_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG)
@@ -134,10 +130,8 @@ pub async fn preprocessing_impl<
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<v1::RequestId>,
 ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
     tracing::warn!(
@@ -177,12 +171,12 @@ mod tests {
         dummy_domain,
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
     };
-    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain,
         solidity_types::PrepKeygenVerification,
     };
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     #[tokio::test]
     async fn sunshine() {
@@ -216,30 +210,6 @@ mod tests {
                 .unwrap(),
             verf_key.address()
         );
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
-        kms.set_bucket_size(1);
-
-        let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
-        let domain = dummy_domain();
-        let preproc_req = KeyGenPreprocRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            params: FheParameter::Test.into(),
-            keyset_config: None,
-            request_id: Some((preproc_req_id).into()),
-            context_id: None,
-            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        let err = preprocessing_impl(&kms, Request::new(preproc_req))
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

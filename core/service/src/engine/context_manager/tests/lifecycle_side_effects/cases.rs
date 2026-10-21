@@ -268,7 +268,11 @@ async fn rejected_context_store_keeps_an_existing_context() {
         .await
         .unwrap_err();
 
-    assert!(error.to_string().contains("Failed to store context"));
+    assert!(
+        error
+            .to_string()
+            .contains("already exists in the session maker")
+    );
     assert_eq!(fixture.state().await, fixture.before);
     assert!(
         session_maker

@@ -5,7 +5,6 @@ use crate::{
     cryptography::attestation::SecurityModuleProxy,
 };
 use aes_gcm_siv::{AeadInOut, Aes256GcmSiv, KeyInit, Nonce, Tag};
-use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use iam_rs::IAMPolicy;
@@ -17,6 +16,7 @@ use strum_macros::EnumTryAs;
 use tfhe::{Unversionize, named::Named};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::rng::AesRng;
 
 pub mod awskms;
 pub mod secretsharing;

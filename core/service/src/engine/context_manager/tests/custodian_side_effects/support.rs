@@ -45,7 +45,11 @@ impl CustodianFixture {
             StorageProxy::from(FailingRamStorage::new()),
         )
         .await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, signing_key, test_rng_source());
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            with_root_seed(signing_key),
+            test_rng_source(),
+        );
         let session_maker = SessionMaker::four_party_dummy_session(
             None,
             None,
@@ -314,7 +318,7 @@ pub(super) fn custodian_request(
     for index in 1..=3 {
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, public_enc_key) = encryption.keygen().unwrap();
-        let (public_verf_key, _) = gen_sig_keys(&mut rng);
+        let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         custodian_nodes.push(
             InternalCustodianSetupMessage {
                 header: HEADER.to_string(),

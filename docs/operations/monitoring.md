@@ -78,9 +78,9 @@ The health check tool reports status in four levels: **Optimal**, **Healthy**, *
 
 ### Kubernetes Health Checks
 **Production Environments**:
-- KMS Helm chart includes gRPC-based readiness and startup probes
-- Probes use the configured gRPC port for health checking
-- Alternative: exec-based probes using `kms-health-check` tool
+- KMS Helm chart includes gRPC-based liveness, readiness and startup probes
+- Probes query the `liveness` and `readiness` gRPC health services on the configured gRPC port. See [Health Endpoints](advanced/metrics.md#health-endpoints)
+- Do not use `kms-health-check` as a Kubernetes probe: its result depends on the peers
 - See [Kubernetes Probe Documentation](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) for configuration options
 
 ### Service Monitor Integration

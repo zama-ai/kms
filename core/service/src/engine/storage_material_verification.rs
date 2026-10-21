@@ -33,32 +33,36 @@
 //! no digest) is checked for presence only. Private context data is deserialized to verify that
 //! each context uses its declared ID as its storage handle.
 
+use crate::backup::BACKUP_SIGNING_SCHEMES;
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-use crate::cryptography::signing::ecdsa::{
-    PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
-};
+use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::identity::NodeSigningIdentity;
-use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+use crate::cryptography::signing::{
+    SchemeVerfKeys, SigningSchemeType, StoredTypedSignature, VerfKeySet,
+};
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
-    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, StoredTypedSignature,
-    classify_current_public_material, crs_payload_bytes, crs_sol_type, keygen_payload_bytes,
-    keygen_sol_type,
+    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, classify_current_public_material,
+    crs_payload, crs_sol_type, keygen_payload, keygen_sol_type,
 };
 use crate::engine::context::ContextInfo;
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
+use crate::engine::validation::{
+    ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
+};
 use crate::util::key_setup::{non_legacy_verf_material_slots, validate_slots};
 use crate::vault::storage::{
     StorageReader, StorageReaderExt, read_all_data_versioned, read_text_at_request_id,
 };
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use kms_grpc::RequestId;
+use kms_grpc::kms::v1::TypedSignature;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::{ContextId, EpochId};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -184,7 +188,7 @@ async fn check_legacy_keyset_presence<S: StorageReader + Sync, T>(
 ///
 /// Current metadata is verified by digest; legacy metadata has no digest and is checked only
 /// for the presence of its raw public objects.
-async fn verify_keysets<S>(
+pub(crate) async fn verify_keysets<S>(
     public_storage: &S,
     entries: &[(RequestId, KeyGenMetadata)],
 ) -> anyhow::Result<()>
@@ -211,7 +215,7 @@ where
 ///
 /// Current metadata is verified by digest; legacy metadata has no digest and is checked only
 /// for the presence of its raw public object.
-async fn verify_crses<S>(
+pub(crate) async fn verify_crses<S>(
     public_storage: &S,
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
 ) -> anyhow::Result<()>
@@ -235,18 +239,22 @@ where
     Ok(())
 }
 
-/// Verify all recovery validation material loaded from the backup vault against the node's private
-/// signing key. Recovery mode deliberately does not call this helper: its verification key came
-/// from public storage and would not provide an independent trust root.
+/// Verify all recovery validation material loaded from the backup vault against the node's own
+/// signing identity. Recovery mode deliberately does not call this helper: its verification keys
+/// came from public storage and would not provide an independent trust root.
 fn verify_recovery_material(
     validation_material: &HashMap<RequestId, RecoveryValidationMaterial>,
-    signing_key: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
-    let verf_key = PublicSigKey::from_sk(signing_key);
+    if validation_material.is_empty() {
+        return Ok(());
+    }
+    let verf_keys = VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)
+        .map_err(|e| anyhow::anyhow!("Cannot verify recovery validation material: {e}"))?;
     for (context_id, material) in validation_material {
-        if !material.validate(&verf_key) {
-            anyhow::bail!("Invalid recovery validation material for context ID {context_id}");
-        }
+        material.validate(&verf_keys).map_err(|e| {
+            anyhow::anyhow!("Invalid recovery validation material for context ID {context_id}: {e}")
+        })?;
     }
     Ok(())
 }
@@ -291,7 +299,7 @@ where
             }
             #[expect(deprecated)]
             PubDataType::RecoveryMaterial => {
-                verify_recovery_material(recovery_material, identity.ecdsa())?;
+                verify_recovery_material(recovery_material, identity)?;
             }
             PubDataType::TypedVerfKey => {
                 validate_slots(public_storage, identity, non_legacy_verf_material_slots()).await?;
@@ -406,13 +414,12 @@ fn verify_keygen_metadata_signature(
     identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
     let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
-    let payload_bytes = keygen_payload_bytes(
+    let payload = keygen_payload(
         &metadata.preprocessing_id,
         &metadata.key_id,
         &metadata.key_digest_map,
         extra_data,
-    )
-    .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
+    );
 
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we upgrade to 0.16 (and have migrated keys in 0.15),
@@ -452,7 +459,7 @@ fn verify_keygen_metadata_signature(
         &metadata.signatures,
         eip712_hash.as_ref(),
         &DSEP_PUBDATA_KEY,
-        &payload_bytes,
+        &payload,
         identity,
     )
 }
@@ -469,13 +476,12 @@ fn verify_crs_metadata_signature(
     identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
     let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
-    let payload_bytes = crs_payload_bytes(
+    let payload = crs_payload(
         &metadata.crs_id,
         metadata.max_num_bits,
         &metadata.crs_digest,
         extra_data,
-    )
-    .map_err(|e| anyhow::anyhow!("Invalid private CRS metadata for id={crs_id}: {e}"))?;
+    );
 
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we can retire the default epoch, we can remove the backward compatibility support
@@ -506,90 +512,109 @@ fn verify_crs_metadata_signature(
         &metadata.signatures,
         eip712_hash.as_ref(),
         &DSEP_PUBDATA_CRS,
-        &payload_bytes,
+        &payload,
         identity,
     )
 }
 
-/// Verify the signatures one current metadata record carries against `identity`.
+/// The party ID a node files its own keys and signature under when it checks its own
+/// records. A record at boot has one signer, the node itself, so the number only shows
+/// up in error messages.
+const OWN_PARTY_ID: u32 = 1;
+
+/// Verify the signatures one current metadata record carries against `identity` and are in canonical order.
 ///
-/// Both ECDSA forms, the `external_signature` and the ECDSA entry of `signatures`,
-/// recover their signer from `eip712_hash`, so they are skipped when no stored
-/// domain yields one. Every other scheme signs `payload_bytes` under `dsep` and is
-/// checked against the key `identity` derives for it. A scheme `identity` cannot
-/// derive a key for is an error rather than a skip: an entry nobody can check must
-/// not pass as one that was checked.
+/// The external_signature` has to equal the ECDSA entry beside it, and a record with no entries is checked by its
+/// `external_signature` alone, as a client checks a node from before `signatures`.
+///
+/// Both ECDSA forms recover their signer from `eip712_hash`, so without a stored domain
+/// neither is checked. A scheme `identity` cannot derive
+/// a key for is an error rather than a skip: an entry nobody can check must not pass as
+/// one that was checked.
 #[expect(clippy::too_many_arguments)]
-fn verify_metadata_signatures(
+fn verify_metadata_signatures<T>(
     metadata_kind: &str,
     metadata_id: &RequestId,
     external_signature: &[u8],
     signatures: &[StoredTypedSignature],
     eip712_hash: Option<&B256>,
     dsep: &DomainSep,
-    payload_bytes: &[u8],
+    payload: &T,
     identity: &NodeSigningIdentity,
-) -> anyhow::Result<()> {
-    let expected_address = identity.verf_key().address();
-    if let Some(hash) = eip712_hash {
-        verify_eip712_metadata_signature(
-            metadata_kind,
-            metadata_id,
-            hash,
-            external_signature,
-            expected_address,
-        )?;
-    }
-
-    for stored in signatures {
-        match stored.scheme {
-            SigningSchemeType::Ecdsa256k1 => {
-                if let Some(hash) = eip712_hash {
-                    verify_eip712_metadata_signature(
-                        metadata_kind,
-                        metadata_id,
-                        hash,
-                        &stored.signature,
-                        expected_address,
-                    )?;
-                }
-            }
-            scheme => {
-                let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
-                    )
-                })?;
-                let signature = Signature::new(scheme, stored.signature.clone());
-                unified_verify(dsep, payload_bytes, &signature, &verf_key).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
-                    )
-                })?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn verify_eip712_metadata_signature(
-    metadata_kind: &str,
-    metadata_id: &RequestId,
-    eip712_hash: &B256,
-    external_signature: &[u8],
-    expected_address: Address,
-) -> anyhow::Result<()> {
-    let recovered_address = recover_address_from_eip712_hash(eip712_hash, external_signature)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
-            )
-        })?;
-    if recovered_address != expected_address {
-        anyhow::bail!(
-            "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: recovered signer {recovered_address}, expected {expected_address}"
+) -> anyhow::Result<()>
+where
+    T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
+{
+    let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
+    let Some(eip712_hash) = eip712_hash else {
+        anyhow::ensure!(
+            stored_schemes
+                .iter()
+                .all(|scheme| *scheme == SigningSchemeType::Ecdsa256k1),
+            "Private {metadata_kind} metadata for id={metadata_id} carries {stored_schemes:?} \
+             signatures but no EIP-712 domain"
+        );
+        // Return OK when there is no domain and only EIP-712 signatures are present since we cannot verify anything then
+        return Ok(());
+    };
+    // Return an error when EIP-712 domain is present but no external signature is provided.
+    anyhow::ensure!(
+        !external_signature.is_empty(),
+        "Private {metadata_kind} metadata for id={metadata_id} has a stored EIP-712 domain but \
+         no external signature"
+    );
+    // Strictly increasing is canonical order without repeats.
+    anyhow::ensure!(
+        stored_schemes.windows(2).all(|pair| pair[0] < pair[1]),
+        "Private {metadata_kind} metadata for id={metadata_id} lists its signatures out of order \
+         or repeats a scheme: {stored_schemes:?}"
+    );
+    // Distinct from a record that carries only an ECDSA entry, which is the ordinary
+    // shape. Every record this release writes or upgrades carries at least that entry.
+    if signatures.is_empty() {
+        tracing::warn!(
+            "Current {metadata_kind} metadata for id={metadata_id} carries no signatures at all; \
+             nothing but its EIP-712 signature stands behind it"
         );
     }
+
+    // A record that names no scheme reads as ECDSA, as a request that names none does.
+    let requested = SigningSchemeType::resolve(&stored_schemes);
+    // A key this node cannot derive is an error rather than a skip: an entry nobody can
+    // check must not pass as one that was checked.
+    let keys = VerfKeySet::from_identity(identity, &requested).map_err(|e| {
+        anyhow::anyhow!(
+            "Private {metadata_kind} metadata for id={metadata_id} carries {requested:?} \
+             signatures, but this node cannot derive every verification key to check them: {e}"
+        )
+    })?;
+    let list: Vec<TypedSignature> = signatures.iter().map(TypedSignature::from).collect();
+    let verf_key = identity.verf_key();
+    verify_response_signatures(
+        &ResponseSignatures {
+            internal: &[],
+            external: external_signature,
+            list: &list,
+        },
+        &SignedPayloads {
+            dsep,
+            internal_bytes: &[],
+            payload,
+            eip712_hash: *eip712_hash,
+        },
+        &requested,
+        &ExpectedSigner::Known {
+            party_id: OWN_PARTY_ID,
+            address: verf_key.address(),
+            verf_key: &verf_key,
+        },
+        &SchemeVerfKeys::from([(OWN_PARTY_ID, keys)]),
+    )
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
+        )
+    })?;
     Ok(())
 }
 
@@ -1313,7 +1338,9 @@ mod tests {
     use crate::backup::operator::RecoveryValidationMaterial;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-    use crate::cryptography::signatures::{RootSigningSeed, gen_sig_keys};
+    use crate::cryptography::signatures::{
+        RootSigningSeed, gen_sig_keys, test_support::seeded_identity,
+    };
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
     use crate::engine::context::{ContextInfo, SoftwareVersion};
@@ -1326,10 +1353,10 @@ mod tests {
         Storage, StorageExt, delete_at_request_id, store_versioned_at_request_id,
     };
 
-    use aes_prng::AesRng;
     use hashing::{DomainSep, hash_element};
     use kms_grpc::rpc_types::SignedPubDataHandleInternal;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     // Success cases deliberately use invalid encodings: if startup ever starts deserializing
     // key or CRS objects again, the ordinary matching-digest tests will fail.
@@ -2120,29 +2147,121 @@ mod tests {
 
     #[test]
     fn recovery_material_signature_verifies_with_private_signing_key() {
-        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(170));
-        let material = test_recovery_material(&signing_key);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(170));
+        let material = test_recovery_material(&identity);
         let context_id = material.custodian_context().context_id;
         let materials = HashMap::from([(context_id, material)]);
 
-        verify_recovery_material(&materials, &signing_key)
+        verify_recovery_material(&materials, &identity)
             .expect("recovery material signed by the node must verify");
     }
 
     #[test]
     fn recovery_material_signature_rejects_wrong_private_signing_key() {
-        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(171));
-        let (_wrong_verf_key, wrong_signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(172));
-        let material = test_recovery_material(&signing_key);
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(171));
+        let wrong_identity = seeded_identity(&mut AesRng::seed_from_u64(172));
+        let material = test_recovery_material(&identity);
         let context_id = material.custodian_context().context_id;
         let materials = HashMap::from([(context_id, material)]);
 
-        let err = verify_recovery_material(&materials, &wrong_signing_key)
+        let err = verify_recovery_material(&materials, &wrong_identity)
             .expect_err("recovery material signed by another node must be rejected");
         assert!(
             err.to_string()
                 .contains("Invalid recovery validation material"),
             "expected an invalid recovery material error, got: {err}"
+        );
+    }
+
+    /// The same ECDSA key is not enough: without its root seed the node cannot derive the
+    /// ML-DSA key the material is also signed under, so it must not boot past this check.
+    #[test]
+    fn recovery_material_rejects_a_seedless_identity() {
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(174));
+        let material = test_recovery_material(&identity);
+        let context_id = material.custodian_context().context_id;
+        let materials = HashMap::from([(context_id, material)]);
+
+        let seedless = NodeSigningIdentity::ecdsa_only(identity.ecdsa().clone());
+        verify_recovery_material(&materials, &seedless)
+            .expect_err("a seedless node must not accept composite recovery material");
+        verify_recovery_material(&HashMap::new(), &seedless)
+            .expect("a seedless node without recovery material must still boot");
+    }
+
+    /// Removing an entry from a multi-scheme record is caught whenever a scheme-bound
+    /// entry survives, because it attests to the set the removed one belonged to.
+    /// Reordering or repeating entries is caught too, so the list a record shows is
+    /// the list its signatures were made over. A record reduced to its ECDSA entry
+    /// alone is the known exception, since that entry binds no scheme set.
+    #[test]
+    fn private_keygen_metadata_rejects_a_tampered_scheme_list() {
+        let mut rng = AesRng::seed_from_u64(177);
+        let identity = seeded_identity(&mut rng);
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let schemes = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            &identity,
+            &schemes,
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("standard keygen metadata construction must succeed");
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(&key_id, inner, &identity)
+            .expect("the record must verify as written");
+        assert_eq!(inner.signatures.len(), 2, "both entries must be present");
+
+        // Dropping the post-quantum entry leaves only the ECDSA one, which signs
+        // the EIP-712 hash and therefore binds no scheme set. This is a residual
+        // gap on `verify_metadata_signatures`, and it still verifies.
+        let mut stripped = inner.clone();
+        stripped
+            .signatures
+            .retain(|entry| entry.scheme == SigningSchemeType::Ecdsa256k1);
+        verify_keygen_metadata_signature(&key_id, &stripped, &identity)
+            .expect("known gap: a record reduced to its ECDSA entry alone still verifies");
+
+        // The strip the binding does catch: the entry that survives is a bound one,
+        // and it attests to a set that no longer matches what the record lists.
+        let mut ecdsa_dropped = inner.clone();
+        ecdsa_dropped
+            .signatures
+            .retain(|entry| entry.scheme != SigningSchemeType::Ecdsa256k1);
+        let err = verify_keygen_metadata_signature(&key_id, &ecdsa_dropped, &identity)
+            .expect_err("a record stripped of its ECDSA entry must not verify as complete");
+        assert!(
+            err.to_string().contains("did not verify"),
+            "the surviving MlDsa65 entry should fail against the reduced set, got: {err}"
+        );
+
+        // Repeating an entry changes the list without changing any signature.
+        let mut repeated = inner.clone();
+        repeated.signatures.push(inner.signatures[0].clone());
+        let err = verify_keygen_metadata_signature(&key_id, &repeated, &identity)
+            .expect_err("a repeated scheme must be rejected");
+        assert!(
+            err.to_string().contains("repeats a scheme"),
+            "the error should name the repeated scheme, got: {err}"
+        );
+
+        // So does listing them out of canonical order.
+        let mut reordered = inner.clone();
+        reordered.signatures.reverse();
+        let err = verify_keygen_metadata_signature(&key_id, &reordered, &identity)
+            .expect_err("an out-of-order scheme list must be rejected");
+        assert!(
+            err.to_string().contains("out of order"),
+            "the error should name the ordering, got: {err}"
         );
     }
 
@@ -2155,7 +2274,7 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &prep_id,
             &key_id,
             vec![0x11; 32],
@@ -2188,7 +2307,9 @@ mod tests {
         )
         .expect_err("a changed server-key digest must invalidate the signature");
         assert!(
-            err.to_string().contains("Invalid EIP-712 signature"),
+            err.to_string()
+                .contains("Invalid signature in private keygen metadata")
+                && err.to_string().contains("recovered to"),
             "expected a signature verification error, got: {err}"
         );
     }
@@ -2202,7 +2323,7 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_compressed_keygen_from_digests(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &prep_id,
             &key_id,
             vec![0x11; 32],
@@ -2237,7 +2358,9 @@ mod tests {
         )
         .expect_err("a changed stored domain must invalidate the signature");
         assert!(
-            err.to_string().contains("Invalid EIP-712 signature"),
+            err.to_string()
+                .contains("Invalid signature in private keygen metadata")
+                && err.to_string().contains("recovered to"),
             "expected a signature verification error, got: {err}"
         );
     }
@@ -2249,7 +2372,7 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_crs_from_digest(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &crs_id,
             vec![0x33; 32],
             64,
@@ -2270,13 +2393,12 @@ mod tests {
     }
 
     /// The per-scheme `signatures` of stored metadata are checked against the keys the
-    /// node derives, with and without a stored domain, and a tampered entry is rejected.
+    /// node derives, and a tampered entry is rejected.
     #[test]
     fn private_metadata_scheme_signatures_are_verified() {
         let mut rng = AesRng::seed_from_u64(177);
-        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
-        let identity =
-            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let identity = seeded_identity(&mut rng);
+        let signing_key = identity.ecdsa().clone();
         let schemes = [
             SigningSchemeType::Ecdsa256k1,
             SigningSchemeType::Ed25519,
@@ -2322,48 +2444,54 @@ mod tests {
         verify_crs_metadata_signature(&crs_id, &crs_inner, &identity)
             .expect("every CRS signature must verify under the identity that made it");
 
-        // Without a stored domain neither ECDSA form can be rebuilt, but the other schemes
-        // sign the payload and are still checked.
-        for with_domain in [true, false] {
-            let mut key_metadata = key_inner.clone();
-            let mut crs_metadata = crs_inner.clone();
-            if !with_domain {
-                key_metadata.eip712_domain = None;
-                crs_metadata.eip712_domain = None;
-            }
-            verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
-                .expect("intact keygen metadata must verify");
-            verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
-                .expect("intact CRS metadata must verify");
+        // A tampered entry of any scheme is rejected.
+        let mut key_metadata = key_inner.clone();
+        key_metadata
+            .signatures
+            .iter_mut()
+            .find(|stored| stored.scheme == SigningSchemeType::MlDsa65)
+            .expect("the metadata carries an MlDsa65 entry")
+            .signature[0] ^= 1;
+        let err = verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
+            .expect_err("a tampered MlDsa65 entry must be rejected");
+        assert!(
+            err.to_string().contains("did not verify"),
+            "expected an MlDsa65 signature error, got: {err}"
+        );
+        let mut crs_metadata = crs_inner.clone();
+        crs_metadata
+            .signatures
+            .iter_mut()
+            .find(|stored| stored.scheme == SigningSchemeType::Ed25519)
+            .expect("the metadata carries an Ed25519 entry")
+            .signature[0] ^= 1;
+        let err = verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
+            .expect_err("a tampered Ed25519 entry must be rejected");
+        assert!(
+            err.to_string().contains("did not verify"),
+            "expected an Ed25519 signature error, got: {err}"
+        );
 
-            let tampered_entry = key_metadata
-                .signatures
-                .iter_mut()
-                .find(|stored| stored.scheme == SigningSchemeType::MlDsa65)
-                .expect("the metadata carries an MlDsa65 entry");
-            tampered_entry.signature[0] ^= 1;
-            let err = verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
-                .expect_err("a tampered MlDsa65 entry must be rejected");
-            assert!(
-                err.to_string().contains("Invalid MlDsa65 signature"),
-                "with_domain={with_domain}: expected an MlDsa65 signature error, got: {err}"
-            );
+        // A record without a stored domain predates per-scheme signatures, so one that
+        // carries a post-quantum entry is rejected rather than half checked.
+        let mut domainless = key_inner.clone();
+        domainless.eip712_domain = None;
+        let err = verify_keygen_metadata_signature(&key_id, &domainless, &identity)
+            .expect_err("a domainless record with post-quantum entries must be rejected");
+        assert!(
+            err.to_string().contains("but no EIP-712 domain"),
+            "expected a missing domain error, got: {err}"
+        );
+        // The shape the upgrade does produce, the ECDSA entry alone, cannot be checked
+        // without a domain and passes.
+        domainless
+            .signatures
+            .retain(|stored| stored.scheme == SigningSchemeType::Ecdsa256k1);
+        verify_keygen_metadata_signature(&key_id, &domainless, &identity)
+            .expect("a domainless record with only its ECDSA entry must pass");
 
-            let tampered_entry = crs_metadata
-                .signatures
-                .iter_mut()
-                .find(|stored| stored.scheme == SigningSchemeType::Ed25519)
-                .expect("the metadata carries an Ed25519 entry");
-            tampered_entry.signature[0] ^= 1;
-            let err = verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
-                .expect_err("a tampered Ed25519 entry must be rejected");
-            assert!(
-                err.to_string().contains("Invalid Ed25519 signature"),
-                "with_domain={with_domain}: expected an Ed25519 signature error, got: {err}"
-            );
-        }
-
-        // The ECDSA entry of `signatures` is held to the same standard as `external_signature`.
+        // As for a client, `external_signature` has to equal the ECDSA entry of
+        // `signatures`, so corrupting either one is a rejection.
         let mut tampered = key_inner.clone();
         tampered
             .signatures
@@ -2374,8 +2502,26 @@ mod tests {
         let err = verify_keygen_metadata_signature(&key_id, &tampered, &identity)
             .expect_err("a corrupt ECDSA entry must be rejected");
         assert!(
-            err.to_string().contains("Invalid EIP-712 signature"),
-            "expected an EIP-712 signature error, got: {err}"
+            err.to_string().contains("differs from its ECDSA entry"),
+            "expected the two ECDSA forms to disagree, got: {err}"
+        );
+        let mut tampered = key_inner.clone();
+        tampered.external_signature[0] ^= 1;
+        let err = verify_keygen_metadata_signature(&key_id, &tampered, &identity)
+            .expect_err("a corrupt external signature must be rejected");
+        assert!(
+            err.to_string().contains("differs from its ECDSA entry"),
+            "expected the two ECDSA forms to disagree, got: {err}"
+        );
+
+        // A record with a stored domain carries an external signature.
+        let mut tampered = key_inner.clone();
+        tampered.external_signature.clear();
+        let err = verify_keygen_metadata_signature(&key_id, &tampered, &identity)
+            .expect_err("a record with a domain but no external signature must be rejected");
+        assert!(
+            err.to_string().contains("no external signature"),
+            "expected a missing external signature error, got: {err}"
         );
 
         // The same ECDSA key under another seed derives other keys, so the entries of the
@@ -2385,7 +2531,7 @@ mod tests {
         let err = verify_keygen_metadata_signature(&key_id, &key_inner, &other_seed)
             .expect_err("metadata signed under another seed must be rejected");
         assert!(
-            err.to_string().contains("Invalid Ed25519 signature"),
+            err.to_string().contains("did not verify"),
             "expected an Ed25519 signature error, got: {err}"
         );
 
@@ -2396,7 +2542,8 @@ mod tests {
             .expect_err("a seedless node must not accept an entry it cannot check");
         assert!(
             err.to_string()
-                .contains("cannot derive the Ed25519 verification key"),
+                .contains("cannot derive every verification key")
+                && err.to_string().contains("no Ed25519 key can be derived"),
             "expected an error naming the missing key, got: {err}"
         );
     }
@@ -2412,7 +2559,7 @@ mod tests {
             &storage,
             &entries,
             &crs_entries,
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
@@ -2433,14 +2580,14 @@ mod tests {
             &storage,
             &entries,
             &HashMap::new(),
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
         .expect_err("metadata signed by another key must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("Invalid EIP-712 signature")
+            msg.contains("Invalid signature in private keygen metadata")
                 && msg.contains(&other_pk.address().to_string())
                 && msg.contains(&PublicSigKey::from_sk(&sk).address().to_string()),
             "error should name both the recovered and the expected signer, got: {msg}"
@@ -2478,7 +2625,7 @@ mod tests {
             &storage,
             &entries,
             &crs_entries,
-            &recovery_material_for(&sk),
+            &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
@@ -2987,7 +3134,7 @@ mod tests {
         let metadata_identity = NodeSigningIdentity::ecdsa_only(metadata_sk.clone());
         let key_metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
             &metadata_identity,
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &material.preproc_id,
             &material.key_id,
             material
@@ -3009,7 +3156,7 @@ mod tests {
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
         let crs_metadata = crate::engine::base::compute_info_crs_from_digest(
             &metadata_identity,
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &crs_id,
             crs_digest,
             64,
@@ -3025,17 +3172,7 @@ mod tests {
         )
     }
 
-    /// Recovery validation material signed by `signing_key`, keyed by its own context ID, so
-    /// end-to-end tests can pass the recovery check and isolate what they are actually testing.
-    fn recovery_material_for(
-        signing_key: &PrivateSigKey,
-    ) -> HashMap<RequestId, RecoveryValidationMaterial> {
-        let material = test_recovery_material(signing_key);
-        let context_id = material.custodian_context().context_id;
-        HashMap::from([(context_id, material)])
-    }
-
-    fn test_recovery_material(signing_key: &PrivateSigKey) -> RecoveryValidationMaterial {
+    fn test_recovery_material(identity: &NodeSigningIdentity) -> RecoveryValidationMaterial {
         let mut rng = AesRng::seed_from_u64(173);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_decryption_key, backup_enc_key) = encryption
@@ -3052,7 +3189,7 @@ mod tests {
             BTreeMap::new(),
             BTreeMap::new(),
             context,
-            signing_key,
+            identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .expect("test recovery material construction must succeed")

@@ -28,6 +28,8 @@
 - [Emergency Procedures](operations/emergency-procedures.md)
 - [Monitoring & Metrics](operations/monitoring.md)
 - [Configuration Management](operations/configuration.md)
+- [Upgrade from v0.14 to v0.15](operations/upgrade-0.14-to-0.15.md)
+- [Upgrade from v0.15 to v0.16](operations/upgrade-0.15-to-0.16.md)
 - [Advanced Topics](operations/advanced/README.md)
   - [Kubernetes Deployment Reference](operations/advanced/kubernetes-deployment.md)
   - [Metrics, Monitoring & Alerting](operations/advanced/metrics.md)

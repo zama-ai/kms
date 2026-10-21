@@ -197,7 +197,7 @@ deploy_threshold_mode() {
             --values "${PEERS_VALUES}"
             --values "${OVERRIDE_VALUES}"
             --set kmsPeers.id="${i}"
-            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+            --set-string kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
             --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
             --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
@@ -243,7 +243,7 @@ deploy_threshold_mode() {
                 --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
                 --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
                 --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
-                --set kmsCore.image.tag="${KMS_CORE_TAG}"
+                --set-string kmsCore.image.tag="${KMS_CORE_TAG}"
             )
             # Add TLS/PCR settings for threshold deployments with TLS enabled
             if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" ]]; then
@@ -401,7 +401,7 @@ deploy_centralized_mode() {
         --values "${OVERRIDE_VALUES}"
         --set kmsPeers.id="1"
         --set kmsCore.thresholdMode.enabled=false
-        --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+        --set-string kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
 
@@ -431,7 +431,7 @@ deploy_centralized_mode() {
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-1"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-1"
-            --set kmsCore.image.tag="${KMS_CORE_TAG}"
+            --set-string kmsCore.image.tag="${KMS_CORE_TAG}"
         )
     fi
 
@@ -1005,6 +1005,8 @@ generate_and_upload_tls_certs() {
 #
 # Required env vars: NAMESPACE, TARGET, DEPLOYMENT_TYPE, NUM_PARTIES,
 #                    HELM_RELEASE_PREFIX, ENABLE_TLS
+# Optional env vars: EPOCH_MIGRATION ("true" passes the 0.15 epoch-data
+#                    migration config to the upgraded parties)
 # Arguments:
 #   $1  - new image tag for upgraded parties
 #   $2  - old image tag for non-upgraded parties
@@ -1101,11 +1103,11 @@ upgrade_parties() {
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsPeers.id="${i}"
             --set kmsCoreClient.image.name="${new_kms_client_image_name}"
-            --set kmsCoreClient.image.tag="${new_tag}"
+            --set-string kmsCoreClient.image.tag="${new_tag}"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
             --set kmsCore.image.name="${party_image_name}"
-            --set kmsCore.image.tag="${party_tag}"
+            --set-string kmsCore.image.tag="${party_tag}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
             --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
@@ -1119,6 +1121,20 @@ upgrade_parties() {
             --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr1=${new_pcr1}"
             --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr2=${new_pcr2}"
         )
+
+        # A 0.15+ core refuses to start on legacy PRSS data unless the migration
+        # config maps each epoch to its context. kms-init creates the only CI
+        # epoch under DEFAULT_MPC_CONTEXT / DEFAULT_EPOCH_ID
+        # (core/service/src/consts.rs). Older cores reject the unknown
+        # [migration] section, so only upgraded parties get it. It is needed on
+        # every batch because the legacy data stays until 0.16 and each helm
+        # upgrade restarts the pod.
+        if [[ "${EPOCH_MIGRATION:-false}" == "true" && -n "${upgrade_set[${i}]+_}" ]]; then
+            HELM_ARGS+=(
+                --set-string "kmsCore.migration.contextAssociations[0].contextId=0x0700000000000000000000000000000000000000000000000000000000000001"
+                --set-string "kmsCore.migration.contextAssociations[0].epochIds[0]=0x0800000000000000000000000000000000000000000000000000000000000001"
+            )
+        fi
 
         helm_upgrade_with_version "${release_name}" "${helm_chart_location}" \
             "${HELM_ARGS[@]}" \

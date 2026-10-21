@@ -6,6 +6,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::{
 use kms_grpc::metastore_status::v1::meta_store_status_service_server::{
     MetaStoreStatusService, MetaStoreStatusServiceServer,
 };
+use observability::health::HealthState;
 use observability::telemetry::make_span;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +14,6 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
 use tower_http::trace::TraceLayer;
 use tracing::Span;
@@ -85,7 +85,7 @@ pub async fn run_server<
     kms_service: Arc<S>,
     meta_store_status_service: Arc<M>,
     health_service: HealthServer<impl Health>,
-    health_reporter: HealthReporter,
+    health: HealthState,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
     use crate::consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS;
@@ -169,9 +169,11 @@ pub async fn run_server<
         }
     });
 
-    health_reporter
+    health
+        .reporter()
         .set_serving::<CoreServiceEndpointServer<S>>()
         .await;
+    health.mark_initialized().await;
 
     // Run the server with graceful shutdown
     match graceful.await {

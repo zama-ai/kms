@@ -1444,8 +1444,8 @@ impl ScalingFactor for LevelKsw {
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
 
     use algebra::poly::lagrange_interpolation;
     use algebra::sharing::shamir::{InputOp, RevealOp};

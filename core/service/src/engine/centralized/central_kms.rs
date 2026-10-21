@@ -7,15 +7,15 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::cryptography::signatures::StoredTypedSignature;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::Shutdown;
-use crate::engine::backup_operator::RealBackupOperator;
+use crate::engine::backup_operator::BackupOperator;
 use crate::engine::base::CrsGenMetadata;
-use crate::engine::base::StoredTypedSignature;
 use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
@@ -25,8 +25,6 @@ use crate::engine::rng_source::RngSource;
 use crate::engine::storage_material_verification::{
     PrivateLayout, verify_private_storage_layout, verify_storage_material,
 };
-use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
@@ -36,18 +34,16 @@ use crate::vault::storage::{
 };
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::health::HealthState;
 use observability::metrics_names::OP_BOOT;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use tokio_util::sync::CancellationToken;
 
-use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_recovery_material,
 };
 use crate::vault::{Vault, adopt_custodian_context, storage::Storage};
-use aes_prng::AesRng;
-use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
@@ -58,7 +54,6 @@ use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
@@ -78,12 +73,12 @@ use threshold_execution::{
     tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
     zk::ceremony::public_parameters_by_trusted_setup,
 };
+use threshold_types::rng::AesRng;
 
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
 use zeroize::Zeroizing;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
@@ -419,7 +414,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 }
 
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
-#[cfg_attr(test, derive(Serialize, serde::Deserialize))]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub struct CentralizedKmsKeys {
     pub key_info: HashMap<RequestId, KmsFheKeyHandles>,
     pub sig_sk: PrivateSigKey,
@@ -428,7 +423,7 @@ pub struct CentralizedKmsKeys {
 
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
 #[cfg(test)]
-#[cfg_attr(test, derive(Serialize, serde::Deserialize))]
+#[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct CentralizedTestingKeys {
     pub(crate) params: DKGParams,
     pub(crate) centralized_kms_keys: CentralizedKmsKeys,
@@ -451,8 +446,6 @@ pub struct CentralizedPreprocBucket {
 pub struct CentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 > {
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -475,21 +468,13 @@ pub struct CentralizedKms<
     // Map of ongoing CRS generation tasks, indexed by the CRS request ID
     pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
-    pub(crate) context_manager: CM,
-    pub(crate) backup_operator: BO,
-    // Rate limiting
-    pub(crate) rate_limiter: RateLimiter,
-    // Health reporter for the the grpc server
-    pub(crate) health_reporter: HealthReporter,
+    pub(crate) context_manager: CentralizedContextManager<PubS, PrivS>,
+    pub(crate) backup_operator: BackupOperator<PubS, PrivS>,
+    // Liveness and readiness that the gRPC health service reports
+    pub(crate) health: HealthState,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
 }
-pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
-    PubS,
-    PrivS,
-    CentralizedContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
 
 /// Perform asynchronous decryption and serialize the result
 pub fn central_public_decrypt<
@@ -515,7 +500,7 @@ pub fn central_public_decrypt<
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
             inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
-            RealCentralizedKms::<PubS, PrivS>::public_decrypt(
+            CentralizedKms::<PubS, PrivS>::public_decrypt(
                 keys,
                 &ct.ciphertext,
                 fhe_type,
@@ -532,7 +517,7 @@ pub async fn async_user_decrypt<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    identity: &NodeSigningIdentity,
+    identity: &Arc<NodeSigningIdentity>,
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
@@ -563,9 +548,9 @@ pub async fn async_user_decrypt<
         inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
-        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
+        let signcrypted_ciphertext = CentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
-            identity.ecdsa(),
+            Arc::clone(identity),
             rng,
             high_level_ct,
             fhe_type,
@@ -615,38 +600,11 @@ pub async fn async_user_decrypt<
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> fmt::Debug for CentralizedKms<PubS, PrivS, CM, BO>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static> fmt::Debug
+    for CentralizedKms<PubS, PrivS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CentralizedKms").finish() // Don't include fhe_dec_key or signing key
-    }
-}
-
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> BaseKms for CentralizedKms<PubS, PrivS, CM, BO>
-{
-    fn sign<T: Serialize + AsRef<[u8]>>(
-        &self,
-        dsep: &DomainSep,
-        msg: &T,
-    ) -> anyhow::Result<Signature> {
-        self.base_kms.sign(dsep, msg)
-    }
-
-    fn digest<T: ?Sized + AsRef<[u8]>>(
-        domain_separator: &DomainSep,
-        msg: &T,
-    ) -> anyhow::Result<Vec<u8>> {
-        BaseKmsStruct::digest(domain_separator, &msg)
     }
 }
 
@@ -857,14 +815,10 @@ fn unsafe_decrypt(
     Ok(res)
 }
 
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> Kms for CentralizedKms<PubS, PrivS, CM, BO>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static>
+    CentralizedKms<PubS, PrivS>
 {
-    fn public_decrypt(
+    pub(crate) fn public_decrypt(
         keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
         fhe_type: FheTypes,
@@ -876,9 +830,10 @@ impl<
         }
     }
 
-    fn user_decrypt(
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn user_decrypt(
         keys: &KmsFheKeyHandles,
-        sig_key: &PrivateSigKey,
+        identity: Arc<NodeSigningIdentity>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheTypes,
@@ -887,7 +842,8 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
+        let signcryption_key =
+            UnifiedSigncryptionKey::new(identity, client_enc_key.clone(), client_id.to_vec());
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         // Keep the cleartext behind a zeroizing guard during signcryption.
@@ -905,25 +861,46 @@ impl<
         // LEGACY: for legacy reasons we return the inner payload
         Ok(enc_res.payload)
     }
-}
 
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> CentralizedKms<PubS, PrivS, CM, BO>
-{
     pub async fn new(
+        config: CoreConfig,
+        public_storage: PubS,
+        private_storage: PrivS,
+        backup_vault: Option<Vault>,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+        signing_identity: NodeSigningIdentity,
+    ) -> anyhow::Result<(
+        CentralizedKms<PubS, PrivS>,
+        (HealthState, HealthServer<impl Health>),
+    )> {
+        let rng_source = Arc::new(RngSource::new(security_module.clone())?);
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity, rng_source);
+        CentralizedKms::<PubS, PrivS>::new_from_base_kms(
+            config,
+            public_storage,
+            private_storage,
+            backup_vault,
+            security_module,
+            base_kms,
+        )
+        .await
+    }
+
+    /// Constructs the service around `base_kms`, which may hold no signing identity: a node that
+    /// lost its signing key boots in recovery mode, where only backup recovery is possible.
+    ///
+    /// Recovery mode skips the private storage layout check, the verification of public and
+    /// recovery validation material, and adopts no custodian context, as for a threshold node.
+    pub async fn new_from_base_kms(
         config: CoreConfig,
         public_storage: PubS,
         private_storage: PrivS,
         mut backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
-        signing_identity: NodeSigningIdentity,
+        base_kms: BaseKmsStruct,
     ) -> anyhow::Result<(
-        RealCentralizedKms<PubS, PrivS>,
-        (HealthReporter, HealthServer<impl Health>),
+        CentralizedKms<PubS, PrivS>,
+        (HealthState, HealthServer<impl Health>),
     )> {
         let key_info_with_epoch: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
@@ -957,21 +934,33 @@ impl<
                 None => HashMap::new(),
             };
 
-        // Verify the private layout first: a centralized node must hold no threshold key shares.
-        verify_private_storage_layout(&private_storage, PrivateLayout::Centralized).await?;
-        // Verify that public storage holds exactly what private storage says it should, and
-        // that it is intact. Private storage is the reference; extra material in public
-        // storage is logged as an error but does not stop boot.
-        verify_storage_material(
-            &public_storage,
-            &key_info,
-            &crs_info,
-            &validation_material,
-            &signing_identity,
-        )
-        .await?;
-        if let Some(vault) = backup_vault.as_mut() {
-            adopt_custodian_context(&private_storage, vault, &validation_material).await?;
+        match base_kms.signing_identity() {
+            Ok(signing_identity) => {
+                // Verify the private layout first: a centralized node must hold no threshold key
+                // shares.
+                verify_private_storage_layout(&private_storage, PrivateLayout::Centralized).await?;
+                // Verify that public storage holds exactly what private storage says it should,
+                // and that it is intact. Private storage is the reference; extra material in
+                // public storage is logged as an error but does not stop boot.
+                verify_storage_material(
+                    &public_storage,
+                    &key_info,
+                    &crs_info,
+                    &validation_material,
+                    &signing_identity,
+                )
+                .await?;
+                if let Some(vault) = backup_vault.as_mut() {
+                    adopt_custodian_context(&private_storage, vault, &validation_material).await?;
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "No signing key available (recovery mode): skipping private storage \
+                     verification, public material and recovery validation material \
+                     verification, and custodian context adoption"
+                );
+            }
         }
         let custodian_meta_store = MetaStore::new_from_map(validation_material);
         let tracker = Arc::new(TaskTracker::new());
@@ -982,9 +971,6 @@ impl<
             backup_vault,
             key_info_with_epoch,
         );
-        let rng_source = Arc::new(RngSource::new(security_module.clone())?);
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity, rng_source);
-
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
                 base_kms.new_instance(),
@@ -994,7 +980,7 @@ impl<
             );
         // Load existing MPC contexts from storage into the cache
         context_manager.load_mpc_context_from_storage().await?;
-        let backup_operator = RealBackupOperator::new(
+        let backup_operator = BackupOperator::new(
             base_kms.new_instance(),
             crypto_storage.inner.clone(),
             security_module,
@@ -1011,7 +997,6 @@ impl<
         {
             anyhow::bail!("Failed to update backup vault when booting");
         }
-        let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let pub_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let telemetry_conf = config
@@ -1019,13 +1004,12 @@ impl<
             .unwrap_or_else(|| TelemetryConfig::builder().build());
         // Start updating system metrics
         update_central_kms_system_metrics(
-            rate_limiter.clone(),
             Arc::clone(&user_dec_meta_store),
             Arc::clone(&pub_dec_meta_store),
             crypto_storage.clone(),
             telemetry_conf.refresh_interval(),
         );
-        let (health_reporter, health_service) = tonic_health::server::health_reporter();
+        let (health, health_service) = HealthState::new().await;
         // We will serve as soon as the server is started
 
         Ok((
@@ -1043,22 +1027,13 @@ impl<
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
-                rate_limiter,
-                health_reporter: health_reporter.clone(),
+                health: health.clone(),
                 tracker: Arc::clone(&tracker),
             },
-            (health_reporter, health_service),
+            (health, health_service),
         ))
     }
-}
 
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> CentralizedKms<PubS, PrivS, CM, BO>
-{
     /// Get a reference to the key generation MetaStore
     pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenMetadata>>> {
         &self.key_meta_map
@@ -1085,18 +1060,16 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static> Shutdown
+    for CentralizedKms<PubS, PrivS>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let h_repoter = self.health_reporter.clone();
+        let health = self.health.clone();
         let tracker = self.tracker.clone();
         let handle = tokio::task::spawn(async move {
-            h_repoter
+            health.mark_shutting_down().await;
+            health
+                .reporter()
                 .set_not_serving::<CoreServiceEndpointServer<Self>>()
                 .await;
             tracker.close();
@@ -1106,12 +1079,8 @@ impl<
     }
 }
 
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> Drop for CentralizedKms<PubS, PrivS, CM, BO>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static> Drop
+    for CentralizedKms<PubS, PrivS>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -1120,7 +1089,6 @@ impl<
 }
 
 fn update_central_kms_system_metrics<PubS, PrivS>(
-    rate_limiter: RateLimiter,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -1132,7 +1100,6 @@ where
 {
     tokio::spawn(async move {
         loop {
-            METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             // Skipped when the cache lock is contended: the gauge keeps its
             // previous value rather than stalling the whole metrics loop.
             if let Some(count) = crypto_storage.cached_fhe_key_count() {
@@ -1175,25 +1142,22 @@ pub(crate) mod tests {
         DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
-    use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{PublicSigKey, VerfKeySet};
     use crate::cryptography::signcryption::{
         UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
     use crate::engine::base::{KmsFheKeyHandles, derive_request_id};
-    use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::traits::Kms;
+    use crate::engine::centralized::central_kms::CentralizedKms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
-    use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
         StorageExt, delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
         store_versioned_at_request_id,
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -1206,6 +1170,7 @@ pub(crate) mod tests {
     use threshold_execution::keyset_config::StandardKeySetConfig;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+    use threshold_types::rng::AesRng;
 
     /// Generate a fresh `CentralizedTestingKeys` bundle for a single test.
     async fn test_keys() -> CentralizedTestingKeys {
@@ -1225,18 +1190,6 @@ pub(crate) mod tests {
             &OTHER_CENTRAL_DEFAULT_ID.to_string(),
         )
         .await
-    }
-
-    impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
-        RealCentralizedKms<PubS, PrivS>
-    {
-        pub(crate) fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
-        }
     }
 
     // Construct a storage for private keys
@@ -1584,7 +1537,7 @@ pub(crate) mod tests {
         };
         let config = init_conf("config/default_centralized.toml").unwrap();
         let kms = {
-            let (inner, _health_service) = RealCentralizedKms::new(
+            let (inner, _health_service) = CentralizedKms::new(
                 config,
                 new_pub_ram_storage_from_existing_keys(
                     &keys.pub_fhe_keys,
@@ -1619,7 +1572,7 @@ pub(crate) mod tests {
             .read_centralized_fhe_keys(key_id, epoch_id)
             .await
             .unwrap();
-        let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage>::public_decrypt(
+        let raw_plaintext = CentralizedKms::<FileStorage, FileStorage>::public_decrypt(
             &key_handle,
             &ct,
             fhe_type,
@@ -1720,7 +1673,7 @@ pub(crate) mod tests {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
     >(
-        inner: &RealCentralizedKms<PubS, PrivS>,
+        inner: &CentralizedKms<PubS, PrivS>,
         key_id: &RequestId,
         epoch_id: &EpochId,
         params: DKGParams,
@@ -1801,7 +1754,7 @@ pub(crate) mod tests {
 
         let kms = {
             let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
-            let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
+            let (inner, _health_service) = CentralizedKms::<RamStorage, RamStorage>::new(
                 core_config,
                 new_pub_ram_storage_from_existing_keys(
                     &keys.pub_fhe_keys,
@@ -1854,18 +1807,18 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.unsigncryption_key.sender_verf_key = server_sig_pk;
+                keys.unsigncryption_key.sender_keys = VerfKeySet::ecdsa_only(server_sig_pk);
             }
             keys
         };
         let mut rng = kms.base_kms.new_rng();
 
-        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
+        let raw_cipher = CentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            kms.base_kms.signing_identity().unwrap().ecdsa(),
+            kms.base_kms.signing_identity().unwrap(),
             &mut rng,
             &ct,
             fhe_type,
@@ -1935,5 +1888,28 @@ pub(crate) mod tests {
         let new_large_ct: tfhe::SquashedNoiseFheUint = compressed_large_ct.get(0).unwrap().unwrap();
         let actual_pt: u32 = new_large_ct.decrypt(&cks);
         assert_eq!(actual_pt, pt);
+    }
+
+    /// A node that lost its signing key boots in recovery mode, skipping the storage checks, so
+    /// that it can still recover its keys from the custodians.
+    #[tokio::test]
+    async fn boots_in_recovery_mode_without_a_signing_key() {
+        let config = init_conf("config/default_centralized.toml").unwrap();
+        let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+        let base_kms = crate::engine::base::BaseKmsStruct::new_no_signing_key(
+            kms_grpc::rpc_types::KMSType::Centralized,
+            verf_key,
+            crate::engine::rng_source::test_rng_source(),
+        );
+        let _booted = CentralizedKms::new_from_base_kms(
+            config,
+            RamStorage::new(),
+            RamStorage::new(),
+            None,
+            None,
+            base_kms,
+        )
+        .await
+        .expect("a node without its signing key must boot in recovery mode");
     }
 }

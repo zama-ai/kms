@@ -137,7 +137,6 @@ fn build_test_core_config(
             keychain: None,
         }),
         backup_vault: None,
-        rate_limiter_conf: None,
         bandwidth_benchmark: None,
         threshold: Some(ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
@@ -755,7 +754,6 @@ async fn setup_party_resharing_servers(
         pub_storages,
         priv_storages,
         vaults,
-        None, // rate_limiter_conf
         None, // decryption_mode
     )
     .await;
@@ -1363,6 +1361,9 @@ async fn integration_test_commands(
         let get_res_command = match command {
             CCCommand::PreprocKeyGen(_) => CCCommand::PreprocKeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
+                context_id: None,
+                epoch_id: None,
+                no_verify: false,
             }),
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {
@@ -2062,6 +2063,7 @@ async fn custodian_backup_init(
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key: false,
             custodian_context_id,
+            expected_operator_keys: vec![],
         }),
         200,
     );
@@ -3036,6 +3038,14 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     .await;
     let compressed_keyset_digest =
         hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+    let public_key: tfhe::CompactPublicKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::PublicKey,
+        Some(&key_cores[0].object_folder),
+    )
+    .await;
+    let public_key_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &public_key)?);
 
     let crs_id = RequestId::from_str(&crs_id_str)?;
     let crs_cores =
@@ -3089,7 +3099,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         vec![PreviousKeyInfo {
             key_id: key_id.into(),
             preproc_id: RequestId::from_str(&preproc_id_str)?,
-            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest, public_key_digest),
         }],
         vec![PreviousCrsInfo {
             crs_id,
@@ -3371,6 +3381,14 @@ async fn test_threshold_reshare() -> Result<()> {
 
     let compressed_keyset_digest =
         hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+    let public_key: tfhe::CompactPublicKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::PublicKey,
+        Some(&storage_prefix),
+    )
+    .await;
+    let public_key_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &public_key)?);
 
     let _ids =
         fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
@@ -3392,7 +3410,7 @@ async fn test_threshold_reshare() -> Result<()> {
     let previous_key_info = PreviousKeyInfo {
         key_id: key_id.into(),
         preproc_id,
-        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest, public_key_digest),
     };
     let previous_crs_info = PreviousCrsInfo {
         crs_id,

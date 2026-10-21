@@ -24,7 +24,7 @@ struct Group {
 }
 
 #[derive(Parser, Debug)]
-#[clap(name = "TLS Certificate Generator for MPC nodes")]
+#[clap(name = "TLS Certificate Generator for MPC nodes", version)]
 #[clap(
     about = "A CLI tool for generating separate TLS certificates for MPC nodes (cores). \
 The user needs to provide a set of CA names using either the \

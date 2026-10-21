@@ -1,4 +1,5 @@
 use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
+use crate::health::{HealthState, process_health};
 use crate::metrics::{METRICS, METRICS_LABELS_ENV};
 use crate::metrics_names::OP_SYSTEM_STARTUP;
 use crate::sys_metrics::start_sys_metrics_collection;
@@ -20,12 +21,7 @@ pub use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, TextEncoder};
 use serde::Serialize;
-use std::{
-    env,
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{env, net::SocketAddr, sync::Arc, time::SystemTime};
 use tonic::{
     Status,
     metadata::{MetadataKey, MetadataMap, MetadataValue},
@@ -56,14 +52,12 @@ use test_utils::test_logging::{
 #[derive(Clone)]
 struct MetricsState {
     config: Arc<String>, // Store the config as a string for the /config endpoint
-    start_time: std::time::SystemTime,
 }
 
 impl MetricsState {
     fn new(config: String) -> Self {
         Self {
             config: Arc::new(config),
-            start_time: std::time::SystemTime::now(),
         }
     }
 }
@@ -82,25 +76,59 @@ async fn metrics_handler() -> impl IntoResponse {
         .unwrap()
 }
 
-async fn health_handler() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
+async fn healthz_handler() -> Response {
+    healthz_response(process_health())
+}
+
+/// Reports the overall health. The server is healthy when it is ready.
+fn healthz_response(health: Option<&HealthState>) -> Response {
+    status_response(
+        health.is_some_and(HealthState::is_ready),
+        "healthy",
+        "unhealthy",
+    )
 }
 
 async fn version_handler() -> impl IntoResponse {
     (StatusCode::OK, env!("CARGO_PKG_VERSION").to_string())
 }
 
-async fn readiness_handler(State(state): State<MetricsState>) -> impl IntoResponse {
-    let uptime = state.start_time.elapsed().unwrap_or_default();
-    if uptime > Duration::from_secs(10) {
-        (StatusCode::OK, "ready")
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "warming up")
-    }
+async fn readiness_handler() -> Response {
+    readiness_response(process_health())
 }
 
-async fn liveness_handler() -> impl IntoResponse {
-    (StatusCode::OK, "alive")
+/// Reports readiness. The server is not ready before it registers its [`HealthState`].
+fn readiness_response(health: Option<&HealthState>) -> Response {
+    status_response(
+        health.is_some_and(HealthState::is_ready),
+        "ready",
+        "not_ready",
+    )
+}
+
+async fn liveness_handler() -> Response {
+    liveness_response(process_health())
+}
+
+/// Reports liveness. Before the server registers its [`HealthState`], no component can report a
+/// fatal fault, so the process is live.
+fn liveness_response(health: Option<&HealthState>) -> Response {
+    status_response(
+        health.is_none_or(HealthState::is_live),
+        "alive",
+        "not_responding",
+    )
+}
+
+/// Returns `200 OK` with `{"status": ok_status}`, or `503 Service Unavailable` with
+/// `{"status": failed_status}`.
+fn status_response(ok: bool, ok_status: &'static str, failed_status: &'static str) -> Response {
+    let (code, status) = if ok {
+        (StatusCode::OK, ok_status)
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, failed_status)
+    };
+    (code, Json(serde_json::json!({ "status": status }))).into_response()
 }
 
 async fn config_handler(State(state): State<MetricsState>) -> impl IntoResponse {
@@ -152,9 +180,13 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
         // Setup public routes
         let app = Router::new()
             .route("/metrics", get(metrics_handler))
-            .route("/health", get(health_handler))
+            .route("/healthz", get(healthz_handler))
+            // Deprecated alias of /healthz, for existing monitors
+            .route("/health", get(healthz_handler))
             .route("/ready", get(readiness_handler))
             .route("/version", get(version_handler))
+            .route("/liveness", get(liveness_handler))
+            // Deprecated alias of /liveness, for existing monitors
             .route("/live", get(liveness_handler))
             .route("/config", get(config_handler))
             .with_state(state);
@@ -564,5 +596,79 @@ impl Injector for MetadataInjector<'_> {
         {
             self.0.insert(key, val);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn code_and_status(response: Response) -> (StatusCode, String) {
+        let code = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        (code, json["status"].as_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn unregistered_process_is_live_but_not_ready() {
+        assert_eq!(
+            code_and_status(liveness_response(None)).await,
+            (StatusCode::OK, "alive".to_string())
+        );
+        assert_eq!(
+            code_and_status(readiness_response(None)).await,
+            (StatusCode::SERVICE_UNAVAILABLE, "not_ready".to_string())
+        );
+        assert_eq!(
+            code_and_status(healthz_response(None)).await,
+            (StatusCode::SERVICE_UNAVAILABLE, "unhealthy".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn initialized_server_is_ready_and_healthy() {
+        let (health, _service) = HealthState::new().await;
+        assert_eq!(
+            code_and_status(readiness_response(Some(&health))).await,
+            (StatusCode::SERVICE_UNAVAILABLE, "not_ready".to_string())
+        );
+        health.mark_initialized().await;
+        assert_eq!(
+            code_and_status(liveness_response(Some(&health))).await,
+            (StatusCode::OK, "alive".to_string())
+        );
+        assert_eq!(
+            code_and_status(readiness_response(Some(&health))).await,
+            (StatusCode::OK, "ready".to_string())
+        );
+        assert_eq!(
+            code_and_status(healthz_response(Some(&health))).await,
+            (StatusCode::OK, "healthy".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn fatal_fault_fails_all_probes() {
+        let (health, _service) = HealthState::new().await;
+        health.mark_initialized().await;
+        health.report_fatal("test_component", "test reason").await;
+        assert_eq!(
+            code_and_status(liveness_response(Some(&health))).await,
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not_responding".to_string()
+            )
+        );
+        assert_eq!(
+            code_and_status(readiness_response(Some(&health))).await,
+            (StatusCode::SERVICE_UNAVAILABLE, "not_ready".to_string())
+        );
+        assert_eq!(
+            code_and_status(healthz_response(Some(&health))).await,
+            (StatusCode::SERVICE_UNAVAILABLE, "unhealthy".to_string())
+        );
     }
 }

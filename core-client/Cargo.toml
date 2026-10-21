@@ -35,7 +35,6 @@ required-features = ["kind_tests"]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
-aes-prng.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
@@ -61,6 +60,7 @@ tempfile.workspace = true
 test-utils.workspace = true
 tfhe.workspace = true
 threshold-networking.workspace = true
+threshold-types.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
