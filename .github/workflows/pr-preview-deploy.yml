@@ -37,9 +37,9 @@ on:
         required: true
       HARBOR_READ_TOKEN:
         required: true
-      TS_OAUTH_CLIENT_ID:
+      TS_KMS_CI_OAUTH_CLIENT_ID:
         required: true
-      TS_OAUTH_SECRET:
+      TS_KMS_CI_OAUTH_AUDIENCE:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -54,8 +54,10 @@ jobs:
   pr-preview-deploy:
     name: pr-preview-deploy
     permissions:
+      id-token: write # Required for Tailscale OIDC
       pull-requests: write # Required to update pull requests information
     runs-on: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false"
+    environment: preview-env
     timeout-minutes: 1800
 
     # Environment variables used throughout the job
@@ -153,10 +155,10 @@ jobs:
       # TOOLING SETUP
       # ======================================================================
       - name: Setup tailscale
-        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          oauth-client-id: ${{ secrets.TS_KMS_CI_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_KMS_CI_OAUTH_AUDIENCE }}
           tags: tag:kms-ci
 
       - name: Setup helm

@@ -13,15 +13,15 @@ rules:
   secrets-inherit:
     ignore:
       - main.yml
-      - performance-testing.yml:210
-      - performance-testing.yml:211
+      - performance-testing.yml:212
+      - performance-testing.yml:213
       - kind-testing.yml:260
       - kind-testing.yml:261
       - performance-testing.yml:100
-      - performance-testing.yml:149
-      - performance-testing.yml:199
-      - pr-preview-deploy.yml:100
-      - pr-preview-deploy.yml:101
+      - performance-testing.yml:151
+      - performance-testing.yml:201
+      - pr-preview-deploy.yml:102
+      - pr-preview-deploy.yml:103
       - rolling-upgrade-testing.yml:126
       - rolling-upgrade-testing.yml:127
       - rolling-upgrade-testing.yml:128
@@ -30,11 +30,11 @@ rules:
       - rolling-upgrade-testing.yml:217
       - rolling-upgrade-testing.yml:222
       - rolling-upgrade-testing.yml:223
-      - rolling-upgrade-testing.yml:260
-      - rolling-upgrade-testing.yml:268
-      - rolling-upgrade-testing.yml:541
-      - rolling-upgrade-testing.yml:542
-      - rolling-upgrade-testing.yml:543
+      - rolling-upgrade-testing.yml:263
+      - rolling-upgrade-testing.yml:271
+      - rolling-upgrade-testing.yml:544
+      - rolling-upgrade-testing.yml:545
+      - rolling-upgrade-testing.yml:546
   dangerous-triggers:
     ignore:
       # Checks out and runs no PR code; skips forks.

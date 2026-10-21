@@ -151,6 +151,7 @@ jobs:
     needs: [docker-build, check-pr-preview-labels]
     if: needs.check-pr-preview-labels.outputs.should_deploy == 'true'
     permissions:
+      id-token: write # Required for Tailscale OIDC in pr-preview-deploy
       pull-requests: write # Required to update pull requests information
     uses: ./.github/workflows/pr-preview-deploy.yml
     with:
@@ -164,6 +165,6 @@ jobs:
       HARBOR_URL: ${{ secrets.HARBOR_URL }}
       HARBOR_READ_LOGIN: ${{ secrets.HARBOR_READ_LOGIN }}
       HARBOR_READ_TOKEN: ${{ secrets.HARBOR_READ_TOKEN }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      TS_KMS_CI_OAUTH_CLIENT_ID: ${{ secrets.TS_KMS_CI_OAUTH_CLIENT_ID }}
+      TS_KMS_CI_OAUTH_AUDIENCE: ${{ secrets.TS_KMS_CI_OAUTH_AUDIENCE }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
