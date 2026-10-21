@@ -301,12 +301,6 @@
             }
           }
         },
-        "rateLimiter": {
-          "type": "object",
-          "properties": {
-            "bucketSize": { "type": "integer", "minimum": 1 }
-          }
-        },
         "migration": {
           "type": "object",
           "properties": {

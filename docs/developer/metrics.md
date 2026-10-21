@@ -164,7 +164,7 @@ assume the default `kms` prefix:
 - System: `kms_cpu_load`, `kms_process_cpu_usage`, `kms_total_cpus`, `kms_memory_usage`,
   `kms_total_memory`, `kms_process_memory_usage`
 - Process/runtime: `kms_file_descriptors`, `kms_socat_file_descriptors`, `kms_socat_tasks`,
-  `kms_tasks`, `kms_rate_limiter_usage`
+  `kms_tasks`
 - Sessions: `kms_active_sessions`, `kms_inactive_sessions`
 - Meta storage: `kms_meta_storage_{user,pub}_decryptions` (ongoing) and
   `kms_meta_storage_{user,pub}_decryptions_in_store` (total)

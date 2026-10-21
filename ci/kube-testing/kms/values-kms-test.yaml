@@ -52,8 +52,6 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-private
-  rateLimiter:
-    bucketSize: 50000
   aws:
     region: eu-west-1
   storage:

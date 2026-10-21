@@ -36,7 +36,6 @@ GAUGES = (
     "kms_meta_storage_pub_decryptions",
     "kms_meta_storage_pub_decryptions_in_store",
     "kms_network_sender_tasks",
-    "kms_rate_limiter_usage",
     "kms_tasks",
     "kms_tokio_alive_tasks",
     "kms_tokio_global_queue_depth",

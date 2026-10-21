@@ -16,7 +16,6 @@ use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
-use crate::util::rate_limiter::RateLimiterConfig;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
@@ -205,16 +204,6 @@ pub async fn decryption_threshold(
 ) {
     assert!(parallelism > 0);
 
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100 * parallelism,
-        pub_decrypt: 100,
-        user_decrypt: 1,
-        crsgen: 1,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
-
     // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
     // default epoch (PRSS) comes from the fixture with the key shares.
     let spec = if dkg_params == TEST_PARAM {
@@ -228,7 +217,6 @@ pub async fn decryption_threshold(
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)
-        .with_rate_limiter(rate_limiter_conf)
         .with_prss();
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);
@@ -447,7 +435,7 @@ pub async fn run_decryption_threshold_optionally_fail(
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;
         let received_plaintexts = internal_client
-            .process_decryption_resp(Some(req.clone()), min_count_agree, &responses)
+            .process_decryption_resp(req, min_count_agree, &responses)
             .unwrap();
 
         // we need 1 plaintext for each ciphertext in the batch
@@ -456,24 +444,6 @@ pub async fn run_decryption_threshold_optionally_fail(
         // check that the plaintexts are correct
         for (i, plaintext) in received_plaintexts.iter().enumerate() {
             crate::client::tests::common::assert_plaintext(&msgs[i], plaintext);
-        }
-
-        // A response without the deprecated internal signature must be tolerated, as long as
-        // enough of the remaining responses still carry a valid one.
-        // TODO(0.16) remove along with the deprecated fields.
-        if responses.len() > min_count_agree as usize {
-            let mut responses_wo_internal_sig = responses.clone();
-            responses_wo_internal_sig[0].signature = vec![];
-            assert_eq!(
-                internal_client
-                    .process_decryption_resp(
-                        Some(req.clone()),
-                        min_count_agree,
-                        &responses_wo_internal_sig
-                    )
-                    .unwrap(),
-                received_plaintexts
-            );
         }
     }
 }
