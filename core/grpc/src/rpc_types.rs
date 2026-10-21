@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
+use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
@@ -419,18 +420,26 @@ impl Default for PrivDataType {
     }
 }
 
-impl TryFrom<&str> for PrivDataType {
-    type Error = anyhow::Error;
+impl FromStr for PrivDataType {
+    type Err = anyhow::Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         for priv_data_type in PrivDataType::iter() {
-            if value.to_ascii_lowercase().trim()
+            if s.to_ascii_lowercase().trim()
                 == priv_data_type.to_string().to_ascii_lowercase().trim()
             {
                 return Ok(priv_data_type);
             }
         }
-        Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
+        Err(anyhow::anyhow!("Unknown PrivDataType: {}", s))
+    }
+}
+
+impl TryFrom<&str> for PrivDataType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::from_str(value)
     }
 }
 
@@ -1288,7 +1297,7 @@ mod tests {
         for cur_type in PrivDataType::iter() {
             let rendered = cur_type.to_string();
             assert_eq!(
-                PrivDataType::try_from(rendered.as_str()).unwrap(),
+                PrivDataType::from_str(rendered.as_str()).unwrap(),
                 cur_type,
                 "{cur_type:?} did not round-trip through \"{rendered}\""
             );

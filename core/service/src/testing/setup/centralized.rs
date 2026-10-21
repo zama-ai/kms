@@ -92,7 +92,6 @@ pub struct CentralizedTestEnvBuilder {
     material_manager: Option<TestMaterialManager>,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
-    rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
 }
 
 impl CentralizedTestEnvBuilder {
@@ -127,12 +126,6 @@ impl CentralizedTestEnvBuilder {
         self
     }
 
-    /// Set rate limiter configuration
-    pub fn with_rate_limiter(mut self, conf: crate::util::rate_limiter::RateLimiterConfig) -> Self {
-        self.rate_limiter_conf = Some(conf);
-        self
-    }
-
     /// Build the test environment
     pub async fn build(self) -> Result<CentralizedTestEnv> {
         let test_name = self
@@ -160,13 +153,7 @@ impl CentralizedTestEnvBuilder {
             None
         };
 
-        let (server, client) = setup_centralized(
-            pub_storage,
-            priv_storage,
-            backup_vault,
-            self.rate_limiter_conf,
-        )
-        .await;
+        let (server, client) = setup_centralized(pub_storage, priv_storage, backup_vault).await;
 
         Ok(CentralizedTestEnv {
             material_dir,
@@ -189,13 +176,7 @@ impl CentralizedTestEnvBuilder {
         } else {
             None
         };
-        Ok(setup_centralized(
-            pub_storage,
-            priv_storage,
-            backup_vault,
-            self.rate_limiter_conf,
-        )
-        .await)
+        Ok(setup_centralized(pub_storage, priv_storage, backup_vault).await)
     }
 }
 

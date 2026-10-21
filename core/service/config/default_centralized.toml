@@ -26,12 +26,3 @@ path = "./keys"
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
-
-[rate_limiter_conf]
-bucket_size = 50000
-pub_decrypt = 1
-user_decrypt = 1
-crsgen = 100
-preproc = 25000
-keygen = 1000
-new_epoch = 1

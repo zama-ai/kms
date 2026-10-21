@@ -4,7 +4,7 @@ use crate::engine::base::{PubDecCallValues, UserDecryptCallValues, sign_public_d
 use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, format_unvalidated_id, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -42,15 +42,12 @@ use tracing::Instrument;
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
-    let permit = service.rate_limiter.start_user_decrypt().await?;
     let timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -128,7 +125,6 @@ pub async fn user_decrypt_impl<
     tokio::spawn(
         async move {
             let _timer = timer;
-            let _permit = permit;
             let meta_permit = meta_permit;
 
             tracing::info!(
@@ -164,10 +160,8 @@ pub async fn user_decrypt_impl<
 pub async fn user_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
     // `user_decrypt_impl` consumes the request, so keep the raw id for fetching the result below.
@@ -194,10 +188,8 @@ pub async fn user_decrypt_sync_impl<
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
     METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
@@ -250,15 +242,12 @@ pub async fn get_user_decryption_result_impl<
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
-    let permit = service.rate_limiter.start_pub_decrypt().await?;
     let timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
@@ -343,7 +332,6 @@ pub async fn public_decrypt_impl<
     // the result of the computation is tracked by the pub_dec_meta_store
     let _handle = tokio::spawn(async move {
         let _timer = timer;
-        let _permit = permit;
         let meta_permit = meta_permit;
         tracing::info!(
             "Starting decryption using key_id {} for request ID {}",
@@ -406,10 +394,8 @@ pub async fn public_decrypt_impl<
 pub async fn public_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
     // `public_decrypt_impl` consumes the request, so keep the raw id for fetching the result below
@@ -436,10 +422,8 @@ pub async fn public_decrypt_sync_impl<
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
     METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
@@ -510,7 +494,7 @@ pub(crate) mod tests {
     use crate::{
         cryptography::signatures::PublicSigKey,
         engine::centralized::{
-            central_kms::RealCentralizedKms,
+            central_kms::CentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
         },
         util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher},
@@ -523,7 +507,7 @@ pub(crate) mod tests {
         rng: &mut AesRng,
         key_id: &RequestId,
     ) -> (
-        RealCentralizedKms<RamStorage, RamStorage>,
+        CentralizedKms<RamStorage, RamStorage>,
         tfhe::CompactPublicKey,
         PublicSigKey,
     ) {
@@ -752,27 +736,26 @@ mod tests_public_decryption {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
         let (mut kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        kms.pub_dec_meta_store = crate::util::meta_store::MetaStore::new(1, 0);
+        let _pending = kms
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
+
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
-        let (_msg, ct) = make_test_msg_ct(&pk, true);
-
-        // set the rate limiter bucket size to 0
-        // it won't work if we just set it to 1 like crs/keygen because decryption only uses 1 token
-        kms.set_bucket_size(0);
-
-        // make a normal request then it should fail
-        {
-            let request = make_valid_request(request_id, key_id, ct, &domain);
-            let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-        }
+        let (_, ct) = make_test_msg_ct(&pk, true);
+        let request = make_valid_request(request_id, key_id, ct, &domain);
+        let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]
@@ -1131,29 +1114,28 @@ mod test_user_decryption {
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
-        let (mut kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let (mut kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        kms.user_dec_meta_store = crate::util::meta_store::MetaStore::new(1, 0);
+        let _pending = kms
+            .user_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
+
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
-        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
-
-        // set the rate limiter bucket size to 0
-        // it won't work if we just set it to 1 like crs/keygen because decryption only uses 1 token
-        kms.set_bucket_size(0);
-
-        // make a normal request then it should fail
-        {
-            let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
-            let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-        }
+        let (_, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, _) = make_test_pk(&mut rng);
+        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
+        let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

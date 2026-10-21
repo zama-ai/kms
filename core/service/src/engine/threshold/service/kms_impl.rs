@@ -32,16 +32,9 @@ use tfhe::{
     xof_key_set::CompressedXofKeySet,
 };
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
-    endpoints::keygen::SecureOnlineDistributedKeyGen128,
-    online::preprocessing::{
-        DKGPreprocessing, create_memory_factory,
-        orchestration::producer_traits::SecureSmallProducerFactory,
-    },
-    small_execution::prss::RobustSecurePrssInit,
+    online::preprocessing::{DKGPreprocessing, create_memory_factory},
     tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
-    zk::ceremony::SecureCeremony,
 };
 use threshold_networking::{
     grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
@@ -58,7 +51,7 @@ use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
+use crate::engine::threshold::service::epoch_manager::{EpochData, ThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -67,7 +60,7 @@ use crate::{
     consts::MINIMUM_SESSIONS_PREPROC,
     cryptography::attestation::SecurityModuleProxy,
     engine::{
-        backup_operator::RealBackupOperator,
+        backup_operator::BackupOperator,
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
@@ -79,17 +72,13 @@ use crate::{
             verify_storage_material,
         },
         threshold::{
-            service::{
-                public_decryptor::SecureNoiseFloodDecryptor,
-                session::{ImmutableSessionMaker, SessionMaker},
-                user_decryptor::SecureNoiseFloodPartialDecryptor,
-            },
+            service::session::{ImmutableSessionMaker, SessionMaker},
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    util::{meta_store::MetaStore, rate_limiter::RateLimiter},
+    util::meta_store::MetaStore,
     vault::{
         Vault, adopt_custodian_context,
         storage::{
@@ -103,14 +92,13 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    crs_generator::RealCrsGenerator, key_generator::RealKeyGenerator,
-    preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
-    user_decryptor::RealUserDecryptor,
+    crs_generator::CrsGenerator, key_generator::KeyGenerator, preprocessor::Preprocessor,
+    public_decryptor::PublicDecryptor, user_decryptor::UserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
+use super::{crs_generator::InsecureCrsGenerator, key_generator::InsecureKeyGenerator};
 
 /// Versioned envelope for PublicKeyMaterial.
 /// V0 is the fat variant (with decompressed keys), V1 is the slim variant.
@@ -470,44 +458,6 @@ pub(crate) fn new_insecure_preproc_bucket(
     })
 }
 
-#[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
-#[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealInsecureKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
@@ -520,7 +470,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS>,
+    ThresholdKms<PubS, PrivS>,
     (HealthState, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
@@ -533,7 +483,6 @@ where
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
-    let rate_limiter_conf = config.rate_limiter_conf.to_owned().unwrap_or_default();
     let telemetry_conf = config
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
@@ -689,7 +638,7 @@ where
     // We are only serving after initialization
     health
         .reporter()
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .set_not_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
         .await;
     let mpc_server_health = health.clone();
 
@@ -836,15 +785,13 @@ where
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng_source());
 
     let tracker = Arc::new(TaskTracker::new());
-    let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
-    let epoch_manager = RealThresholdEpochManager {
+    let epoch_manager = ThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance(),
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         reshare_storage_lock: Arc::new(tokio::sync::Mutex::new(())),
         _init: PhantomData,
         _reshare: PhantomData,
@@ -871,29 +818,27 @@ where
 
     let immutable_session_maker = session_maker.make_immutable();
 
-    let user_decryptor = RealUserDecryptor {
+    let user_decryptor = UserDecryptor {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
 
-    let public_decryptor = RealPublicDecryptor {
+    let public_decryptor = PublicDecryptor {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
         decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
 
-    let keygenerator = RealKeyGenerator {
+    let keygenerator = KeyGenerator {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
@@ -901,15 +846,14 @@ where
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
     };
 
     #[cfg(feature = "insecure")]
-    let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
+    let insecure_keygenerator = InsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
-    let keygen_preprocessor = RealPreprocessor {
+    let keygen_preprocessor = Preprocessor {
         base_kms: base_kms.new_instance(),
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
@@ -917,25 +861,23 @@ where
         num_sessions_preproc,
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _producer_factory: PhantomData,
     };
 
-    let crs_generator = RealCrsGenerator {
+    let crs_generator = CrsGenerator {
         base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::new(Mutex::new(HashMap::new())),
-        rate_limiter: rate_limiter.clone(),
         _ceremony: PhantomData,
     };
 
     #[cfg(feature = "insecure")]
-    let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
+    let insecure_crs_generator = InsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
-    let backup_operator = RealBackupOperator::new(
+    let backup_operator = BackupOperator::new(
         base_kms.new_instance(),
         crypto_storage.inner.clone(),
         security_module,
@@ -955,7 +897,6 @@ where
     }
     // Start updating system metrics
     update_threshold_kms_system_metrics(
-        rate_limiter.clone(),
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
@@ -1007,7 +948,6 @@ fn core_to_core_stop_fault(shutdown_requested: bool, serve_error: Option<&str>) 
 }
 
 fn update_threshold_kms_system_metrics<PubS, PrivS>(
-    rate_limiter: RateLimiter,
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
@@ -1020,7 +960,6 @@ where
 {
     tokio::spawn(async move {
         loop {
-            metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
             metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
             // Skipped when the cache lock is contended: the gauge keeps its
