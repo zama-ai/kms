@@ -19,7 +19,6 @@ use crate::{
     },
 };
 use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::B256;
 use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
@@ -1261,7 +1260,7 @@ pub(crate) async fn verify_context_and_extract_my_role<S: StorageReader>(
 #[cfg(test)]
 mod tests {
     use super::{
-        B256, ContextId, ContextInfo, NewMpcContextRequest, NewMpcContextSignedPayload, Role,
+        ContextId, ContextInfo, NewMpcContextRequest, NewMpcContextSignedPayload, Role,
         validate_new_mpc_context_request,
     };
     use crate::cryptography::signing::VerfKeySet;
@@ -2622,7 +2621,7 @@ mod tests {
         assert_eq!(verified.new_context, new_context);
         assert_eq!(verified.my_role, Some(Role::indexed_from_one(1)));
         assert_eq!(verified.previous_context_id, previous_context_id);
-        assert_eq!(verified.node_config_hash, B256::repeat_byte(0xab));
+        assert_eq!(verified.node_config_hash, [0xab; 32]);
         assert_eq!(verified.domain, dummy_domain());
         assert_eq!(verified.extra_data, vec![1, 2]);
         assert_eq!(verified.signing_schemes, vec![SigningSchemeType::MlDsa87]);
