@@ -105,7 +105,7 @@ async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
             if check_fn(cur_receiver, session)? {
                 let networking = Arc::clone(session.network());
                 networking
-                    .send(cur_value.to_network(), cur_receiver)
+                    .send(cur_value.to_network()?, cur_receiver)
                     .await?;
             } else {
                 tracing::warn!(
@@ -213,7 +213,7 @@ where
     T: AsRef<NetworkValue<Z>>,
 {
     let my_role = session.my_role();
-    let serialized_message = msg.as_ref().to_network();
+    let serialized_message = msg.as_ref().to_network()?;
 
     session.network().increase_round_counter().await;
     for other_role in session.roles() {
