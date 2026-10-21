@@ -443,14 +443,14 @@ fn parse_migration_map(
             *DEFAULT_MPC_CONTEXT
         );
     }
-    if let Some(context_id) = context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT) {
-        if !context_id.contains(&DEFAULT_EPOCH_ID) {
-            anyhow::bail!(
-                "Default context ID {} must contain the default epoch ID {}",
-                *DEFAULT_MPC_CONTEXT,
-                *DEFAULT_EPOCH_ID
-            );
-        }
+    if let Some(context_id) = context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT)
+        && !context_id.contains(&DEFAULT_EPOCH_ID)
+    {
+        anyhow::bail!(
+            "Default context ID {} must contain the default epoch ID {}",
+            *DEFAULT_MPC_CONTEXT,
+            *DEFAULT_EPOCH_ID
+        );
     }
     Ok(context_to_epoch_map)
 }
