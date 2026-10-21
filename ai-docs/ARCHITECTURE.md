@@ -134,6 +134,10 @@ Read the [compatibility guide](../docs/developer/backward_compatibility.md) befo
 
 ## Deployment invariants
 
+- A core and its connector upgrade together. The connector is the only service-API consumer, so the service API need not stay backward compatible.
+- Upgrades roll: for a while, some cores run release i and the rest i+1. Public and user decryption must keep working throughout.
+- Constructive calls (key/CRS generation, context/epoch creation) and destructive calls (context/epoch destruction) never run during a rolling upgrade, and never concurrently. Concurrent calls indicate a contract bug; the core may reject them but must leave storage consistent.
+- `core-client` is a test tool, used only with cores of its own release and never during upgrades.
 - Package Dockerfiles consume the shared `kms-binaries` image through `KMS_BINARIES_IMAGE`; see [docker/kms-binaries/Dockerfile](../docker/kms-binaries/Dockerfile).
 - [HealthState](../observability/src/health.rs) drives gRPC and HTTP probes. Readiness depends on startup/shutdown, **not peers or MPC state**, because Kubernetes routes peer traffic only to ready pods. Liveness fails on faults requiring restart.
 - Deployment details: [Helm chart](../charts/kms-core/), [compose guide](../docker-compose.md). Protocol background: [Noah's Ark](https://eprint.iacr.org/2023/815).

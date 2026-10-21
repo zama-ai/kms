@@ -23,7 +23,7 @@
 
 ## Compatibility and API
 
-- Keep core-to-core communication ([gnetworking.proto](../core/threshold-networking/protos/gnetworking.proto) and the MPC messages it carries) compatible: a core released from `main` after your change must still talk to a core from the previous release.
+- Keep core-to-core communication ([gnetworking.proto](../core/threshold-networking/protos/gnetworking.proto) and the MPC messages it carries) compatible: a core released from `main` after your change must still talk to a core from the previous release. See the upgrade assumptions in [ARCHITECTURE.md](./ARCHITECTURE.md#deployment-invariants).
 - Preserve backward compatibility. Version all non-test data in public, private, and backup storage with `tfhe-versionable`.
 - Before changing persisted types, read the [compatibility guide](../docs/developer/backward_compatibility.md) and [harness overview](./ARCHITECTURE.md#backward-compatibility).
 - Modifying or removing existing gRPC fields, or changing their data format, is breaking: alert your human for infra and downstream tracking.
