@@ -519,10 +519,7 @@ impl SessionMaker {
                     info.context_id()
                 ));
             }
-            let signer = node
-                .ecdsa_signer_address()
-                .map_err(|e| anyhow::anyhow!("{e} in context {}", info.context_id()))?;
-            if let Some(signer) = signer {
+            if let Some(signer) = node.ecdsa_signer_address() {
                 signers.insert(Role::indexed_from_one(party_id), signer);
             }
 

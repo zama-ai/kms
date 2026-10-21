@@ -6,7 +6,7 @@
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
-use crate::engine::centralized::central_kms::RealCentralizedKms;
+use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -21,7 +21,6 @@ cfg_if::cfg_if! {
         use tfhe::FheTypes;
         use kms_grpc::kms::v1::TypedCiphertext;
         use crate::engine::base::derive_request_id;
-        use crate::util::rate_limiter::RateLimiterConfig;
         use crate::engine::centralized::central_kms::tests::default_keys;
         use crate::dummy_domain;
         use crate::client::client_wasm::Client;
@@ -44,9 +43,8 @@ async fn test_central_health_endpoint_availability() -> Result<()> {
     let mut health_client = get_health_client(env.server.service_port)
         .await
         .expect("Failed to get health client");
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     let request = tonic::Request::new(HealthCheckRequest {
         service: service_name.to_string(),
     });
@@ -103,9 +101,8 @@ async fn test_central_close_after_drop() -> Result<()> {
     let mut health_client = get_health_client(kms_server.service_port)
         .await
         .expect("Failed to get health client");
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     let request = tonic::Request::new(HealthCheckRequest {
         service: service_name.to_string(),
     });
@@ -158,24 +155,11 @@ async fn test_central_close_after_drop() -> Result<()> {
 }
 
 /// Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large.
-///
-/// This test uses RAM storage with custom rate limiter config (not the builder pattern)
-/// because it needs fine-grained control over the rate limiter settings.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_largecipher() -> Result<()> {
     let keys = default_keys().await;
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100,
-        pub_decrypt: 1,
-        user_decrypt: 100,
-        crsgen: 1,
-        preproc: 1,
-        keygen: 1,
-        new_epoch: 1,
-    };
 
-    // Setup with RAM storage and custom rate limiter
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
         new_pub_ram_storage_from_existing_keys(
             &keys.pub_fhe_keys,
@@ -190,7 +174,6 @@ async fn test_largecipher() -> Result<()> {
         .await
         .unwrap(),
         None,
-        Some(rate_limiter_conf),
     )
     .await;
 

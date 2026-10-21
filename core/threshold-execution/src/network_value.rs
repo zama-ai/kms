@@ -107,19 +107,14 @@ pub enum AgreeRandomValue {
 
 /// A value that is sent via network.
 ///
-/// IMPORTANT: when adding new variants, they must be added to the *end*
-/// of the enum for bincode to behave in a backward compatible way.
-/// Otherwise we will have issues when performing a rolling upgrade.
+/// IMPORTANT: bincode encodes a variant by its position in the enum *after*
+/// `cfg` stripping. To keep the wire format backward compatible (rolling
+/// upgrades) and identical between builds _without_ the `testing` feature:
+/// - new non-test variants must be appended right after the last non-test
+///   variant, i.e. *before* the `testing`-gated block;
+/// - `testing`-gated variants must always stay at the very end.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum NetworkValue<Z: Eq + Zero> {
-    #[cfg(any(test, feature = "testing"))]
-    PubKeySet(Box<FhePubKeySet>),
-    #[cfg(any(test, feature = "testing"))]
-    Crs(Box<CompactPkeCrs>),
-    #[cfg(any(test, feature = "testing"))]
-    DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
-    #[cfg(any(test, feature = "testing"))]
-    SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),
@@ -130,6 +125,15 @@ pub enum NetworkValue<Z: Eq + Zero> {
     Bot,
     Empty,
     Round1VSS(ExchangedDataRound1<Z>),
+    // Only `testing`-gated variants below this line.
+    #[cfg(any(test, feature = "testing"))]
+    PubKeySet(Box<FhePubKeySet>),
+    #[cfg(any(test, feature = "testing"))]
+    Crs(Box<CompactPkeCrs>),
+    #[cfg(any(test, feature = "testing"))]
+    DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
+    #[cfg(any(test, feature = "testing"))]
+    SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
     #[cfg(any(test, feature = "testing"))]
     CompressedXofKeySet(Box<tfhe::xof_key_set::CompressedXofKeySet>),
 }
@@ -258,6 +262,43 @@ mod tests {
     use test_utils::read_element;
     use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
+
+    /// Pins the bincode variant index of every non-`testing` variant to the
+    /// one used by production builds, so that adding or moving variants (gated
+    /// or not) cannot silently break rolling upgrades or interop between
+    /// builds with and without the `testing` feature.
+    #[test]
+    fn test_network_value_variant_indices() {
+        let cases: Vec<(NetworkValue<Z128>, u32)> = vec![
+            (NetworkValue::RingValue(Z128::ZERO), 0),
+            (NetworkValue::VecRingValue(vec![]), 1),
+            (NetworkValue::VecPairRingValue(vec![]), 2),
+            (NetworkValue::Send(BroadcastValue::Bot), 3),
+            (NetworkValue::EchoBatch(HashMap::new()), 4),
+            (NetworkValue::VoteBatch(HashMap::new()), 5),
+            (
+                NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![])),
+                6,
+            ),
+            (NetworkValue::Bot, 7),
+            (NetworkValue::Empty, 8),
+            (
+                NetworkValue::Round1VSS(ExchangedDataRound1::default(1, 0)),
+                9,
+            ),
+        ];
+        for (value, expected_index) in cases {
+            let bytes = value.to_network();
+            // bc2wrap uses the bincode legacy config: the variant index is a little-endian u32 prefix.
+            let index = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+            assert_eq!(
+                index,
+                expected_index,
+                "variant {} changed its wire index",
+                value.network_type_name()
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_box_sending() {

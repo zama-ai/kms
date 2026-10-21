@@ -9,7 +9,7 @@ use crate::engine::centralized::central_kms::{
     async_generate_fhe_keys,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
@@ -43,10 +43,8 @@ use tracing::Instrument;
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<KeyGenRequest>,
     insecure: bool,
 ) -> Result<Response<Empty>, MetricedError> {
@@ -56,7 +54,6 @@ pub async fn key_gen_impl<
     } else {
         OP_KEYGEN_REQUEST
     };
-    let rate_limiter_permit = service.rate_limiter.start_keygen(op_tag).await?;
     // TODO add serial lock to have similar flow to threshold case
     // Acquire the serial lock to make sure no other keygen is running concurrently
     // let _guard = service.serial_lock.lock().await;
@@ -121,7 +118,7 @@ pub async fn key_gen_impl<
     // `preprocessing_meta_store`. We therefore retrieve by ID without checking
     // how the preprocessing was produced, so either a normal or an insecure
     // keygen can consume either kind of preprocessing.
-    let (params, permit) = {
+    let params = {
         let preproc =
             retrieve_from_meta_store(&service.preprocessing_meta_store, &preproc_id, op_tag)
                 .await
@@ -162,7 +159,7 @@ pub async fn key_gen_impl<
         // already known to the meta store.
         ensure_not_in_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
-        (params, rate_limiter_permit)
+        params
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
@@ -200,7 +197,6 @@ pub async fn key_gen_impl<
     service.tracker.spawn(
         async move {
             let _timer = timer;
-            let _permit = permit;
             key_gen_background(
                 meta_permit,
                 token,
@@ -231,10 +227,8 @@ pub async fn key_gen_impl<
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
     insecure: bool,
 ) -> Result<Response<KeyGenResult>, MetricedError> {
@@ -310,10 +304,8 @@ pub async fn get_key_gen_result_impl<
 pub async fn abort_key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
     let preproc_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenAbort)
@@ -502,7 +494,7 @@ pub(crate) mod tests {
         engine::{
             base::derive_request_id,
             centralized::{
-                central_kms::RealCentralizedKms,
+                central_kms::CentralizedKms,
                 service::{preprocessing_impl, tests::setup_central_test_kms},
             },
         },
@@ -519,7 +511,7 @@ pub(crate) mod tests {
     pub(crate) async fn setup_test_kms_with_preproc(
         rng: &mut AesRng,
         preproc_id: &RequestId,
-    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+    ) -> (CentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
         let (kms, verf_key) = setup_central_test_kms(rng).await;
 
         // insert a preproc ID
@@ -544,7 +536,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn test_standard_keygen(
-        kms: &RealCentralizedKms<RamStorage, RamStorage>,
+        kms: &CentralizedKms<RamStorage, RamStorage>,
         req_id: &RequestId,
         preproc_id: Option<&RequestId>,
         insecure: bool,
@@ -719,38 +711,6 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let preproc_id = derive_request_id("test_keygen_sunshine_preproc").unwrap();
-        let (mut kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
-        kms.set_bucket_size(1);
-
-        let request_id = derive_request_id("test_keygen_sunshine").unwrap();
-        let request = KeyGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            params: Some(FheParameter::Test.into()),
-            keyset_config: None,
-            keyset_added_info: None,
-            request_id: Some(request_id.into()),
-            context_id: None,
-            preproc_id: Some(preproc_id.into()),
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        let err = key_gen_impl(
-            &kms,
-            tonic::Request::new(request),
-            #[cfg(feature = "insecure")]
-            true,
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

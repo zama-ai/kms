@@ -51,6 +51,8 @@ Request IDs work as follows. The gateway contracts assign each ID and bind it to
 
 The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
 
+Decryption meta stores bound admission independently for public and user requests. A full store returns `ResourceExhausted` when no completed entry permits eviction. Clients retry this status with the same request. The bandwidth benchmark also returns `ResourceExhausted` at its separate concurrency limit.
+
 Consequences for agents:
 
 - The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
@@ -359,7 +361,7 @@ store. Epoch IDs are compared as big-endian integers.
 
 ### Centralized
 
-A single `RealCentralizedKms` instance holds all key material. No MPC; keys
+A single `CentralizedKms` instance holds all key material. No MPC; keys
 live in the configured vault backend. Preprocessing / reshare RPCs are not
 applicable.
 
@@ -620,8 +622,9 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
-| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
-| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload prefixed by the schemes the stored entries name | boot fails |
+| Current private keygen and CRS metadata with a stored domain pass `verify_response_signatures`, the check a client runs on a result, as if the client had requested the schemes the stored entries name and knew only the node's own keys | boot fails |
+| Current private keygen and CRS metadata without a stored domain carry no entry beyond ECDSA, since they predate per-scheme signatures; nothing else of them can be checked | boot fails |
+| Current private keygen and CRS metadata list their per-scheme `signatures` in canonical order without repeats, and carry an `external_signature` when they carry a domain | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
@@ -665,8 +668,9 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
-signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
-entries of the other schemes sign the serialized result payload inside a composite preimage, 
+signing address, and `external_signature` must equal the ECDSA entry, as a client requires.
+Older metadata versions upgrade with no domain and stay unverifiable. The
+entries of the other schemes sign the serialized result payload inside a composite preimage,
 which binds the canonical scheme set and payload type. A node that cannot derive a scheme's key,
 because it holds no root seed, fails boot on such an entry rather than passing it over.
 
