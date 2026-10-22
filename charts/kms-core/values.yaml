@@ -63,8 +63,10 @@ kmsCore:
   thresholdMode:
     enabled: false
     # When true, render no [[threshold.peers]] and skip the 3*t+1 party check.
-    # The server then boots with no peer list and reads the committee from storage.
-    # An empty peersList still synthesizes peers from kmsPeers.count unless this is set.
+    # The server writes no default context and loads only the MPC contexts in its
+    # private storage, which the connector fills from the on-chain ProtocolConfig.
+    # Do not set it on the first deployment of a committee. An empty peersList still
+    # generates peers from kmsPeers.count. See README.md for when it is safe to use.
     omitPeers: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
     peersList: []
