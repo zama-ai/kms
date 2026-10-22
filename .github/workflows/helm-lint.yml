@@ -209,3 +209,39 @@ jobs:
             echo "explicit peer list still used PUB-p1 for this party" >&2
             exit 1
           fi
+
+          own_peers='[{"id":1,"host":"p1","port":50001,"prefix":"PUB-own"},{"id":2,"host":"p2","port":50001},{"id":3,"host":"p3","port":50001},{"id":4,"host":"p4","port":50001}]'
+          party=(--set kmsCore.thresholdMode.enabled=true --set kmsPeers.id=1
+            --set kmsCore.thresholdMode.thresholdValue=1 --set kmsCore.thresholdMode.tls.enabled=true
+            --set kmsGenCertAndKeys.enabled=true)
+          if ! output=$(helm template test charts/kms-core "${party[@]}" \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}" 2>&1); then
+            echo "own peer entry with a prefix should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'CERT_PATH="PUB-own/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'KEY_PATH="PUB-own/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq '/PUB-own/CACert/cert.pem' <<<"$output"
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "own peer entry prefix was not used for this party's folder" >&2
+            exit 1
+          fi
+
+          expect_fail() {
+            local message=$1
+            shift
+            if output=$(helm template test charts/kms-core "${party[@]}" "$@" 2>&1); then
+              echo "expected render failure: ${message}" >&2
+              exit 1
+            fi
+            grep -Fq "$message" <<<"$output"
+          }
+          expect_fail 'they must match' \
+            --set kmsCore.publicVault.s3.prefix=PUB-other \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}"
+          expect_fail 'must match the host "p1"' \
+            --set kmsPeers.name=other \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}"
+          expect_fail 'kmsInit.enabled cannot be used with kmsCore.thresholdMode.omitPeers' \
+            --set kmsCore.thresholdMode.omitPeers=true --set kmsInit.enabled=true
