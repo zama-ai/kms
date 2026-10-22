@@ -63,20 +63,38 @@ pub(crate) async fn do_get_operator_pub_keys(
         };
         check_attested_backup_pk(pk.public_key.as_slice(), attested_digest.as_slice())
             .map_err(|e| anyhow::anyhow!("party {party_id}: {e}"))?;
-        anyhow::ensure!(
-            seen_keys.insert(pk.public_key.clone()),
-            "party {party_id} returned the same operator public key as another party"
-        );
-        anyhow::ensure!(
-            seen_enclaves.insert(attestation_doc.module_id.clone()),
-            "party {party_id} is attested by enclave {}, which also attested another party",
-            attestation_doc.module_id
-        );
+        check_distinct_operator(
+            &mut seen_keys,
+            &mut seen_enclaves,
+            party_id,
+            &pk.public_key,
+            &attestation_doc.module_id,
+        )?;
         backup_pks.push((party_id, hex::encode(&pk.public_key)));
     }
 
     backup_pks.sort_by_key(|(party_id, _)| *party_id);
     Ok(backup_pks)
+}
+
+/// Record the response of `party_id` in `seen_keys` and `seen_enclaves`, failing if another
+/// party already returned `public_key` or was attested by the enclave `module_id`.
+fn check_distinct_operator(
+    seen_keys: &mut HashSet<Vec<u8>>,
+    seen_enclaves: &mut HashSet<String>,
+    party_id: usize,
+    public_key: &[u8],
+    module_id: &str,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        seen_keys.insert(public_key.to_vec()),
+        "party {party_id} returned the same operator public key as another party"
+    );
+    anyhow::ensure!(
+        seen_enclaves.insert(module_id.to_string()),
+        "party {party_id} is attested by enclave {module_id}, which also attested another party"
+    );
+    Ok(())
 }
 
 /// Check that `attested_digest` binds the attestation document to `public_key`.
@@ -317,13 +335,13 @@ pub(crate) fn report_operator_keys(
 
 #[cfg(test)]
 mod tests {
-    use super::{DSEP_ATTESTED_BACKUP_PK, check_attested_backup_pk};
+    use super::{DSEP_ATTESTED_BACKUP_PK, check_attested_backup_pk, check_distinct_operator};
     use super::{normalized_key_text, parse_expected_operator_keys, report_operator_keys};
     use hashing::hash_element;
     use kms_lib::backup::BACKUP_SIGNING_SCHEMES;
     use kms_lib::cryptography::signatures::{SigningSchemeType, test_support::seeded_verf_key_set};
     use rand::SeedableRng;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use threshold_types::rng::AesRng;
 
     /// A key whose digest is pinned by [`REFERENCE_DIGEST`].
@@ -376,6 +394,36 @@ mod tests {
         assert!(
             check_attested_backup_pk(reference_public_key().as_slice(), &attested_digest).is_err()
         );
+    }
+
+    #[test]
+    fn accepts_distinct_operators() {
+        let (mut keys, mut enclaves) = (HashSet::new(), HashSet::new());
+        check_distinct_operator(&mut keys, &mut enclaves, 1, &[1u8; 32], "i-enclave-1").unwrap();
+        check_distinct_operator(&mut keys, &mut enclaves, 2, &[2u8; 32], "i-enclave-2").unwrap();
+        check_distinct_operator(&mut keys, &mut enclaves, 3, &[3u8; 32], "i-enclave-3").unwrap();
+    }
+
+    #[test]
+    fn rejects_key_returned_by_two_parties() {
+        let (mut keys, mut enclaves) = (HashSet::new(), HashSet::new());
+        check_distinct_operator(&mut keys, &mut enclaves, 1, &[1u8; 32], "i-enclave-1").unwrap();
+        let err = check_distinct_operator(&mut keys, &mut enclaves, 2, &[1u8; 32], "i-enclave-2")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("party 2"), "{err}");
+        assert!(err.contains("same operator public key"), "{err}");
+    }
+
+    #[test]
+    fn rejects_enclave_attesting_two_parties() {
+        let (mut keys, mut enclaves) = (HashSet::new(), HashSet::new());
+        check_distinct_operator(&mut keys, &mut enclaves, 1, &[1u8; 32], "i-enclave-1").unwrap();
+        let err = check_distinct_operator(&mut keys, &mut enclaves, 2, &[2u8; 32], "i-enclave-1")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("party 2"), "{err}");
+        assert!(err.contains("enclave i-enclave-1"), "{err}");
     }
 
     #[test]
