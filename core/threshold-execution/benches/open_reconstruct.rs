@@ -1,9 +1,8 @@
 //! Benchmark of the reconstruction step of openings: error correction against error detection.
 //!
-//! `ErrorCorrect` decodes every sharing with the error-correcting decoder (Figure 59), as the openings did
-//! before; `ErrorDetect` is [`reconstruct_batch`]: interpolate from `degree + 1` shares on the prepared
-//! Lagrange constants, accept if every share agrees, and decode only the sharings that fail the check. The two
-//! are the two functions of every benchmark group, measured in the same run on the same inputs with the same
+//! `ErrorCorrect` applies the error-correcting decoder (Figure 59) to each sharing. `ErrorDetect` interpolates
+//! from `degree + 1` shares on the prepared Lagrange constants, accepts when every share agrees, and decodes
+//! only the sharings that fail the check. Each benchmark group measures both functions on the same inputs and
 //! Rayon chunking, so criterion prints them next to each other and, without `--noplot`, plots them against
 //! each other in `target/criterion/report/index.html`:
 //!
@@ -18,8 +17,9 @@
 //! generation (`error_reconstruct_with_hints` at the decoder's capacity) from the vector of d-values every
 //! party broadcast: each sharing is built from the vectors inside the measured call, by the Rayon task that
 //! reconstructs it ([`reconstruct_batch_with`]), as `reconstruct_d_values` does. Each measured call builds the
-//! `ReconstructionHints` for the owner set, as every reconstruction attempt does, and reconstructs the whole
-//! batch on Rayon in tasks of at least 256 sharings. The `honest` scenario has every share correct;
+//! `ReconstructionHints` for the owner set, as every reconstruction attempt does. Both shapes use Rayon tasks
+//! of at least 256 sharings. Robust-open reconstruction stops after a failure when possible, while d-value
+//! reconstruction retains every result. The `honest` scenario has every share correct;
 //! `one_error` has one wrong share per sharing, so every sharing fails the check and is decoded: that is the
 //! worst case for error detection, the cost of the check on top of the decoder. The `hints` group measures
 //! the hints alone, built once per reconstruction attempt, and the share of the check's Lagrange constants in
@@ -127,33 +127,46 @@ impl Inputs {
         ShamirSharings::create(shares)
     }
 
-    /// One measured call: the hints, then the reconstruction of the batch by `series`.
-    fn reconstruct(&self, series: Series, degree: usize, decoder: &Decoder) -> Vec<Option<Z>> {
+    /// Runs one measured reconstruction and consumes its result.
+    fn reconstruct(&self, series: Series, degree: usize, decoder: &Decoder) {
         let hints = self.hints(degree);
         let fallback = |sharing: &ShamirSharings<Z>| decoder(sharing, &hints);
         match (self, series) {
-            (Self::Sharings(sharings), Series::ErrorCorrect) => correct_batch(sharings, &fallback),
+            (Self::Sharings(sharings), Series::ErrorCorrect) => {
+                drop(black_box(correct_batch(sharings, &fallback)));
+            }
             (Self::Sharings(sharings), Series::ErrorDetect) => {
-                reconstruct_batch(sharings, &hints, degree + 1, PAR_CHUNK, fallback)
+                drop(black_box(reconstruct_batch(
+                    sharings,
+                    &hints,
+                    degree + 1,
+                    PAR_CHUNK,
+                    fallback,
+                )));
             }
             (Self::PartyVectors(vectors), Series::ErrorCorrect) => {
-                correct_batch_with(self.len(), |i| Self::build(vectors, i), &fallback)
+                drop(black_box(correct_batch_with(
+                    self.len(),
+                    |i| Self::build(vectors, i),
+                    &fallback,
+                )));
             }
-            (Self::PartyVectors(vectors), Series::ErrorDetect) => reconstruct_batch_with(
-                self.len(),
-                |i| Self::build(vectors, i),
-                &hints,
-                degree + 1,
-                PAR_CHUNK,
-                fallback,
-            ),
+            (Self::PartyVectors(vectors), Series::ErrorDetect) => {
+                drop(black_box(reconstruct_batch_with(
+                    self.len(),
+                    |i| Self::build(vectors, i),
+                    &hints,
+                    degree + 1,
+                    PAR_CHUNK,
+                    fallback,
+                )));
+            }
         }
     }
 }
 
-/// Error correction of every sharing: the reconstruction loop of `try_reconstruct_from_shares` before the
-/// optimistic path, the Rayon tasks of [`reconstruct_batch`].
-fn correct_batch<F>(sharings: &[ShamirSharings<Z>], decoder: &F) -> Vec<Option<Z>>
+/// Applies error correction with the short-circuiting collection used by robust open.
+fn correct_batch<F>(sharings: &[ShamirSharings<Z>], decoder: &F) -> Option<Vec<Z>>
 where
     F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
 {
@@ -164,8 +177,7 @@ where
         .collect()
 }
 
-/// Error correction of every sharing built on demand, each decoded as soon as it is built: the loop of
-/// `reconstruct_d_values` before the optimistic path, the Rayon tasks of [`reconstruct_batch_with`].
+/// Applies error correction to every sharing built from the d-value vectors.
 fn correct_batch_with<B, F>(len: usize, build: B, decoder: &F) -> Vec<Option<Z>>
 where
     B: Fn(usize) -> ShamirSharings<Z> + Sync,
@@ -221,7 +233,7 @@ fn bench_shape(
             group.throughput(Throughput::Elements(batch as u64));
             for series in Series::ALL {
                 group.bench_with_input(BenchmarkId::new(series.name(), batch), &batch, |b, _| {
-                    b.iter(|| black_box(inputs.reconstruct(series, degree, decoder)));
+                    b.iter(|| inputs.reconstruct(series, degree, decoder));
                 });
             }
         }

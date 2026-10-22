@@ -439,7 +439,7 @@ impl RobustOpen for SecureRobustOpen {
 
 type JobResultType<R, Z> = (R, anyhow::Result<Vec<Z>>);
 /// A per-sharing reconstruction function: [`reconstruct_w_errors_sync`] or [`reconstruct_w_errors_async`].
-pub type ReconsFunc<Z> = fn(
+type ReconsFunc<Z> = fn(
     num_parties: usize,
     degree: usize,
     threshold: usize,
@@ -448,15 +448,12 @@ pub type ReconsFunc<Z> = fn(
     hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
 
-/// Reconstructs a batch of sharings with the owner set of `hints`, on Rayon, in tasks of at least `par_chunk`
-/// sharings (`with_min_len`, the loop the reconstruction had before the optimistic path). Each sharing takes
-/// the optimistic path first — accepted if all its shares agree with the polynomial interpolated from its
-/// first `degree + 1` shares, see [`reconstruct_optimistic`] — and goes to `fallback`, the error-correcting
-/// decoder, otherwise, in the same task. `optimistic_min_shares` is the number of shares a sharing must have
+/// Reconstructs a batch of sharings. Each sharing takes
+/// the optimistic path first and goes to `fallback`, the error-correcting
+/// decoder, in the same task if needed. `optimistic_min_shares` is the number of shares a sharing must have
 /// for the optimistic result to be accepted, i.e. the bar the fallback applies.
 ///
-/// The result has one entry per sharing, `None` where `fallback` returned `None` (not reconstructible with
-/// the shares at hand).
+/// The function returns on the first failure encountered during reconstruction.
 ///
 /// For sharings that are not at hand but built from the parties' value vectors, as the d-values of triple
 /// generation, [`reconstruct_batch_with`] builds each one right before reconstructing it.
@@ -466,7 +463,7 @@ pub fn reconstruct_batch<Z: ErrorCorrect, F>(
     optimistic_min_shares: usize,
     par_chunk: usize,
     fallback: F,
-) -> Vec<Option<Z>>
+) -> Option<Vec<Z>>
 where
     F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
 {
@@ -477,10 +474,9 @@ where
         .collect()
 }
 
-/// [`reconstruct_batch`] for `len` sharings built on demand: sharing `i` is `build(i)`, built by the Rayon
-/// task that reconstructs it and dropped right after, so that at most one built sharing per worker exists at
-/// a time, however large the batch: the d-values of triple generation are reconstructed straight out of the
-/// per-party vectors of the broadcast.
+/// [`reconstruct_batch`] for `len` sharings built on demand: sharing `i` is `build(i)`.
+/// Unlike [`reconstruct_batch`], this function always returns a vector of length `len`
+/// with `None` for those that could not be reconstructed.
 pub fn reconstruct_batch_with<Z: ErrorCorrect, B, F>(
     len: usize,
     build: B,
@@ -542,14 +538,14 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
 
     // Select the decoder and the inclusive heard-from minimum. Every optimistic result requires
     // `degree + t + 1` actual shares, which ensures that at least `degree + 1` shares are honest.
-    let t = threshold as usize;
-    let min_actual_shares = degree + t + 1;
+    let threshold = threshold as usize;
+    let min_actual_shares = degree + threshold + 1;
     let (reconstruct_fn, min_heard_from): (ReconsFunc<Z>, usize) = match network_mode {
-        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t + 1),
-        NetworkMode::Async if degree + 3 * t < num_parties => {
-            (reconstruct_w_errors_async, degree + 2 * t + 1)
+        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * threshold + 1),
+        NetworkMode::Async if degree + 3 * threshold < num_parties => {
+            (reconstruct_w_errors_async, degree + 2 * threshold + 1)
         }
-        NetworkMode::Async => (reconstruct_w_errors_async, degree + t + 1),
+        NetworkMode::Async => (reconstruct_w_errors_async, degree + threshold + 1),
     };
 
     let mut collected_shares = 0;
@@ -594,6 +590,12 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
             }
         }
 
+        if num_bots > threshold {
+            return Err(anyhow_error_and_log(format!(
+                "Too many bots, reconstruction impossible. {num_bots} bots for threshold {threshold} ",
+            )));
+        }
+
         // Don't spawn the batched par-iter until `reconstruct_w_errors` could actually succeed: it
         // returns None for every value while `num_heard_from < min_heard_from`. `num_heard_from`
         // counts everyone we've heard from — own + received good shares + known bots — exactly as the
@@ -610,14 +612,6 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         if should_attempt_reconstruction {
             has_attempted = true;
             last_reconstruction_attempt = collected_shares;
-            // The per-sharing functions decline to decode once more than `threshold` parties are known
-            // bots (their error budget would underflow); the optimistic path then stays out too, so that
-            // both paths accept under exactly the same conditions.
-            let min_actual_shares = if num_bots > t {
-                usize::MAX
-            } else {
-                min_actual_shares
-            };
 
             // Spawn a task on rayon.
             let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
@@ -644,19 +638,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                     min_actual_shares,
                     *ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
                     |sharing| {
-                        reconstruct_fn(
-                            num_parties,
-                            degree,
-                            threshold as usize,
-                            num_bots,
-                            sharing,
-                            &hints,
-                        )
-                        .unwrap_or_default()
+                        reconstruct_fn(num_parties, degree, threshold, num_bots, sharing, &hints)
+                            .unwrap_or_default()
                     },
-                )
-                .into_iter()
-                .collect();
+                );
                 Ok(result)
             })
             .await??;
@@ -1296,11 +1281,10 @@ pub(crate) mod test {
         .await;
     }
 
-    /// The two forms of the batch reconstruction agree with each other and with the secrets, on the calling
-    /// thread and on Rayon, across chunk boundaries and whether a sharing takes the optimistic path, is
-    /// decoded, or cannot be reconstructed.
+    /// The short-circuiting batch succeeds only when every sharing reconstructs. The eager batch retains
+    /// each sharing's result across chunk boundaries and for both optimistic and decoded reconstruction.
     #[test]
-    fn test_reconstruct_batch_with_matches_reconstruct_batch() {
+    fn test_reconstruct_batch_variants_return_expected_results() {
         use super::{reconstruct_batch, reconstruct_batch_with};
         use algebra::error_correction::ReconstructionHints;
         use algebra::sharing::{shamir::RevealOp, share::Share};
@@ -1336,15 +1320,17 @@ pub(crate) mod test {
                         .error_reconstruct_with_hints(degree, max_errors, &hints)
                         .ok()
                 };
-                let expected: Vec<Option<Z>> = secrets
+                let expected_per_sharing: Vec<Option<Z>> = secrets
                     .iter()
                     .enumerate()
                     .map(|(i, secret)| (i % 3 <= max_errors).then_some(*secret))
                     .collect();
+                let expected_complete: Option<Vec<Z>> =
+                    expected_per_sharing.iter().copied().collect();
                 assert_eq!(
                     reconstruct_batch(&sharings, &hints, degree + 1, par_chunk, fallback),
-                    expected,
-                    "degree {degree}, {len} sharings in chunks of {par_chunk}"
+                    expected_complete,
+                    "short-circuiting batch: degree {degree}, {len} sharings in chunks of {par_chunk}"
                 );
                 let party_vectors: Vec<(Role, Vec<Z>)> = (0..num_parties)
                     .map(|p| {
@@ -1362,8 +1348,8 @@ pub(crate) mod test {
                 };
                 assert_eq!(
                     reconstruct_batch_with(len, build, &hints, degree + 1, par_chunk, fallback),
-                    expected,
-                    "degree {degree}, {len} built sharings in chunks of {par_chunk}"
+                    expected_per_sharing,
+                    "eager batch: degree {degree}, {len} built sharings in chunks of {par_chunk}"
                 );
             }
         }
