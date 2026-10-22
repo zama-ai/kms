@@ -1,4 +1,7 @@
 {{- if and .Values.kmsInit.enabled .Values.kmsCore.thresholdMode.enabled -}}
+{{- if .Values.kmsCore.thresholdMode.omitPeers }}
+{{- fail "kmsInit.enabled cannot be used with kmsCore.thresholdMode.omitPeers: kms-init targets the default context, which the server does not create without peers" }}
+{{- end }}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsInitName := include "kmsInitJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}

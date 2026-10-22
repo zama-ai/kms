@@ -3,7 +3,8 @@
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
 {{- $currentPeerID := default $peersStartID .Values.kmsPeers.id | int }}
-{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $currentPeerID) }}
+{{- $publicPrefix := include "kmsOwnPrefix" . }}
+{{- include "kmsCheckPeerName" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
