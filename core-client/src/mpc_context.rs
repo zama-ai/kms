@@ -221,13 +221,17 @@ pub async fn create_test_context_info_from_core_config(
     Ok(new_context)
 }
 
+/// Create the context stored at `new_context_path` on every core, and check that each core
+/// confirms its creation.
+///
+/// `previous_context_id` defaults to the ID of the new context if not specified.
 pub(crate) async fn do_new_mpc_context(
     internal_client: &Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     cc_conf: &CoreClientConfig,
     new_context_path: &std::path::Path,
+    previous_context_id: Option<ContextId>,
     node_config_hash: [u8; 32],
-    previous_context_id: Option<&ContextId>,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<ContextId> {
     // note that we use the BufReader from std instead of tokio
@@ -237,15 +241,13 @@ pub(crate) async fn do_new_mpc_context(
 
     let new_context: ContextInfo = safe_deserialize(&mut buf_reader, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize context info from file: {}", e))?;
-    let new_context_id = new_context.context_id();
-    // Set previous context id to the new one in case nothing exists
-    let parsed_previous_context_id = previous_context_id
-        .unwrap_or(&new_context.context_id())
-        .to_owned();
+    let new_context_id = new_context.context_id;
+    // For the first context, the previous context ID is the new one.
+    let previous_context_id = previous_context_id.unwrap_or(new_context_id);
     let domain = cc_conf.default_domain()?;
     let request = internal_client.new_mpc_context_request(
-        &parsed_previous_context_id,
         new_context,
+        &previous_context_id,
         node_config_hash,
         &domain,
         extra_data,
@@ -260,24 +262,14 @@ pub(crate) async fn do_new_mpc_context(
     let mut signers = HashSet::new();
     while let Some(inner) = req_tasks.join_next().await {
         let response = inner??.into_inner();
-        let parsed_new_context = Some(new_context.try_into().map_err(|e| {
-            tonic::Status::internal(format!("Failed to convert context info to proto: {e}"))
-        })?);
-        let party_id = internal_client.process_new_mpc_context_response(
-            &response,
-            &parsed_previous_context_id,
-            new_context_id,
-            &node_config_hash,
-            &request.extra_data,
-            &domain,
-        )?;
+        let party_id = internal_client.process_new_mpc_context_response(&response, &request)?;
         anyhow::ensure!(
             signers.insert(party_id),
-            "party {party_id} confirmed the construction of context {new_context_id} more than once"
+            "party {party_id} confirmed the creation of context {new_context_id} more than once"
         );
     }
 
-    Ok(*new_context_id)
+    Ok(new_context_id)
 }
 
 pub(crate) async fn do_destroy_mpc_context(
