@@ -292,8 +292,15 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 {{- end }}
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
+{{- $ownId := .Values.kmsPeers.id | default 0 | int }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-{{- $peerPrefix := .prefix | default (printf "PUB-p%d" (int .id)) }}
+{{- $peerPrefix := printf "PUB-p%d" (int .id) }}
+{{- if and $.Values.kmsCore.publicVault.s3.prefix (eq (int .id) $ownId) }}
+{{- $peerPrefix = $.Values.kmsCore.publicVault.s3.prefix }}
+{{- end }}
+{{- if .prefix }}
+{{- $peerPrefix = .prefix }}
+{{- end }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
 CERT_PATH="{{ $peerPrefix }}/CACert/cert.pem"

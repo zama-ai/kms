@@ -179,3 +179,22 @@ jobs:
             echo "named party still used PUB-p1" >&2
             exit 1
           fi
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.id=1 \
+            --set kmsCore.thresholdMode.thresholdValue=1 \
+            --set kmsCore.thresholdMode.tls.enabled=true \
+            --set kmsCore.publicVault.s3.prefix=PUB-partner-acme \
+            --set-json 'kmsCore.thresholdMode.peersList=[{"id":1,"host":"p1","port":50001},{"id":2,"host":"p2","port":50001},{"id":3,"host":"p3","port":50001,"prefix":"PUB-custom-3"},{"id":4,"host":"p4","port":50001}]' 2>&1); then
+            echo "explicit peer list with a public prefix should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'CERT_PATH="PUB-partner-acme/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'CERT_PATH="PUB-p2/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'CERT_PATH="PUB-custom-3/CACert/cert.pem"' <<<"$output"
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "explicit peer list still used PUB-p1 for this party" >&2
+            exit 1
+          fi
