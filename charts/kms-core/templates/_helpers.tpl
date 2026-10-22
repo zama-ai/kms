@@ -281,6 +281,45 @@ Usage: include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix)
 {{- $prefix -}}
 {{- end -}}
 
+{{/*
+This party's own peersList entry, as JSON ("{}" when absent).
+*/}}
+{{- define "kmsOwnPeer" -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $own := dict -}}
+{{- range .Values.kmsCore.thresholdMode.peersList -}}
+{{- if eq (int .id) $ownID -}}
+{{- $own = . -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $own -}}
+{{- end -}}
+
+{{/*
+Public vault folder of this party, for its TLS certificate and key.
+Fails if its peersList entry sets a prefix other than publicVault.s3.prefix,
+because the core writes to publicVault.s3.prefix while peers read the entry.
+*/}}
+{{- define "kmsOwnPrefix" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix -}}
+{{- if and $own.prefix $publicPrefix (ne $own.prefix $publicPrefix) -}}
+{{- fail (printf "peersList entry %d has prefix %q but kmsCore.publicVault.s3.prefix is %q; they must match" (include "kmsPeersStartID" . | int) $own.prefix $publicPrefix) -}}
+{{- end -}}
+{{- $own.prefix | default $publicPrefix | default (printf "PUB-p%d" (include "kmsPeersStartID" . | int)) -}}
+{{- end -}}
+
+{{/*
+TLS subject of this party. Fails if kmsPeers.name differs from the host of
+this party's peersList entry, since peers check the certificate against it.
+*/}}
+{{- define "kmsCheckPeerName" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- if and .Values.kmsPeers.name $own.host (ne .Values.kmsPeers.name $own.host) -}}
+{{- fail (printf "kmsPeers.name %q must match the host %q of peersList entry %d" .Values.kmsPeers.name $own.host (include "kmsPeersStartID" . | int)) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "kmsCoreInitEnvVars" -}}
 export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
@@ -356,11 +395,7 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- $idText := "" -}}
-{{- if .Values.kmsPeers.id -}}
-{{- $idText = .Values.kmsPeers.id | toString -}}
-{{- end -}}
-{{- $ownPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" $idText) }}
+{{- $ownPrefix := include "kmsOwnPrefix" . }}
 {{- if $.Values.kmsCore.thresholdMode.omitPeers }}
 # omitPeers skips the peer loop, but the server still needs its own certificate.
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
