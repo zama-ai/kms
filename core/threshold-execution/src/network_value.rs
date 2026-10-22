@@ -230,6 +230,7 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
     fn ensure_allowed(&self, testing_build: bool) -> anyhow::Result<()> {
         if !testing_build {
             match self {
+                // production values
                 NetworkValue::RingValue(_)
                 | NetworkValue::VecRingValue(_)
                 | NetworkValue::VecPairRingValue(_)
@@ -239,8 +240,13 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
                 | NetworkValue::AgreeRandom(_)
                 | NetworkValue::Bot
                 | NetworkValue::Empty
-                | NetworkValue::Round1VSS(_) => {} // production values
-                _ => {
+                | NetworkValue::Round1VSS(_) => {}
+                // Test values
+                NetworkValue::PubKeySet(_)
+                | NetworkValue::Crs(_)
+                | NetworkValue::DecompressionKey(_)
+                | NetworkValue::SnsCompressionKey(_)
+                | NetworkValue::CompressedXofKeySet(_) => {
                     return Err(anyhow_error_and_log(format!(
                         "network value {} is only allowed in testing builds",
                         self.network_type_name()
