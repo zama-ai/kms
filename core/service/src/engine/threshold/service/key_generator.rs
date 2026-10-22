@@ -42,7 +42,7 @@ use threshold_execution::{
         public_keysets::FhePubKeySet,
     },
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -58,12 +58,9 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         material_integrity::verify_public_key_digest_from_bytes,
-        threshold::{
-            service::{
-                PublicKeyMaterial, ThresholdFheKeys,
-                session::{ImmutableSessionMaker, validate_context_and_epoch},
-            },
-            traits::KeyGenerator,
+        threshold::service::{
+            PublicKeyMaterial, ThresholdFheKeys,
+            session::{ImmutableSessionMaker, validate_context_and_epoch},
         },
         utils::{MetricedError, signing_identity_for},
         validation::{
@@ -71,12 +68,9 @@ use crate::{
             validate_key_gen_request,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-            try_delete_in_meta_store, update_err_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+        try_delete_in_meta_store, update_err_req_in_meta_store,
     },
     vault::storage::{
         Storage, StorageExt,
@@ -115,8 +109,6 @@ enum ThresholdKeyGenResult {
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::traits::InsecureKeyGenerator;
-#[cfg(feature = "insecure")]
 use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
 use threshold_execution::tfhe_internals::{
@@ -129,7 +121,7 @@ use threshold_execution::tfhe_internals::{
     },
 };
 
-pub struct RealKeyGenerator<
+pub(crate) struct KeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -144,7 +136,6 @@ pub struct RealKeyGenerator<
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks, indexed by the preprocessing ID
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
     // This is a lock to make sure calls to keygen do not happen concurrently.
     // It's needed because we lock the meta store at different times before starting the keygen
@@ -155,24 +146,24 @@ pub struct RealKeyGenerator<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureKeyGenerator<
+pub(crate) struct InsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
+    pub real_key_generator: KeyGenerator<PubS, PrivS, KG>,
 }
 
 #[cfg(feature = "insecure")]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-> RealInsecureKeyGenerator<PubS, PrivS, KG>
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+> InsecureKeyGenerator<PubS, PrivS, KG>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
+    pub async fn from_real_keygen(value: &KeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
-            real_key_generator: RealKeyGenerator {
+            real_key_generator: KeyGenerator {
                 base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
@@ -180,22 +171,13 @@ impl<
                 session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
-                rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
                 serial_lock: Arc::clone(&value.serial_lock),
             },
         }
     }
-}
-#[cfg(feature = "insecure")]
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
-{
-    async fn insecure_key_gen(
+
+    pub(crate) async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -203,7 +185,7 @@ impl<
         self.real_key_generator.inner_key_gen(request, true).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
@@ -211,20 +193,10 @@ impl<
             .inner_get_result(request, true)
             .await
     }
-
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
-        self.real_key_generator
-            .inner_abort_key_gen(preproc_id)
-            .await
-    }
 }
 
-// This is an enum to determine whether to start the dkg
-// in a secure mode. If the secure mode is selected,
-// a preprocessing handle must be given.
-// This is essentially the same as an Option, but it's
-// more clear to label the variants as `Secure`
-// and `Insecure`.
+// This is an enum to determine whether to start the dkg in a secure mode. If the secure mode is selected, a
+// preprocessing handle must be given.
 #[expect(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum PreprocHandleWithMode {
@@ -234,6 +206,7 @@ pub enum PreprocHandleWithMode {
             Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
         ),
     ),
+    #[cfg_attr(not(feature = "insecure"), expect(dead_code))]
     Insecure(RequestId),
 }
 
@@ -273,7 +246,7 @@ impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> RealKeyGenerator<PubS, PrivS, KG>
+> KeyGenerator<PubS, PrivS, KG>
 {
     #[expect(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -286,7 +259,6 @@ impl<
         signing_schemes: Vec<SigningSchemeType>,
         context_id: ContextId,
         epoch_id: EpochId,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
     ) -> Result<(), MetricedError> {
         let preproc_handle_w_mode = resolved_preprocessing.handle;
@@ -475,7 +447,6 @@ impl<
                         eip712_domain_copy,
                         extra_data,
                         signing_schemes,
-                        permit,
                         meta_permit,
                         token,
                         op_tag,
@@ -499,7 +470,6 @@ impl<
                         eip712_domain_copy,
                         extra_data,
                         signing_schemes,
-                        permit,
                         meta_permit,
                         token,
                     )
@@ -540,7 +510,6 @@ impl<
         };
         // Serialize keygen admission. The spawned DKG tasks still run concurrently.
         let _guard = self.serial_lock.lock().await;
-        let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
@@ -620,7 +589,6 @@ impl<
             signing_schemes,
             context_id,
             epoch_id,
-            permit,
             meta_permit,
         )
         .await?;
@@ -1071,11 +1039,9 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
     ) {
-        let _permit = permit;
         let start = Instant::now();
         // Race the (potentially long-running) DKG against an abort.
         let outcome = tokio::select! {
@@ -1336,14 +1302,12 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         signing_schemes: Vec<SigningSchemeType>,
-        permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
         op_tag: &'static str,
         existing_key_tag: Option<tfhe::Tag>,
         existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
-        let _permit = permit;
         let start = Instant::now();
         let outcome = tokio::select! {
             biased;
@@ -1854,30 +1818,24 @@ impl<
             )
         })
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
-{
-    async fn key_gen(
+    pub(crate) async fn key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_key_gen(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`RealPreprocessor`]
+    pub(crate) async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
         self.inner_abort_key_gen(preproc_id).await
     }
 }
@@ -1920,7 +1878,7 @@ mod tests {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > RealKeyGenerator<PubS, PrivS, KG>
+    > KeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1936,7 +1894,6 @@ mod tests {
             );
 
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 base_kms,
@@ -1946,23 +1903,14 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _kg: PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             }
         }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
-        }
     }
 
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
+        KeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         async fn init_ram_keygen(
             base_kms: BaseKmsStruct,
@@ -1978,7 +1926,7 @@ mod tests {
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
@@ -2006,7 +1954,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
+        let kg = KeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),
         )
@@ -2137,40 +2085,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_ids, mut kg) = setup_key_generator::<
-            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        >()
-        .await;
-        let mut rng = AesRng::seed_from_u64(11);
-        let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut rng);
-
-        // Set bucket size to zero, so no operations are allowed
-        kg.set_bucket_size(0);
-
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = tonic::Request::new(KeyGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(key_id.into()),
-            params: Some(FheParameter::Test as i32),
-            preproc_id: Some(prep_id.into()),
-            domain: Some(domain),
-            keyset_config: None,
-            keyset_added_info: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
-            extra_data: vec![],
-        });
-
-        assert_eq!(
-            kg.key_gen(request).await.unwrap_err().code(),
-            tonic::Code::ResourceExhausted
-        );
-    }
-
-    #[tokio::test]
     async fn not_found() {
         let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -2224,7 +2138,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(3);
 
         let recorded_errors_before = crate::engine::utils::handle_error_call_count();
-        let err = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
+        let err = KeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
             &kg.preproc_buckets,
             RequestId::new_random(&mut rng),
             Some(RequestId::new_random(&mut rng)),
@@ -2457,7 +2371,7 @@ mod tests {
     async fn insert_insecure_bucket<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >(
-        kg: &RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        kg: &KeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
         prep_id: &RequestId,
     ) {
         let bucket = BucketMetaStore {
@@ -2500,7 +2414,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(9);
         let key_id = RequestId::new_random(&mut rng);
 
@@ -2545,7 +2459,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(11);
         let key_id = RequestId::new_random(&mut rng);
         let bad_prep_id = RequestId::new_random(&mut rng);
@@ -2600,7 +2514,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(12);
         let insecure_prep_id = RequestId::new_random(&mut rng);
         insert_insecure_bucket(&kg, &insecure_prep_id).await;
@@ -2637,7 +2551,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
+        let ikg = InsecureKeyGenerator::from_real_keygen(&kg).await;
         let mut rng = AesRng::seed_from_u64(13);
         let key_id = RequestId::new_random(&mut rng);
 

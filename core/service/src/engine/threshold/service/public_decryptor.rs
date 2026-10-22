@@ -51,22 +51,16 @@ use crate::{
             BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
             sign_public_decryption_result,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::PublicDecryptor,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_public_decrypt_req,
         },
     },
-    util::{
-        meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_err_req_in_meta_store, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+        update_err_req_in_meta_store, update_req_in_meta_store,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
@@ -118,7 +112,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     }
 }
 
-pub struct RealPublicDecryptor<
+pub(crate) struct PublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodDecryptor<
@@ -133,7 +127,6 @@ pub struct RealPublicDecryptor<
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
     pub(crate) _dec: PhantomData<Dec>,
 }
@@ -147,7 +140,7 @@ impl<
                 SmallSession<ResiduePolyF4Z128>,
             >,
         > + 'static,
-> RealPublicDecryptor<PubS, PrivS, Dec>
+> PublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -234,20 +227,7 @@ impl<
         };
         Ok(raw_decryption)
     }
-}
 
-#[tonic::async_trait]
-impl<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-    Dec: NoiseFloodDecryptor<
-            Prep = SmallOfflineNoiseFloodSession<
-                { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                SmallSession<ResiduePolyF4Z128>,
-            >,
-        > + 'static,
-> PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
-{
     // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
     // recorded below. Every event and error in this request — including the ones emitted by the
     // spawned decryption task, which inherits this span — then carries both without extra log lines.
@@ -260,16 +240,12 @@ impl<
         context_id = tracing::field::Empty,
         epoch_id = tracing::field::Empty
     ))]
-    async fn public_decrypt(
+    pub(crate) async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .start();
@@ -412,7 +388,7 @@ impl<
                 let ciphertext = typed_ciphertext.ciphertext;
 
                 let res_plaintext = match fhe_type {
-                    FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint2048 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U2048,
                     >(
                         internal_sid,
@@ -427,7 +403,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u2048),
-                    FheTypes::Uint1024 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint1024 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U1024,
                     >(
                         internal_sid,
@@ -442,7 +418,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u1024),
-                    FheTypes::Uint512 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    FheTypes::Uint512 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
                         tfhe::integer::bigint::U512,
                     >(
                         internal_sid,
@@ -457,38 +433,38 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u512),
-                    FheTypes::Uint256 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
-                        tfhe::integer::U256,
-                    >(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock_clone,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u256),
-                    FheTypes::Uint160 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
-                        tfhe::integer::U256,
-                    >(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock_clone,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u160),
+                    FheTypes::Uint256 => {
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                            internal_sid,
+                            context_id,
+                            epoch_id,
+                            session_maker,
+                            ciphertext,
+                            fhe_type,
+                            ct_format,
+                            fhe_keys_rlock_clone,
+                            dec_mode,
+                        )
+                        .await
+                        .map(TypedPlaintext::from_u256)
+                    }
+                    FheTypes::Uint160 => {
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                            internal_sid,
+                            context_id,
+                            epoch_id,
+                            session_maker,
+                            ciphertext,
+                            fhe_type,
+                            ct_format,
+                            fhe_keys_rlock_clone,
+                            dec_mode,
+                        )
+                        .await
+                        .map(TypedPlaintext::from_u160)
+                    }
                     FheTypes::Uint128 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
                             internal_sid,
                             context_id,
                             epoch_id,
@@ -502,28 +478,26 @@ impl<
                         .await
                         .map(|x| TypedPlaintext::new(x, fhe_type))
                     }
-                    FheTypes::Uint80 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
-                            internal_sid,
-                            context_id,
-                            epoch_id,
-                            session_maker,
-                            ciphertext,
-                            fhe_type,
-                            ct_format,
-                            fhe_keys_rlock_clone,
-                            dec_mode,
-                        )
-                        .await
-                        .map(TypedPlaintext::from_u80)
-                    }
+                    FheTypes::Uint80 => PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock_clone,
+                        dec_mode,
+                    )
+                    .await
+                    .map(TypedPlaintext::from_u80),
                     FheTypes::Bool
                     | FheTypes::Uint4
                     | FheTypes::Uint8
                     | FheTypes::Uint16
                     | FheTypes::Uint32
                     | FheTypes::Uint64 => {
-                        RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u64>(
+                        PublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u64>(
                             internal_sid,
                             context_id,
                             epoch_id,
@@ -556,7 +530,7 @@ impl<
                     .spawn(decrypt_future().instrument(tracing::Span::current())),
             );
         }
-        let dec_sig_future = move |_permit| async move {
+        let dec_sig_future = move || async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
@@ -619,14 +593,12 @@ impl<
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
-            let _ = dec_sig_future(permit)
-                .instrument(tracing::Span::current())
-                .await;
+            let _ = dec_sig_future().instrument(tracing::Span::current()).await;
         });
         Ok(Response::new(Empty {}))
     }
 
-    async fn public_decrypt_sync(
+    pub(crate) async fn public_decrypt_sync(
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
@@ -650,7 +622,7 @@ impl<
         self.get_result(Request::new(req_id.into())).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
@@ -793,7 +765,7 @@ mod tests {
                     SmallSession<ResiduePolyF4Z128>,
                 >,
             > + 'static,
-    > RealPublicDecryptor<PubS, PrivS, Dec>
+    > PublicDecryptor<PubS, PrivS, Dec>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -809,7 +781,6 @@ mod tests {
             );
 
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
 
             Self {
                 base_kms,
@@ -817,22 +788,13 @@ mod tests {
                 pub_dec_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
-                rate_limiter,
                 decryption_mode: DecryptionMode::NoiseFloodSmall,
                 _dec: PhantomData,
             }
         }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
-        }
     }
 
-    impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
+    impl PublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
         async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
@@ -874,7 +836,7 @@ mod tests {
         RequestId,
         EpochId,
         Vec<u8>,
-        RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
+        PublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
@@ -923,11 +885,9 @@ mod tests {
         let key_meta_store = MetaStore::new_unlimited();
         let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
-        let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_maker.make_immutable(),
-        )
-        .await;
+        let public_decryptor =
+            PublicDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         public_decryptor
             .crypto_storage
@@ -957,15 +917,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+    async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(12);
-
         let (key_id, epoch_id, ct_buf, mut public_decryptor) =
             setup_public_decryptor(&mut rng).await;
-
-        // Set bucket size to zero, so no operations are allowed
-        public_decryptor.set_bucket_size(0);
+        public_decryptor.pub_dec_meta_store = MetaStore::new(1, 0);
+        let _pending = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&RequestId::new_random(&mut rng))
+            .unwrap();
 
         let req_id = RequestId::new_random(&mut rng);
         let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
@@ -974,16 +936,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // the sync endpoint is rate-limited the same way
         let err = public_decryptor
             .public_decrypt_sync(Request::new(request))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-        // finally reset the bucket size to a non-zero value
-        public_decryptor.set_bucket_size(100);
     }
 
     #[tokio::test]

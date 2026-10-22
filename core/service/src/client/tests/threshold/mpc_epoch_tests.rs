@@ -39,12 +39,9 @@ use crate::{
         threshold::service::ThresholdFheKeys,
         validation::ResharingParams,
     },
-    util::{
-        key_setup::{
-            max_threshold,
-            test_tools::{EncryptionConfig, TestingPlaintext},
-        },
-        rate_limiter::RateLimiterConfig,
+    util::key_setup::{
+        max_threshold,
+        test_tools::{EncryptionConfig, TestingPlaintext},
     },
     vault::storage::{StorageType, file::FileStorage},
 };
@@ -62,19 +59,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     party_ids_to_crash: Option<Vec<usize>>,
 ) {
     let dkg_param: WrappedDKGParams = parameters.into();
-    // Preproc should use all the tokens in the bucket,
-    // then they're returned to the bucket before keygen starts.
-    // If something is wrong with the rate limiter logic
-    // then the keygen step should fail since there are not enough tokens.
-    let rate_limiter_conf = RateLimiterConfig {
-        bucket_size: 100 * 2,
-        pub_decrypt: 1,
-        user_decrypt: 1,
-        crsgen: 1,
-        preproc: 100,
-        keygen: 100,
-        new_epoch: 1,
-    };
     let mut preproc_ids = Vec::new();
     let mut key_ids = Vec::new();
     for key_id in 0..num_keys {
@@ -121,7 +105,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             .with_party_count(amount_parties)
             .with_material_spec(spec)
             .with_prss()
-            .with_rate_limiter(rate_limiter_conf)
             .build()
             .await
             .unwrap();

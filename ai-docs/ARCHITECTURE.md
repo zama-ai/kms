@@ -51,6 +51,8 @@ Request IDs work as follows. The gateway contracts assign each ID and bind it to
 
 The meta store is in-memory only, so a reboot of the core forgets every known request and session ID. The KMS connector keeps the state of each request in its [persistent database](https://github.com/zama-ai/fhevm/tree/main/kms-connector/connector-db); its [kms-worker](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker) marks a request as sent and only polls for the result on a retry, so a request is not run more often than necessary across core reboots.
 
+Decryption meta stores bound admission independently for public and user requests. A full store returns `ResourceExhausted` when no completed entry permits eviction. Clients retry this status with the same request. The bandwidth benchmark also returns `ResourceExhausted` at its separate concurrency limit.
+
 Consequences for agents:
 
 - The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
@@ -359,7 +361,7 @@ store. Epoch IDs are compared as big-endian integers.
 
 ### Centralized
 
-A single `RealCentralizedKms` instance holds all key material. No MPC; keys
+A single `CentralizedKms` instance holds all key material. No MPC; keys
 live in the configured vault backend. Preprocessing / reshare RPCs are not
 applicable.
 

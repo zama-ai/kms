@@ -208,7 +208,6 @@ pub struct ThresholdTestEnvBuilder {
     with_default_epoch: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
-    rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
     decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
 }
 
@@ -223,7 +222,6 @@ impl Default for ThresholdTestEnvBuilder {
             with_default_epoch: false,
             with_backup_vault: false,
             with_custodian_keychain: false,
-            rate_limiter_conf: None,
             decryption_mode: None,
         }
     }
@@ -277,12 +275,6 @@ impl ThresholdTestEnvBuilder {
     pub fn with_custodian_keychain(mut self) -> Self {
         self.with_backup_vault = true; // Custodian requires backup vault
         self.with_custodian_keychain = true;
-        self
-    }
-
-    /// Set rate limiter configuration
-    pub fn with_rate_limiter(mut self, conf: crate::util::rate_limiter::RateLimiterConfig) -> Self {
-        self.rate_limiter_conf = Some(conf);
         self
     }
 
@@ -375,7 +367,6 @@ impl ThresholdTestEnvBuilder {
         };
 
         let config = ThresholdTestConfig {
-            rate_limiter_conf: self.rate_limiter_conf,
             decryption_mode: self.decryption_mode,
             test_material_path: Some(material_dir.path()),
         };
@@ -427,7 +418,6 @@ impl ThresholdTestEnvBuilder {
             .threshold
             .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
         let config = ThresholdTestConfig {
-            rate_limiter_conf: self.rate_limiter_conf,
             decryption_mode: self.decryption_mode,
             test_material_path: Some(path),
         };

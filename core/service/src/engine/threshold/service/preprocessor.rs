@@ -30,7 +30,7 @@ use threshold_execution::{
     tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::party::Identity;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -44,27 +44,22 @@ use crate::{
         base::{
             BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::KeyGenPreprocessor,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
-    util::{
-        meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store,
-            retrieve_from_meta_store_with_timeout, update_req_in_meta_store,
-        },
-        rate_limiter::RateLimiter,
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store_with_timeout,
+        update_req_in_meta_store,
     },
 };
 
 // === Current Module Imports ===
 use super::{BucketMetaStore, PreprocMaterial};
 
-pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
-{
+pub(crate) struct Preprocessor<
+    P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
+> {
     // TODO eventually add mode to allow for nlarge as well.
     pub(crate) base_kms: BaseKmsStruct,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
@@ -74,11 +69,10 @@ pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<R
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    pub rate_limiter: RateLimiter,
     pub(crate) _producer_factory: PhantomData<P>,
 }
 
-impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
+impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
     #[expect(clippy::too_many_arguments)]
     async fn launch_dkg_preproc(
         &self,
@@ -92,7 +86,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         signing_schemes: Vec<SigningSchemeType>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
-        rate_limiting_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<BucketMetaStore>,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
@@ -151,7 +144,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     keyset_config,
                     extra_data,
                     factory,
-                    rate_limiting_permit,
                     meta_permit,
                     token,
                     #[cfg(feature = "insecure")]
@@ -178,15 +170,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         extra_data: Vec<u8>,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
-        rate_limiting_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<BucketMetaStore>,
         cancel_token: CancellationToken,
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) {
-        // dropped at the end of the function
-        let _rate_limiting_permit = rate_limiting_permit;
         let preprocessing_started_at = Instant::now();
 
         #[cfg(feature = "insecure")]
@@ -386,7 +375,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, MetricedError> {
-        let rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
         let (
@@ -437,7 +425,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 signing_schemes,
                 &eip712_domain,
                 timer,
-                rate_limiting_permit,
                 meta_permit,
             #[cfg(feature = "insecure")] partial_params
         ).await.map_err(|e|
@@ -458,7 +445,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         &self,
         request: KeyGenPreprocRequest,
     ) -> Result<Response<Empty>, MetricedError> {
-        let _rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS
             .time_operation(OP_INSECURE_KEYGEN_PREPROC_REQUEST)
             .start();
@@ -608,16 +594,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             signatures: stored_scheme_signatures_to_proto(&preproc_data.signatures),
         }))
     }
-}
 
-#[tonic::async_trait]
-impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Send + Sync>
-    KeyGenPreprocessor for RealPreprocessor<P>
-{
-    async fn key_gen_preproc(
+    pub(crate) async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_key_gen_preproc(
             request.into_inner(),
             #[cfg(feature = "insecure")]
@@ -627,10 +611,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     }
 
     #[cfg(feature = "insecure")]
-    async fn partial_key_gen_preproc(
+    pub(crate) async fn partial_key_gen_preproc(
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         let inner = request.into_inner();
         let base_request = inner.base_request.ok_or_else(|| {
             MetricedError::new(
@@ -644,37 +631,53 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
+    /// Insecure (dummy) preprocessing that records metadata but no preprocessing
+    /// material in the meta store, to be consumed by the insecure key generation.
     #[cfg(feature = "insecure")]
-    async fn insecure_key_gen_preproc(
+    pub(crate) async fn insecure_key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_insecure_key_gen_preproc(request.into_inner())
             .await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_get_result(request, OP_KEYGEN_PREPROC_RESULT)
             .await
     }
 
+    /// Same as [`Self::get_result`] but for preprocessing started via
+    /// [`Self::insecure_key_gen_preproc`].
     #[cfg(feature = "insecure")]
-    async fn get_insecure_result(
+    pub(crate) async fn get_insecure_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         self.inner_get_result(request, OP_INSECURE_KEYGEN_PREPROC_RESULT)
             .await
     }
 
-    async fn abort_key_gen_preproc(
+    pub(crate) async fn abort_key_gen_preproc(
         &self,
         preproc_id: RequestId,
         key_gen_cancel_res: Status,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         // Step 1: If preprocessing is still running — cancel it
         let mut ongoing = self.ongoing.lock().await;
         if let Some(token) = ongoing.remove(&preproc_id) {
@@ -700,7 +703,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         }
     }
 
-    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
+    pub(crate) async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError>
+    where
+        P: Send + Sync,
+    {
         let guarded_meta_store = self.preproc_buckets.read().await;
         Ok(guarded_meta_store
             .get_successful_completed_request_ids()
@@ -731,10 +737,9 @@ mod tests {
     };
     use threshold_types::rng::AesRng;
 
-    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
+    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
             let tracker = Arc::new(TaskTracker::new());
-            let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 base_kms,
@@ -744,24 +749,15 @@ mod tests {
                 session_maker,
                 tracker,
                 ongoing,
-                rate_limiter,
                 _producer_factory: PhantomData,
             }
-        }
-
-        fn set_bucket_size(&mut self, bucket_size: usize) {
-            let config = crate::util::rate_limiter::RateLimiterConfig {
-                bucket_size,
-                ..Default::default()
-            };
-            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
     async fn setup_prep<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>(
         rng: &mut AesRng,
         use_prss: bool,
-    ) -> RealPreprocessor<P> {
+    ) -> Preprocessor<P> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(
@@ -795,7 +791,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rngs(),
         );
-        RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
+        Preprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }
 
     #[tokio::test]
@@ -899,35 +895,6 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
-    }
-
-    #[tokio::test]
-    async fn resource_exhausted() {
-        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let mut rng = AesRng::seed_from_u64(22);
-        let mut prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        prep.set_bucket_size(0);
-
-        let mut rng = AesRng::seed_from_u64(22);
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::ResourceExhausted
-        );
     }
 
     #[tokio::test]
