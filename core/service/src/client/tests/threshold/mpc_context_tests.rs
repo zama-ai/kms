@@ -126,7 +126,13 @@ async fn do_context_switch(
 
     {
         let req = internal_client
-            .new_mpc_context_request(new_context)
+            .new_mpc_context_request(
+                new_context,
+                &new_context_id,
+                [0u8; 32],
+                &crate::dummy_domain(),
+                Vec::new(),
+            )
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
@@ -141,6 +147,15 @@ async fn do_context_switch(
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), kms_clients.len());
+
+        // Every party confirms the creation of the context, and does so once.
+        let mut signers = std::collections::HashSet::new();
+        for response in &req_response_vec {
+            let party_id = internal_client
+                .process_new_mpc_context_response(response, &req)
+                .unwrap();
+            assert!(signers.insert(party_id));
+        }
     }
 
     // Every party stores the context it registers. That is the only observable effect of the

@@ -327,7 +327,8 @@ async fn failed_session_update_rolls_back_the_stored_context() {
     );
 }
 
-/// A duplicate creation leaves the stored context and its surrounding state unchanged.
+/// A repeated creation of the same context is confirmed again, and a different context under the
+/// same ID is refused. Neither changes the stored context or its surrounding state.
 #[rstest::rstest]
 #[case::centralized(KMSType::Centralized)]
 #[case::threshold(KMSType::Threshold)]
@@ -337,7 +338,23 @@ async fn duplicate_context_creation_keeps_the_stored_context(#[case] kms_type: K
     let manager = fixture.manager(kms_type).await;
 
     manager.new_mpc_context(&fixture.target).await.unwrap();
-    let error = manager.new_mpc_context(&fixture.target).await.unwrap_err();
+    let response = manager
+        .new_mpc_context(&fixture.target)
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!response.signatures.is_empty());
+    let different_target = ContextInfo {
+        software_version: SoftwareVersion {
+            patch: fixture.target.software_version.patch + 1,
+            ..fixture.target.software_version.clone()
+        },
+        ..fixture.target.clone()
+    };
+    let error = manager
+        .new_mpc_context(&different_target)
+        .await
+        .unwrap_err();
 
     assert_eq!(error.code(), tonic::Code::AlreadyExists);
     let after = fixture.state().await;
@@ -506,9 +523,7 @@ async fn assert_backup_failure<M: ContextManager>(
     context: &ContextInfo,
 ) {
     let error = manager
-        .new_mpc_context(Request::new(NewMpcContextRequest {
-            new_context: Some(context.clone().try_into().unwrap()),
-        }))
+        .new_mpc_context(Request::new(new_mpc_context_request(context.clone())))
         .await
         .unwrap_err();
 

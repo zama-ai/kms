@@ -72,3 +72,22 @@ pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1:
         salt: domain.salt.map(|s| s.to_vec()),
     }
 }
+
+/// A `NewMpcContextRequest` for `new_context` that passes validation that names `new_context`
+/// itself as the previous context.
+#[cfg(any(test, feature = "testing"))]
+pub fn new_mpc_context_request(
+    new_context: crate::engine::context::ContextInfo,
+) -> kms_grpc::kms::v1::NewMpcContextRequest {
+    let previous_context_id = new_context.context_id;
+    kms_grpc::kms::v1::NewMpcContextRequest {
+        new_context: Some(new_context.try_into().unwrap()),
+        previous_context_id: Some(previous_context_id.into()),
+        node_config_hash: vec![0u8; 32],
+        domain: Some(
+            kms_grpc::rpc_types::alloy_to_protobuf_domain(&crate::dummy_domain()).unwrap(),
+        ),
+        extra_data: Vec::new(),
+        signing_schemes: Vec::new(),
+    }
+}

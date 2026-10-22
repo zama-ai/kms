@@ -110,6 +110,13 @@ mod tests {
                     threshold: 0,
                     pcr_values: vec![],
                 }),
+                previous_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                node_config_hash: vec![0u8; 32],
+                domain: Some(
+                    kms_grpc::rpc_types::alloy_to_protobuf_domain(&crate::dummy_domain()).unwrap(),
+                ),
+                extra_data: Vec::new(),
+                signing_schemes: Vec::new(),
             }))
             .await
             .unwrap();

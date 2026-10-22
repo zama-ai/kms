@@ -45,10 +45,8 @@ impl TestContextManager {
     pub(super) async fn new_mpc_context(
         &self,
         context: &ContextInfo,
-    ) -> Result<Response<Empty>, MetricedError> {
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(context.clone().try_into().unwrap()),
-        });
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
+        let request = Request::new(new_mpc_context_request(context.clone()));
         match self {
             Self::Centralized(manager) => manager.new_mpc_context(request).await,
             Self::Threshold(manager) => manager.new_mpc_context(request).await,

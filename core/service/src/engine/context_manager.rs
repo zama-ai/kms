@@ -1568,6 +1568,7 @@ mod tests {
             signing::SigningSchemeType,
         },
         engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
+        testing::helpers::new_mpc_context_request,
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1741,9 +1742,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context.clone()));
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -1776,14 +1775,26 @@ mod tests {
                 Some(verification_key.verf_key_id().as_slice())
             );
         }
-        // Try to make a context with the same context ID (should fail)
+        // Creating the same context again only confirms it again
         {
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
+            let request = Request::new(new_mpc_context_request(new_context.clone()));
             let response = context_manager.new_mpc_context(request).await;
-            // Should fail since the same ID is used
-            assert!(response.is_err());
+            assert!(response.is_ok());
+        }
+        // Creating a different context with the same context ID fails
+        {
+            let different_context = ContextInfo {
+                software_version: SoftwareVersion {
+                    major: 0,
+                    minor: 2,
+                    patch: 0,
+                    tag: None,
+                },
+                ..new_context
+            };
+            let request = Request::new(new_mpc_context_request(different_context));
+            let error = context_manager.new_mpc_context(request).await.unwrap_err();
+            assert_eq!(error.code(), tonic::Code::AlreadyExists);
         }
 
         // Seed some private data under an epoch in the same storage. Nothing links it to the
@@ -1830,9 +1841,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(2, context_manager.session_maker.context_count().await);
 
@@ -1912,13 +1921,10 @@ mod tests {
         };
 
         let rejected_context_id = ContextId::from_bytes([30u8; 32]);
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(
-                make_context(rejected_context_id, vec![])
-                    .try_into()
-                    .unwrap(),
-            ),
-        });
+        let request = Request::new(new_mpc_context_request(make_context(
+            rejected_context_id,
+            vec![],
+        )));
         let error = context_manager
             .new_mpc_context(request)
             .await
@@ -1944,13 +1950,10 @@ mod tests {
             pcr1: vec![1u8; 48],
             pcr2: vec![2u8; 48],
         }];
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(
-                make_context(accepted_context_id, pcr_values)
-                    .try_into()
-                    .unwrap(),
-            ),
-        });
+        let request = Request::new(new_mpc_context_request(make_context(
+            accepted_context_id,
+            pcr_values,
+        )));
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(context_manager.session_maker.context_count().await, 1);
     }
@@ -1990,12 +1993,19 @@ mod tests {
             false,
             Arc::new(TaskTracker::new()),
         );
-        let request_a = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
-        let request_b = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        // The two requests carry different contexts under the same ID, so only one of them can be
+        // created; an identical request would only be confirmed again.
+        let different_context = ContextInfo {
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 2,
+                patch: 0,
+                tag: None,
+            },
+            ..new_context.clone()
+        };
+        let request_a = Request::new(new_mpc_context_request(new_context));
+        let request_b = Request::new(new_mpc_context_request(different_context));
 
         let (result_a, result_b) = tokio::join!(
             context_manager.new_mpc_context(request_a),
@@ -2046,9 +2056,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
 
         // create the context manager and store the new context
         {
@@ -2166,9 +2174,7 @@ mod tests {
                 make_context(context_without_pcr_id, vec![]),
                 make_context(context_with_pcr_id, pcr_values),
             ] {
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(context));
                 context_manager.new_mpc_context(request).await.unwrap();
             }
         }
@@ -2257,9 +2263,7 @@ mod tests {
                     threshold: 0,
                     pcr_values: vec![],
                 };
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(new_context));
                 context_manager.new_mpc_context(request).await.unwrap();
             }
 
@@ -2349,9 +2353,7 @@ mod tests {
                     pcr_values: vec![],
                 };
 
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(new_context));
 
                 context_manager.new_mpc_context(request).await.unwrap();
             }
@@ -2474,9 +2476,7 @@ mod tests {
                 false,
                 Arc::new(TaskTracker::new()),
             );
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
+            let request = Request::new(new_mpc_context_request(new_context));
             context_manager.new_mpc_context(request).await.unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
         }
@@ -3394,9 +3394,7 @@ mod tests {
         );
 
         // Create a new context
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context.clone()));
         let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
@@ -3417,12 +3415,24 @@ mod tests {
             assert_eq!(*stored_context.context_id(), context_id);
         }
 
-        // Try to create the same context with the same context ID which is not allowed (should fail)
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        // Creating the same context again only confirms it again
+        let request = Request::new(new_mpc_context_request(new_context.clone()));
         let response = context_manager.new_mpc_context(request).await;
-        assert!(response.is_err());
+        assert!(response.is_ok());
+
+        // Creating a different context with the same context ID fails
+        let different_context = ContextInfo {
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 2,
+                patch: 0,
+                tag: None,
+            },
+            ..new_context
+        };
+        let request = Request::new(new_mpc_context_request(different_context));
+        let error = context_manager.new_mpc_context(request).await.unwrap_err();
+        assert_eq!(error.code(), tonic::Code::AlreadyExists);
 
         // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
         // remaining context, so the target must not be the only one in storage.
@@ -3448,9 +3458,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
@@ -3526,9 +3534,7 @@ mod tests {
         assert!(!result.unwrap());
 
         // Create a new context
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Now mpc_context_exists_and_consistent should return true
@@ -3562,9 +3568,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
@@ -3629,9 +3633,7 @@ mod tests {
                 pcr_values: vec![],
             };
 
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
+            let request = Request::new(new_mpc_context_request(new_context));
             context_manager.new_mpc_context(request).await.unwrap();
         }
 

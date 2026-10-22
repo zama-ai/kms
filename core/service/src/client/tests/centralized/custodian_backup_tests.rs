@@ -894,9 +894,15 @@ async fn test_mpc_context_backup_central() {
     // Send new MPC context
     let req = env
         .internal_client
-        .as_mut()
+        .as_ref()
         .unwrap()
-        .new_mpc_context_request(new_context)
+        .new_mpc_context_request(
+            new_context,
+            &new_context_id,
+            [0u8; 32],
+            &crate::dummy_domain(),
+            Vec::new(),
+        )
         .unwrap();
     env.kms_client
         .as_mut()

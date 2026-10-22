@@ -1656,8 +1656,10 @@ async fn new_mpc_context(config_path: &Path, context_path: &Path, test_path: &Pa
     let config = cmd_config(
         config_path,
         CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
-            ContextPath {
+            SerializedNewMpcContextParameters {
                 input_path: context_path.to_path_buf(),
+                previous_context_id: None,
+                node_config_hash: [0u8; 32],
             },
         )),
         200,
@@ -1808,8 +1810,10 @@ async fn new_mpc_context_all_sets(
     let config = cmd_config_multi(
         config_paths,
         CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
-            ContextPath {
+            SerializedNewMpcContextParameters {
                 input_path: context_path.to_path_buf(),
+                previous_context_id: None,
+                node_config_hash: [0u8; 32],
             },
         )),
         200,
