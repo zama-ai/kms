@@ -265,6 +265,63 @@ args:
 {{- default $kmsCoreNameDefault .Values.kmsGenCertAndKeys.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/*
+Public vault folder of a party: the peer entry's prefix, then this party's
+public vault prefix, then PUB-p<id>.
+Usage: include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix)
+*/}}
+{{- define "kmsPeerPrefix" -}}
+{{- $prefix := printf "PUB-p%d" (int .id) -}}
+{{- if and .root.Values.kmsCore.publicVault.s3.prefix (eq (int .id) (.root.Values.kmsPeers.id | default 0 | int)) -}}
+{{- $prefix = .root.Values.kmsCore.publicVault.s3.prefix -}}
+{{- end -}}
+{{- if .prefix -}}
+{{- $prefix = .prefix -}}
+{{- end -}}
+{{- $prefix -}}
+{{- end -}}
+
+{{/*
+This party's own peersList entry, as JSON ("{}" when absent).
+*/}}
+{{- define "kmsOwnPeer" -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $own := dict -}}
+{{- range .Values.kmsCore.thresholdMode.peersList -}}
+{{- if eq (int .id) $ownID -}}
+{{- $own = . -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $own -}}
+{{- end -}}
+
+{{/*
+Public vault folder of this party, for its TLS certificate and key:
+publicVault.s3.prefix, else PUB-p<id>. Fails if its peersList entry sets
+another prefix, because the core storage and the vault config use only
+publicVault.s3.prefix while peers and clients read the entry.
+*/}}
+{{- define "kmsOwnPrefix" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $prefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $ownID) -}}
+{{- if and $own.prefix (ne $own.prefix $prefix) -}}
+{{- fail (printf "peersList entry %d has prefix %q but this party's public vault folder is %q; set kmsCore.publicVault.s3.prefix to %q" $ownID $own.prefix $prefix $own.prefix) -}}
+{{- end -}}
+{{- $prefix -}}
+{{- end -}}
+
+{{/*
+TLS subject of this party. Fails if kmsPeers.name differs from the host of
+this party's peersList entry, since peers check the certificate against it.
+*/}}
+{{- define "kmsCheckPeerName" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- if and .Values.kmsPeers.name $own.host (ne .Values.kmsPeers.name $own.host) -}}
+{{- fail (printf "kmsPeers.name %q must match the host %q of peersList entry %d" .Values.kmsPeers.name $own.host (include "kmsPeersStartID" . | int)) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "kmsCoreInitEnvVars" -}}
 export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
@@ -298,10 +355,12 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}/{{ .Values.kmsCore.publicVault.s3.bucke
 S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 {{- end }}
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
+{{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
+{{- $peerPrefix := include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix) }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
-CERT_PATH="PUB-p{{ .id }}/CACert/cert.pem"
+CERT_PATH="{{ $peerPrefix }}/CACert/cert.pem"
 echo "Fetching CA cert for party {{ .id }} from: ${S3_BASE_URL}/${CERT_PATH}"
 # Retry logic: wait for certificate to appear (for parallel deployments)
 MAX_RETRIES=30
@@ -324,8 +383,8 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 done
 {{- else }}
 # For AWS enclave: use S3 list to discover the cert path
-echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
-BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix={{ $peerPrefix }}/CACert/"
+BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $peerPrefix }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 echo "Found bucket path: ${BUCKET_PATH_{{ .id }}}"
 if [ -n "${BUCKET_PATH_{{ .id }}}" ]; then
   curl -s -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${BUCKET_PATH_{{ .id }}}"
@@ -336,10 +395,48 @@ else
 fi
 {{- end }}
 {{- end }}
+{{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
+{{- $ownPrefix := include "kmsOwnPrefix" . }}
+{{- if $.Values.kmsCore.thresholdMode.omitPeers }}
+# omitPeers skips the peer loop, but the server still needs its own certificate.
+{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
+CERT_PATH="{{ $ownPrefix }}/CACert/cert.pem"
+echo "Fetching CA cert for party {{ .Values.kmsPeers.id }} from: ${S3_BASE_URL}/${CERT_PATH}"
+MAX_RETRIES=30
+RETRY_COUNT=0
+RETRY_DELAY=2
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s -f -o ./ca_pem_{{ .Values.kmsPeers.id }} "${S3_BASE_URL}/${CERT_PATH}"; then
+    export KMS_CA_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./ca_pem_{{ .Values.kmsPeers.id }})\"\"\""
+    echo "Successfully fetched CA cert for party {{ .Values.kmsPeers.id }}"
+    break
+  else
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+      echo "Certificate not found yet, retry $RETRY_COUNT/$MAX_RETRIES in ${RETRY_DELAY}s..."
+      sleep $RETRY_DELAY
+    else
+      echo "WARNING: No CA cert found for party {{ .Values.kmsPeers.id }} at ${CERT_PATH} after $MAX_RETRIES retries"
+    fi
+  fi
+done
+{{- else }}
+echo "Looking for CA cert for party {{ .Values.kmsPeers.id }} at: ${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/CACert/"
+OWN_CA_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+echo "Found bucket path: ${OWN_CA_BUCKET_PATH}"
+if [ -n "${OWN_CA_BUCKET_PATH}" ]; then
+  curl -s -o ./ca_pem_{{ .Values.kmsPeers.id }} "${S3_BASE_URL}/${OWN_CA_BUCKET_PATH}"
+  export KMS_CA_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./ca_pem_{{ .Values.kmsPeers.id }})\"\"\""
+  echo "Fetched CA cert for party {{ .Values.kmsPeers.id }}"
+else
+  echo "WARNING: No CA cert found for party {{ .Values.kmsPeers.id }}"
+fi
+{{- end }}
+{{- end }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to key.pem
-KEY_PATH="PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/key.pem"
+KEY_PATH="{{ $ownPrefix }}/PrivateKey/key.pem"
 echo "Fetching private key from: ${S3_BASE_URL}/${KEY_PATH}"
 # Retry logic: wait for private key to appear (for parallel deployments)
 MAX_RETRIES=30
@@ -362,8 +459,8 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 done
 {{- else }}
 # For AWS enclave: use S3 list to discover the key path
-echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
-KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/PrivateKey/"
+KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix={{ $ownPrefix }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
 echo "Found key bucket path: ${KEY_BUCKET_PATH}"
 if [ -n "${KEY_BUCKET_PATH}" ]; then
   curl -s -o ./key_pem "${S3_BASE_URL}/${KEY_BUCKET_PATH}"
