@@ -189,6 +189,7 @@ spec:
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-config"
                      "image" .Values.socat.image
+                     "resources" .Values.socat.resources
                      "vsockPort" 4000
                      "to" (printf "OPEN:kms-server.toml,rdonly")
                 ) | indent 10 | trim }}
@@ -200,6 +201,7 @@ spec:
         - {{ include "proxyFromEnclave"
                (dict "name" "kms-core-enclave-logger"
                      "image" .Values.socat.image
+                     "resources" .Values.socat.resources
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
@@ -207,6 +209,7 @@ spec:
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
                      "image" .Values.socat.image
+                     "resources" .Values.socat.resources
                      "vsockPort" .Values.kmsCore.nitroEnclave.webIdentityTokenPort
             "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
             ) | indent 10 | trim }}

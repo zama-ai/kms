@@ -590,7 +590,7 @@ where
     #[instrument(
         name = "PRSS-INIT",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn prss_init(
         &self,
@@ -712,7 +712,7 @@ where
     #[instrument(
         name = "DKG-PREPROC",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn preproc_key_gen(
         &self,
@@ -929,11 +929,7 @@ where
         }))
     }
 
-    #[instrument(
-        name = "DKG",
-        skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
-    )]
+    #[instrument(name = "DKG", skip_all, fields(network_round, network_sent, peak_mem))]
     async fn threshold_key_gen(
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
@@ -1235,7 +1231,7 @@ where
     #[instrument(
         name = "DDEC-PREPROC",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn preproc_decrypt(
         &self,
@@ -1578,11 +1574,7 @@ where
         }))
     }
 
-    #[instrument(
-        name = "DDEC",
-        skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
-    )]
+    #[instrument(name = "DDEC", skip_all, fields(network_round, network_sent, peak_mem))]
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
@@ -1826,7 +1818,6 @@ where
                         num_sessions = num_sessions,
                         network_round = tracing::field::Empty,
                         network_sent = tracing::field::Empty,
-                        network_received = tracing::field::Empty,
                         peak_mem = tracing::field::Empty
                     );
                     self.data.status_store.insert(
@@ -2019,7 +2010,6 @@ where
                         num_sessions = num_sessions,
                         network_round = tracing::field::Empty,
                         network_sent = tracing::field::Empty,
-                        network_received = tracing::field::Empty,
                         peak_mem = tracing::field::Empty
                     );
                     self.data.status_store.insert(
@@ -2359,7 +2349,7 @@ where
     #[instrument(
         name = "CRS-GEN",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn crs_gen(
         &self,
@@ -2524,7 +2514,7 @@ where
     #[instrument(
         name = "RESHARE-INTEGRATED",
         skip_all,
-        fields(network_round, network_sent, network_received, peak_mem)
+        fields(network_round, network_sent, peak_mem)
     )]
     async fn reshare(
         &self,
@@ -2626,7 +2616,6 @@ where
                 "RESHARE-PREPROC",
                 network_round = field::Empty,
                 network_sent = field::Empty,
-                network_received = field::Empty,
                 peak_mem = field::Empty
             );
             let (mut preprocessing_64, mut preprocessing_128) = async {
@@ -2724,7 +2713,6 @@ where
                 "RESHARE",
                 network_round = field::Empty,
                 network_sent = field::Empty,
-                network_received = field::Empty,
                 peak_mem = field::Empty
             );
             #[cfg(feature = "measure_memory")]
