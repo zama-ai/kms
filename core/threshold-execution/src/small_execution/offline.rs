@@ -355,6 +355,9 @@ where
                 ShamirSharings::create(shares)
             },
             &hints,
+            // The shares come from an all-to-all broadcast, so all honest parties have contributed
+            // their shares (i.e. at least 2t+1 honest shares).
+            // So there is a unique degree 2t polynomial that fits all the 2t+1 honest shares.
             degree + 1,
             *crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK,
             |sharing| {
