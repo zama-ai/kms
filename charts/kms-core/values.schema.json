@@ -74,7 +74,8 @@
     "socat": {
       "type": "object",
       "properties": {
-        "image": { "$ref": "#/definitions/image" }
+        "image": { "$ref": "#/definitions/image" },
+        "resources": { "$ref": "#/definitions/k8sResources" }
       }
     },
     "runMode": { "type": "string" },
