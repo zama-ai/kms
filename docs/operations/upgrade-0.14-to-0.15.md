@@ -44,7 +44,7 @@ Each epoch belongs to the context that the new-MPC-epoch request used when it cr
 - Default context ID: `0x0700000000000000000000000000000000000000000000000000000000000001`
 - Default epoch ID: `0x0800000000000000000000000000000000000000000000000000000000000001`
 
-Most parties have only this epoch. If you created more epochs, for example through resharing, list each of them under the context that its request used. A party that joined through a later context, for example a rebuilt node, can lack the default epoch. Do not list the default epoch or the default context for such a party.
+Most parties have only this epoch. If you created more epochs, for example through resharing, list each of them under the context that its request used. If adding a fresh node that was not part of the default contextm then do not list the default epoch or the default context for such a party.
 
 ## Write the migration config
 
