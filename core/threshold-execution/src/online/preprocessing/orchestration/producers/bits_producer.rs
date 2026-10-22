@@ -23,7 +23,8 @@ use algebra::{
 };
 use error_utils::anyhow_error_and_log;
 
-use super::common::{ProducerSession, execute_preprocessing};
+use super::common::{ProducerSession, execute_preprocessing, maybe_log_phase_snapshot};
+use observability::diag_metrics::{DIAG, DkgPhase};
 
 pub struct GenericBitProducer<Z, S, PreprocStrat, G>
 where
@@ -101,9 +102,13 @@ where
                     preprocessing.execute(&mut session, base_batch_size).await?;
                 let bits =
                     G::gen_bits_even(batch_size, &mut correlated_randomness, &mut session).await?;
+                DIAG.add_generated_items("bits", bits.len());
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let send_timer = DIAG.time_dkg_phase(DkgPhase::AggregatorSend);
                 let _ = sender_channel.send(bits).await;
+                send_timer.finish();
+                maybe_log_phase_snapshot();
                 progress_tracker.as_ref().map(|p| p.increment(batch_size));
             }
             Ok::<_, anyhow::Error>(session)

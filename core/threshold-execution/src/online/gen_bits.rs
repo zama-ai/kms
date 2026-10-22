@@ -11,6 +11,7 @@ use algebra::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use observability::diag_metrics::{DIAG, DkgPhase};
 use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
@@ -61,9 +62,11 @@ impl BitGenEven for SecureBitGenEven {
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>> {
+        let _batch_timer = DIAG.time_dkg_phase(DkgPhase::BitBatch);
         let a = Arc::new(preproc.next_random_vec(amount)?);
 
         let triples = preproc.next_triple_vec(amount)?;
+        let mult_timer = DIAG.time_dkg_phase(DkgPhase::MultOpen);
         let s = mult_list(Arc::clone(&a), Arc::clone(&a), triples, session).await?;
 
         let compute_a = Arc::clone(&a);
@@ -75,9 +78,13 @@ impl BitGenEven for SecureBitGenEven {
                 .collect_vec()
         })
         .await?;
+        mult_timer.finish();
+        let open_timer = DIAG.time_dkg_phase(DkgPhase::OpenV);
         let opened_v_vec = open_list(&v, session).await?;
+        open_timer.finish();
 
         //let a = Arc::into_inner(a).ok_or_else(|| anyhow_error_and_log("Failed to unarc a"))?;
+        let _solve_timer = DIAG.time_dkg_phase(DkgPhase::Solve);
         spawn_compute_bound(move || {
             opened_v_vec
                 .iter()

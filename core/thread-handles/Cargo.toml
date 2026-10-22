@@ -10,6 +10,8 @@ description = "Utilities for managing OS threads, Tokio tasks, and a global Rayo
 [dependencies]
 anyhow.workspace = true
 error-utils.workspace = true
+# Internal metrics record queue and execution time without changing task scheduling.
+observability.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 tracing.workspace = true

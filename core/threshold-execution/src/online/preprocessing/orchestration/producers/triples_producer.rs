@@ -23,7 +23,8 @@ use crate::{
 use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
 
-use super::common::{ProducerSession, execute_preprocessing};
+use super::common::{ProducerSession, execute_preprocessing, maybe_log_phase_snapshot};
+use observability::diag_metrics::{DIAG, DkgPhase};
 
 pub struct GenericTripleProducer<Z, S, PreprocStrat>
 where
@@ -97,9 +98,13 @@ where
                     .execute(&mut session, base_batch_size)
                     .await?
                     .next_triple_vec(batch_size)?;
+                DIAG.add_generated_items("triples", triples.len());
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let send_timer = DIAG.time_dkg_phase(DkgPhase::AggregatorSend);
                 let _ = sender_channel.send(triples).await;
+                send_timer.finish();
+                maybe_log_phase_snapshot();
                 progress_tracker.as_ref().map(|p| p.increment(batch_size));
             }
             Ok::<_, anyhow::Error>(session)

@@ -311,8 +311,31 @@ fn main() -> anyhow::Result<()> {
         )
     })?;
 
+    // Export the `[tuning.env]` table before any thread exists: the MPC tuning knobs are read
+    // from the environment on first use, and inside an enclave this table is their only source.
+    // Tracing is not set up yet, so the entries are also printed to stderr.
+    if let Some(tuning) = core_config.tuning.as_ref() {
+        for (key, value) in &tuning.env {
+            eprintln!("tuning: exporting {key}={value} into the process environment");
+        }
+        tuning.apply();
+    }
+
+    let internal = core_config.internal_config.clone().unwrap_or_default();
+    eprintln!(
+        "benchmark runtime: tokio={} rayon={} preproc={}",
+        internal.num_tokio_threads,
+        internal.num_rayon_threads,
+        core_config
+            .threshold
+            .as_ref()
+            .and_then(|threshold| threshold.num_sessions_preproc)
+            .unwrap_or_default()
+    );
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_name("tokio-rt-worker")
         .worker_threads(
             core_config
                 .internal_config

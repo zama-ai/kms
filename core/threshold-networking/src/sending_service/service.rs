@@ -5,18 +5,21 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::error::Error;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ggen::SendValueRequest;
 use crate::ggen::Status;
 use crate::ggen::gnetworking_client::GnetworkingClient;
 use crate::grpc::CoreToCoreNetworkConfig;
+use crate::tuning::{C2C_CONNECTIONS_PER_PEER, apply_h2_client_settings};
 use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
+use observability::diag_metrics::DIAG;
 use observability::metrics::{self, NetworkDebugEvent};
 use observability::telemetry::ContextPropagator;
 use threshold_types::party::{Identity, RoleAssignment};
@@ -55,8 +58,29 @@ pub trait SendingService: Send + Sync {
     )>;
 }
 
-type ChannelMap =
-    HashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>;
+type PeerClient = GnetworkingClient<InterceptedService<Channel, ContextPropagator>>;
+/// The connections to each peer: one by default, `MPC_C2C_CONNECTIONS_PER_PEER` when a pool is
+/// requested (each entry is its own TCP + TLS + HTTP/2 connection).
+type ChannelMap = HashMap<Identity, PeerConnectionPool>;
+
+#[derive(Debug)]
+struct PeerConnectionPool {
+    clients: Vec<PeerClient>,
+    cursor: AtomicUsize,
+}
+
+impl PeerConnectionPool {
+    fn next_index(&self) -> usize {
+        // Each peer advances independently, even when the pool size divides the peer count.
+        self.cursor.fetch_add(1, Ordering::Relaxed) % self.clients.len()
+    }
+
+    fn pick(&self, peer: &Identity) -> PeerClient {
+        let index = self.next_index();
+        tracing::debug!(%peer, connection_index = index, pool_size = self.clients.len(), "Selecting peer connection");
+        self.clients[index].clone()
+    }
+}
 
 /// Records peer completion and wakes receivers waiting for those peers.
 #[derive(Debug)]
@@ -126,9 +150,9 @@ impl GrpcSendingService {
         &self,
         receiver: &Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
-        if let Some(channel) = self.channel_map.read().await.get(receiver) {
+        if let Some(pool) = self.channel_map.read().await.get(receiver) {
             tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
-            return Ok(channel.clone());
+            return Ok(pool.pick(receiver));
         }
 
         // Hold a write lock on the entry to avoid duplicate connections
@@ -136,19 +160,36 @@ impl GrpcSendingService {
         let entry = channel_map_write_lock.entry(receiver.clone());
 
         // First thing we do is re-check whether connection has been established while waiting for the lock
-        if let Entry::Occupied(channel) = entry {
+        if let Entry::Occupied(pool) = entry {
             tracing::debug!(
                 "Channel to {:?} was created while waiting for the lock, retrieving it.",
                 receiver
             );
-            return Ok(channel.get().clone());
+            return Ok(pool.get().pick(receiver));
         }
 
+        let pool_size = *C2C_CONNECTIONS_PER_PEER;
+        let mut pool = Vec::with_capacity(pool_size);
+        for index in 0..pool_size {
+            pool.push(self.build_client(receiver, index)?);
+        }
+        let pool = PeerConnectionPool {
+            clients: pool,
+            cursor: AtomicUsize::new(0),
+        };
+        let client = pool.pick(receiver);
+        entry.insert_entry(pool);
+        Ok(client)
+    }
+
+    /// Build one connection (lazily connected) to `receiver`; `index` only tells pool members
+    /// apart in the logs.
+    fn build_client(&self, receiver: &Identity, index: usize) -> anyhow::Result<PeerClient> {
         let proto = match self.tls_config {
             Some(_) => "https",
             None => "http",
         };
-        tracing::debug!("Creating {} channel to '{}'", proto, receiver);
+        tracing::debug!("Creating {} channel #{} to '{}'", proto, index, receiver);
         // When running within the AWS Nitro enclave, we have to go through
         // vsock proxies to make TCP connections to peers.
         let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
@@ -189,8 +230,7 @@ impl GrpcSendingService {
                 // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
-                let endpoint = Channel::builder(endpoint)
-                    .http2_adaptive_window(true)
+                let endpoint = apply_h2_client_settings(Channel::builder(endpoint))
                     .tcp_nodelay(true)
                     .http2_keep_alive_interval(self.config.get_keepalive_interval())
                     .keep_alive_timeout(self.config.get_keepalive_timeout())
@@ -212,8 +252,7 @@ impl GrpcSendingService {
                 // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
-                Channel::builder(endpoint)
-                    .http2_adaptive_window(true)
+                apply_h2_client_settings(Channel::builder(endpoint))
                     .tcp_nodelay(true)
                     .http2_keep_alive_interval(self.config.get_keepalive_interval())
                     .keep_alive_timeout(self.config.get_keepalive_timeout())
@@ -221,11 +260,11 @@ impl GrpcSendingService {
                     .connect_lazy()
             }
         };
-        let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
-            .max_decoding_message_size(self.config.get_max_en_decode_message_size())
-            .max_encoding_message_size(self.config.get_max_en_decode_message_size());
-        entry.insert_entry(client.clone());
-        Ok(client)
+        Ok(
+            GnetworkingClient::with_interceptor(channel, ContextPropagator)
+                .max_decoding_message_size(self.config.get_max_en_decode_message_size())
+                .max_encoding_message_size(self.config.get_max_en_decode_message_size()),
+        )
     }
 
     async fn run_network_task(
@@ -242,6 +281,7 @@ impl GrpcSendingService {
 
         while let Some(value) = receiver.recv().await {
             received_request += 1;
+            DIAG.add_c2c_sender_queued(-1);
 
             if receiver_completed {
                 skipped += 1;
@@ -249,6 +289,8 @@ impl GrpcSendingService {
                     .increment_network_event(NetworkDebugEvent::SendSkippedAfterCompleted);
                 continue;
             }
+            let message_bytes = value.tag.len() + value.value.len();
+            let rpc_start = Instant::now();
 
             let send_fn = || async {
                 let value = value.clone();
@@ -277,6 +319,7 @@ impl GrpcSendingService {
             // Single unified retry strategy
             let res: Result<_, _> =
                 retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            DIAG.observe_c2c_send_rpc(message_bytes, rpc_start.elapsed());
             match res {
                 Ok(send_response) => {
                     match send_response.status() {
@@ -431,6 +474,32 @@ mod tests {
     use futures_util::poll;
     use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::role::Role;
+
+    #[tokio::test]
+    async fn connection_selection_rotates_independently_for_twelve_peers() {
+        let service = GrpcSendingService::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let peers = (0..12)
+            .map(|peer| {
+                let identity = Identity::new("127.0.0.1".to_string(), 6000 + peer, None);
+                PeerConnectionPool {
+                    clients: (0..4)
+                        .map(|index| service.build_client(&identity, index).unwrap())
+                        .collect(),
+                    cursor: AtomicUsize::new(0),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // A global cursor selects one fixed slot per peer because 12 is divisible by 4.
+        for session in 0..12 {
+            for peer in &peers {
+                assert_eq!(peer.next_index(), session % 4);
+            }
+        }
+        peers[0].next_index();
+        assert_eq!(peers[0].next_index(), 1);
+        assert_eq!(peers[1].next_index(), 0);
+    }
 
     #[tokio::test]
     async fn completion_wakes_waiters_for_the_completed_peer() {

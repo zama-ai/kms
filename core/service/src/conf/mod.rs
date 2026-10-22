@@ -40,8 +40,40 @@ pub struct CoreConfig {
     pub internal_config: Option<InternalConfig>,
     #[validate(nested)]
     pub migration: Option<MigrationConfig>,
+    /// Bench diagnostics and experimental knobs; see [`TuningConfig`].
+    pub tuning: Option<TuningConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+/// Environment variables the server exports into its own process at start-up, before any of the
+/// `MPC_*` / `KMS_SYS_METRICS_*` tuning knobs are read.
+///
+/// The knobs of the MPC crates (`threshold-execution`, `threshold-networking`, `observability`)
+/// are read from the environment once, on first use. Inside a Nitro enclave the process does not
+/// inherit the pod's environment, so this table is the one way to reach them there; the Helm
+/// chart renders `kmsCore.tuning.env` into it. Outside an enclave the plain environment works as
+/// well, and a variable set in both places takes the value from this table.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TuningConfig {
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl TuningConfig {
+    /// Export every entry of `env` into the process environment.
+    ///
+    /// Must be called before any other thread exists (`std::env::set_var` is not thread-safe
+    /// with concurrent readers), i.e. before the tokio runtime is built.
+    pub fn apply(&self) {
+        for (key, value) in &self.env {
+            tracing::info!("tuning: exporting {key}={value} into the process environment");
+            // SAFETY: called from `main` before the async runtime and its threads are started,
+            // so no other thread can be reading the environment concurrently.
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
 }
 
 impl CoreConfig {

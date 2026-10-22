@@ -7792,6 +7792,7 @@ version = "0.16.0-0"
 dependencies = [
  "anyhow",
  "error-utils",
+ "observability",
  "rayon",
  "tokio",
  "tracing",
@@ -7888,6 +7889,7 @@ dependencies = [
  "mockall",
  "num-integer",
  "num-traits",
+ "observability",
  "paste",
  "rand 0.8.6",
  "rayon",

@@ -162,6 +162,7 @@ fn build_test_core_config(
             decryption_mode: DecryptionMode::NoiseFloodSmall,
         }),
         internal_config: None,
+        tuning: None,
         mock_enclave: Some(true),
         migration: Some(MigrationConfig {
             context_associations: vec![ContextEpochAssociation {

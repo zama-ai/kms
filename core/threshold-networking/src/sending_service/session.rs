@@ -12,6 +12,7 @@ use crate::ggen::SendValueRequest;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
+use observability::diag_metrics::DIAG;
 use observability::metrics::{self, NetworkDebugEvent};
 use threshold_types::network::{NetworkMode, Networking, RoundClock};
 use threshold_types::party::Identity;
@@ -126,7 +127,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
-            Some(sending_channel) => Ok(sending_channel.send(request)?),
+            Some(sending_channel) => {
+                DIAG.add_c2c_sender_queued(1);
+                Ok(sending_channel.send(request)?)
+            }
             None => Err(anyhow_error_and_log(format!(
                 "Missing local channel for {receiver:?}"
             ))),

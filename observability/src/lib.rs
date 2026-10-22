@@ -1,4 +1,5 @@
 pub mod conf;
+pub mod diag_metrics;
 pub mod grpc;
 pub mod health;
 pub mod metrics;

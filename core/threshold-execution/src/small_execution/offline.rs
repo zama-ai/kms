@@ -9,6 +9,7 @@ use tracing::instrument;
 use super::prss::PRSSPrimitives;
 use crate::communication::broadcast::SyncReliableBroadcast;
 use crate::config::BatchParams;
+use crate::constants::DKG_PRSS_PIPELINE;
 use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
@@ -21,7 +22,9 @@ use algebra::{
     structure_traits::{ErrorCorrect, Ring},
 };
 use error_utils::log_error_wrapper;
-use thread_handles::spawn_compute_bound;
+use observability::diag_metrics::{DIAG, DkgPhase};
+use std::any::Any;
+use thread_handles::{ComputeHandle, spawn_compute_bound};
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 
@@ -37,9 +40,98 @@ pub trait Preprocessing<Z: Clone, S: BaseSessionHandles>:
     ) -> anyhow::Result<InMemoryBasePreprocessing<Z>>;
 }
 
-#[derive(Clone)]
 pub struct RealSmallPreprocessing<BCast: Broadcast> {
     broadcast: BCast,
+    /// The PRSS/PRZS draws of the next batch, submitted to rayon while the current batch waited
+    /// on the network (`MPC_DKG_PRSS_PIPELINE`). Type-erased because the preprocessing object is
+    /// generic over the broadcast only; it holds an `Option<PrssPrefetch<Z>>` for the `Z` of the
+    /// session it is used with. Never cloned: a clone starts without a prefetch.
+    prefetch: Option<Box<dyn Any + Send + Sync>>,
+}
+
+impl<BCast: Broadcast + Clone> Clone for RealSmallPreprocessing<BCast> {
+    fn clone(&self) -> Self {
+        Self {
+            broadcast: self.broadcast.clone(),
+            prefetch: None,
+        }
+    }
+}
+
+/// PRSS/PRZS values of one preprocessing batch, drawn ahead of time on the rayon pool.
+///
+/// With `MPC_DKG_PRSS_PIPELINE` the draws of batch `k + 1` are submitted right before batch `k`
+/// enters its network rounds, so the ~2 core-seconds of PRF evaluation per batch overlap the
+/// wait instead of being serialised with it. The counters are reserved at submission, in the same
+/// order on every party, so the values are exactly the ones a direct draw at that point would
+/// have produced; `prss_base_ctr`/`przs_base_ctr` are kept for `check_d`.
+struct PrssPrefetch<Z> {
+    batch: BatchParams,
+    prss_base_ctr: u128,
+    przs_base_ctr: u128,
+    all_prss: ComputeHandle<Vec<Z>>,
+    przs: ComputeHandle<Vec<Z>>,
+    randoms: Option<ComputeHandle<Vec<Z>>>,
+}
+
+impl<Z: Ring> PrssPrefetch<Z> {
+    /// Reserve the counters of `batch` on `session`'s PRSS state and submit the draws. `None`
+    /// when the PRSS implementation cannot defer (the caller then draws directly).
+    async fn spawn<Ses: SmallSessionHandles<Z>>(
+        session: &mut Ses,
+        batch: BatchParams,
+    ) -> anyhow::Result<Option<Self>> {
+        let my_role = session.my_role();
+        let threshold = session.threshold();
+        let counters = session.prss().get_counters();
+        let prss_base_ctr = counters.prss_ctr;
+        let przs_base_ctr = counters.przs_ctr;
+        let Some(all_prss) = session
+            .prss_as_mut()
+            .prss_next_vec_deferred(my_role, 3 * batch.triples)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(przs) = session
+            .prss_as_mut()
+            .przs_next_vec_deferred(my_role, threshold, batch.triples)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let randoms = if batch.randoms > 0 {
+            session
+                .prss_as_mut()
+                .prss_next_vec_deferred(my_role, batch.randoms)
+                .await?
+        } else {
+            None
+        };
+        Ok(Some(Self {
+            batch,
+            prss_base_ctr,
+            przs_base_ctr,
+            all_prss,
+            przs,
+            randoms,
+        }))
+    }
+}
+
+/// The triple-generation part of a [`PrssPrefetch`], handed to [`next_triple_batch`].
+struct TripleDraws<Z> {
+    prss_base_ctr: u128,
+    przs_base_ctr: u128,
+    all_prss: ComputeHandle<Vec<Z>>,
+    przs: ComputeHandle<Vec<Z>>,
+}
+
+/// What [`next_triple_batch`] should submit for the next batch once the current one starts
+/// waiting on the network: the slot to store it in and the sizes to draw.
+struct PrefetchPlan<'a> {
+    slot: &'a mut Option<Box<dyn Any + Send + Sync>>,
+    batch: BatchParams,
 }
 
 impl<BCast: Broadcast> ProtocolDescription for RealSmallPreprocessing<BCast> {
@@ -56,7 +148,31 @@ impl<BCast: Broadcast> ProtocolDescription for RealSmallPreprocessing<BCast> {
 impl<BCast: Broadcast> RealSmallPreprocessing<BCast> {
     /// Creates an instance of a preprocessing protocol.
     pub fn new(broadcast: BCast) -> Self {
-        Self { broadcast }
+        Self {
+            broadcast,
+            prefetch: None,
+        }
+    }
+
+    /// Take the prefetched draws if they are for exactly `batch`; anything else is dropped (its
+    /// counters stay consumed, identically on every party, since they all run this code).
+    fn take_prefetch<Z: Ring>(&mut self, batch: BatchParams) -> Option<PrssPrefetch<Z>> {
+        let boxed = self.prefetch.take()?;
+        match boxed.downcast::<PrssPrefetch<Z>>() {
+            Ok(prefetch) if prefetch.batch == batch => Some(*prefetch),
+            Ok(prefetch) => {
+                tracing::warn!(
+                    "Dropping a PRSS prefetch for {:?}: the batch now requested is {:?}",
+                    prefetch.batch,
+                    batch
+                );
+                None
+            }
+            Err(_) => {
+                tracing::warn!("Dropping a PRSS prefetch of another ring type");
+                None
+            }
+        }
     }
 
     /// Worst-case number of synchronous network rounds
@@ -103,20 +219,56 @@ impl<
         //to maybe decide to store data somewhere else
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
+        let pipelining = *DKG_PRSS_PIPELINE;
+        // `take_prefetch` only returns draws made for exactly this batch; split them into the
+        // triple part (consumed by the first full-batch pass) and the randoms part.
+        let (mut triple_draws, mut prefetched_randoms) = match self.take_prefetch::<Z>(batch_sizes)
+        {
+            Some(prefetch) => (
+                Some(TripleDraws {
+                    prss_base_ctr: prefetch.prss_base_ctr,
+                    przs_base_ctr: prefetch.przs_base_ctr,
+                    all_prss: prefetch.all_prss,
+                    przs: prefetch.przs,
+                }),
+                prefetch.randoms,
+            ),
+            None => (None, None),
+        };
+
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
         while base_preprocessing.triples_len() < batch_sizes.triples {
+            let wanted = batch_sizes.triples - base_preprocessing.triples_len();
+            // Prefetched draws are for the full batch: only the first pass can use them, and a
+            // prefetch for the next batch is only planned from a full-batch pass.
+            let draws = if wanted == batch_sizes.triples {
+                triple_draws.take()
+            } else {
+                None
+            };
+            let plan = (pipelining && wanted == batch_sizes.triples).then_some(PrefetchPlan {
+                slot: &mut self.prefetch,
+                batch: batch_sizes,
+            });
+            let _batch_timer = DIAG.time_dkg_phase(DkgPhase::TripleBatch);
             base_preprocessing.append_triples(
-                next_triple_batch(
-                    small_session,
-                    batch_sizes.triples - base_preprocessing.triples_len(),
-                    &self.broadcast,
-                )
-                .await?,
+                next_triple_batch(small_session, wanted, &self.broadcast, draws, plan).await?,
             );
         }
         if batch_sizes.randoms > 0 {
-            base_preprocessing
-                .append_randoms(next_random_batch(batch_sizes.randoms, small_session).await?);
+            let randoms = match prefetched_randoms.take() {
+                Some(handle) => {
+                    let _timer = DIAG.time_dkg_phase(DkgPhase::Prss);
+                    let my_role = small_session.my_role();
+                    handle
+                        .await?
+                        .into_iter()
+                        .map(|x| Share::new(my_role, x))
+                        .collect()
+                }
+                None => next_random_batch(batch_sizes.randoms, small_session).await?,
+            };
+            base_preprocessing.append_randoms(randoms);
         }
         Ok(base_preprocessing)
     }
@@ -129,6 +281,7 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
     session: &mut Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
     let my_role = session.my_role();
+    let _timer = DIAG.time_dkg_phase(DkgPhase::Prss);
     //Create telemetry span to record all calls to PRSS.Next
     let res = session
         .prss_as_mut()
@@ -144,26 +297,39 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
 /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
 /// Caller then needs to retry to construct any missing triples, to ensure a full batch has been constructed before returning.
-#[instrument(name="MPC_Small.GenTriples",skip(session,broadcast), fields(sid= ?session.session_id(), my_role = ?session.my_role(),batch_size = amount))]
+#[instrument(name="MPC_Small.GenTriples",skip(session,broadcast,draws,plan), fields(sid= ?session.session_id(), my_role = ?session.my_role(),batch_size = amount))]
 async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: Broadcast>(
     session: &mut Ses,
     amount: usize,
     broadcast: &BCast,
+    draws: Option<TripleDraws<Z>>,
+    plan: Option<PrefetchPlan<'_>>,
 ) -> anyhow::Result<Vec<Triple<Z>>> {
-    let counters = session.prss().get_counters();
     let my_role = session.my_role();
     let threshold = session.threshold();
-    let prss_base_ctr = counters.prss_ctr;
-    let przs_base_ctr = counters.przs_ctr;
 
-    let all_prss = session
-        .prss_as_mut()
-        .prss_next_vec(my_role, 3 * amount)
-        .await?;
-    let vec_z_double: Vec<_> = session
-        .prss_as_mut()
-        .przs_next_vec(my_role, threshold, amount)
-        .await?;
+    let prss_timer = DIAG.time_dkg_phase(DkgPhase::Prss);
+    let (prss_base_ctr, przs_base_ctr, all_prss, vec_z_double) = match draws {
+        // Drawn ahead of time during the previous batch's network rounds.
+        Some(draws) => (
+            draws.prss_base_ctr,
+            draws.przs_base_ctr,
+            draws.all_prss.await?,
+            draws.przs.await?,
+        ),
+        None => {
+            let counters = session.prss().get_counters();
+            let all_prss = session
+                .prss_as_mut()
+                .prss_next_vec(my_role, 3 * amount)
+                .await?;
+            let vec_z_double: Vec<_> = session
+                .prss_as_mut()
+                .przs_next_vec(my_role, threshold, amount)
+                .await?;
+            (counters.prss_ctr, counters.przs_ctr, all_prss, vec_z_double)
+        }
+    };
 
     let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
     let mut all_prss = all_prss.into_iter();
@@ -196,13 +362,24 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
+    prss_timer.finish();
+
+    // The network rounds start here: submit the next batch's draws so that rayon computes them
+    // while this batch waits for its peers.
+    if let Some(plan) = plan {
+        *plan.slot = PrssPrefetch::<Z>::spawn(session, plan.batch)
+            .await?
+            .map(|prefetch| Box::new(prefetch) as Box<dyn Any + Send + Sync>);
+    }
 
     let broadcast_res = broadcast
         .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.into())
         .await?;
 
     //Try reconstructing 2t sharings of d, a None means reconstruction failed.
+    let recons_timer = DIAG.time_dkg_phase(DkgPhase::ReconsD);
     let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
+    recons_timer.finish();
 
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();

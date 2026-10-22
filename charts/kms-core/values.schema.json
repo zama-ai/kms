@@ -329,6 +329,19 @@
             }
           }
         },
+        "extraEnv": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "tuning": {
+          "type": "object",
+          "properties": {
+            "env": {
+              "type": "object",
+              "additionalProperties": { "type": ["string", "number", "boolean"] }
+            }
+          }
+        },
         "thresholdMode": { "$ref": "#/definitions/thresholdMode" },
         "nitroEnclave": { "$ref": "#/definitions/nitroEnclave" },
         "publicVault": {

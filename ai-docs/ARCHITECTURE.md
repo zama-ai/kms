@@ -746,6 +746,14 @@ decryption through both sync and async endpoints. The scenario configuration sel
 operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
 Python analyzer report the ladders separately.
 
+The [DKG benchmark runbook](../runbook-v2.md) defines controlled preprocessing experiments.
+The runner verifies every party's startup settings and records image identities and placement after rollout.
+It closes the measurement window before restarting the cores and rejects process resets or fleet changes.
+Producer counters report completed bits and triples; phase timers report elapsed session time, including scheduler delays.
+Nested detail timers separate compute queue delay and echo processing without changing the protocol.
+The bandwidth benchmark counts acknowledged payload bytes and uses one interval across its sessions, including setup.
+Its aggregate log marks incomplete runs. Its duration field rounds that common interval up to whole seconds.
+
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.
 

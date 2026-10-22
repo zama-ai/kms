@@ -27,6 +27,67 @@ impl<S: BaseSessionHandles, T> ProducerSession<S, T> {
 }
 
 /// Generic functions that spawn the threads for processing
+/// Bench diagnostics: once every `MPC_DKG_PHASE_LOG_EVERY` batches (process-wide, over all
+/// producer sessions), log the per-phase time of the window since the previous log, from the
+/// `kms_dkg_phase_*` counters. The Prometheus series carry the same data continuously; the log
+/// line is for runs whose only artefact is the core log.
+pub(crate) fn maybe_log_phase_snapshot() {
+    use crate::constants::DKG_PHASE_LOG_EVERY;
+    use observability::diag_metrics::DIAG;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{LazyLock, Mutex};
+    use std::time::Instant;
+
+    /// `(label, total microseconds, observations)` per phase, as `dkg_phase_snapshot` returns it.
+    type PhaseSnapshot = Vec<(&'static str, u64, u64)>;
+
+    static BATCHES: AtomicU64 = AtomicU64::new(0);
+    static LAST: LazyLock<Mutex<Option<(Instant, PhaseSnapshot)>>> =
+        LazyLock::new(|| Mutex::new(None));
+
+    let every = *DKG_PHASE_LOG_EVERY as u64;
+    if every == 0 {
+        return;
+    }
+    let batches = BATCHES.fetch_add(1, Ordering::Relaxed) + 1;
+    if !batches.is_multiple_of(every) {
+        return;
+    }
+    let Ok(mut last) = LAST.lock() else {
+        return;
+    };
+    // Capture under the lock so concurrent producers cannot publish older snapshots afterward.
+    let now = Instant::now();
+    let snapshot = DIAG.dkg_phase_snapshot();
+    let mut lines = Vec::with_capacity(snapshot.len());
+    if let Some((last_at, last_snapshot)) = last.as_ref() {
+        let window_secs = now.duration_since(*last_at).as_secs_f64().max(1e-9);
+        for ((label, micros, obs), (_, last_micros, last_obs)) in
+            snapshot.iter().zip(last_snapshot.iter())
+        {
+            let d_micros = micros.saturating_sub(*last_micros);
+            let d_obs = obs.saturating_sub(*last_obs);
+            if d_obs == 0 {
+                continue;
+            }
+            lines.push(format!(
+                "{label}: {:.1} s total over {d_obs} obs ({:.0} ms avg, {:.2} session-s per wall-s)",
+                d_micros as f64 / 1e6,
+                d_micros as f64 / 1e3 / d_obs as f64,
+                d_micros as f64 / 1e6 / window_secs,
+            ));
+        }
+        tracing::info!(
+            "DKG phase timers over the last {every} batches ({:.1} s): {}",
+            window_secs,
+            lines.join(" | ")
+        );
+    } else {
+        tracing::info!("DKG phase timers: first window started after {batches} batches");
+    }
+    *last = Some((now, snapshot));
+}
+
 pub fn execute_preprocessing<C, S: BaseSessionHandles + 'static, TaskOutput>(
     producer_sessions: Vec<ProducerSession<S, C>>,
     task_gen: impl Fn(S, Sender<C>, Option<ProgressTracker>) -> TaskOutput,

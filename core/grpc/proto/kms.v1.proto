@@ -994,12 +994,12 @@ message PeerBandwidthInfo {
   uint32 peer_id = 1;
   // Peer endpoint address
   string endpoint = 2;
-  // Number of bytes sent to this peer
+  // Payload bytes acknowledged by successful RPCs to this peer. Failed attempts do not contribute.
   uint64 bytes_sent = 3;
-  // Effective time spent averaged over all sessions
-  // (may differ from requested duration because we don't stop the experiment abruptly)
+  // Common elapsed interval for all benchmark sessions, including setup and the final RPC.
+  // Rounded up to whole seconds; may exceed the requested send-loop duration.
   uint64 duration = 4;
-  // Some measure of latency over all messages sent
+  // RPC latency measurements. Absent if any attempt failed or no attempts completed.
   LatencyInfo latency = 5;
 }
 

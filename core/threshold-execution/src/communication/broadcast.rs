@@ -1,8 +1,12 @@
-use super::p2p::{generic_receive_from_all, generic_receive_from_all_senders, send_to_all};
+use super::p2p::{
+    generic_receive_from_all, generic_receive_from_all_senders, send_bytes_to_all, send_to_all,
+};
+use crate::constants::{BCAST_ECHO_HASH_KEYS, SERIALIZE_ON_RAYON};
 use crate::network_value::{BcastHash, BroadcastValue, NetworkValue};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
 use crate::runtime::sessions::session_parameters::DeSerializationRunTime;
 use error_utils::anyhow_error_and_log;
+use observability::diag_metrics::{DIAG, DkgPhase};
 use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
@@ -261,6 +265,141 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
     process_echos(session, &mut jobs, echoed_data, non_answering_parties).await
 }
 
+/// Variant of [`receive_echos_from_all_batched`] that tallies the echoes by `(sender, hash)`
+/// instead of by `(sender, value)` (`MPC_BCAST_ECHO_HASH_KEYS`).
+///
+/// Same inputs and outputs, except that this party's own round-1 view is passed as the plain
+/// `round1_contributions` map. The batched variant keys a `HashMap` by the full
+/// `BroadcastValue`, which SipHashes and compares every echoed vector (13 × 640 KB per peer in a
+/// 13-party DKG batch) on the tokio worker that receives it; here each value is hashed once with
+/// the broadcast hash, on rayon, and the tally works on 32-byte keys.
+pub(crate) async fn receive_echos_from_all_hashed<Z: Ring, B: BaseSessionHandles>(
+    session: &B,
+    non_answering_parties: &mut HashSet<Role>,
+    round1_contributions: RoleValueMap<Z>,
+) -> anyhow::Result<(
+    HashMap<(Role, BcastHash), HashSet<Role>>,
+    HashMap<(Role, BcastHash), BroadcastValue<Z>>,
+)> {
+    let my_role = session.my_role();
+    let num_parties = session.num_parties();
+    let threshold = session.threshold() as usize;
+
+    //Receiving from every parties as everyone can send an echo
+    let mut jobs = JoinSet::<Result<SendEchoJobType<Z>, Elapsed>>::new();
+    generic_receive_from_all(
+        &mut jobs,
+        session,
+        Some(non_answering_parties),
+        |msg, id| match msg {
+            NetworkValue::EchoBatch(v) => Ok(v),
+            NetworkValue::Empty => Ok(RoleValueMap::new()),
+            _ => Err(anyhow_error_and_log(format!(
+                "I have received sth different from an Echo Batch message on party: {id:?}",
+            ))),
+        },
+    )
+    .await;
+
+    // Tally keyed by the broadcast hash; the first value seen for a hash is kept.
+    let mut echo_count: HashMap<(Role, BcastHash), HashSet<Role>> = HashMap::new();
+    let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = HashMap::new();
+    let mut tally = |from_party: Role, hashed: Vec<(Role, BcastHash, BroadcastValue<Z>)>| {
+        let _timer = DIAG.time_detail("echo_tally");
+        for (role, hash, value) in hashed {
+            echo_count
+                .entry((role, hash))
+                .or_default()
+                .insert(from_party);
+            map_hash_to_value.entry((role, hash)).or_insert(value);
+        }
+    };
+    tally(my_role, hash_contributions(round1_contributions).await?);
+
+    let mut answering_parties = HashSet::<Role>::new();
+    while let Some(v) = {
+        let _timer = DIAG.time_detail("echo_receive_wait");
+        jobs.join_next().await
+    } {
+        let task_out = v?;
+        if let Ok((from_party, data)) = task_out {
+            answering_parties.insert(from_party);
+            match data {
+                Ok(rcv_echo) => {
+                    debug_assert!(rcv_echo.len() <= num_parties);
+                    tally(from_party, hash_contributions(rcv_echo).await?);
+                }
+                Err(e) => tracing::warn!(
+                    "(Process echos) I am {my_role}, received wrong type from {from_party}: {e:?}"
+                ),
+            }
+        }
+    }
+    for role in session.roles() {
+        if !answering_parties.contains(role) && role != &my_role {
+            non_answering_parties.insert(*role);
+            tracing::warn!("(Process echos) I am {my_role} haven't heard from {role}");
+        }
+    }
+
+    //Any entry with at least N-t times is good for a vote
+    let registered_votes = echo_count
+        .into_iter()
+        .filter(|(_, from_parties)| from_parties.len() >= num_parties - threshold)
+        .map(|(key, _)| (key, HashSet::from([my_role])))
+        .collect();
+    Ok((registered_votes, map_hash_to_value))
+}
+
+/// Broadcast-hash every contribution of an echo batch, on the rayon pool.
+async fn hash_contributions<Z: Ring>(
+    contributions: RoleValueMap<Z>,
+) -> anyhow::Result<Vec<(Role, BcastHash, BroadcastValue<Z>)>> {
+    spawn_compute_bound(move || {
+        let _timer = DIAG.time_detail("echo_hash");
+        contributions
+            .into_iter()
+            .map(|(role, value)| {
+                let hash = value.to_bcast_hash().map_err(|e| {
+                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
+                })?;
+                Ok((role, hash, value))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+    })
+    .await?
+}
+
+/// Serialise `msg` (on rayon when `MPC_SERIALIZE_ON_RAYON` is set, else inline) and send it to
+/// every other party, handing the message back to the caller.
+async fn send_network_value_to_all<Z: Ring, B: BaseSessionHandles>(
+    session: &B,
+    msg: NetworkValue<Z>,
+) -> anyhow::Result<NetworkValue<Z>> {
+    let operation = if matches!(&msg, NetworkValue::EchoBatch(_)) {
+        "echo_serialize"
+    } else {
+        "broadcast_serialize"
+    };
+    if *SERIALIZE_ON_RAYON {
+        let (msg, bytes) = spawn_compute_bound(move || {
+            let _timer = DIAG.time_detail(operation);
+            let bytes = msg.to_network();
+            (msg, bytes)
+        })
+        .await?;
+        send_bytes_to_all(session, bytes).await?;
+        Ok(msg)
+    } else {
+        let bytes = {
+            let _timer = DIAG.time_detail(operation);
+            msg.to_network()
+        };
+        send_bytes_to_all(session, bytes).await?;
+        Ok(msg)
+    }
+}
+
 /// Receives the votes from all parties, for all the parallel bcast
 ///
 /// Inputs are:
@@ -294,6 +433,7 @@ async fn internal_process_echos_or_votes<T, B>(
     rcv_tasks: &mut GenericEchoVoteJob<T>,
     map_data: &mut HashMap<(Role, T), HashSet<Role>>,
     non_answering_parties: &mut HashSet<Role>,
+    measure_echo: bool,
 ) -> anyhow::Result<()>
 where
     T: std::fmt::Debug + Eq + std::hash::Hash + Clone + 'static,
@@ -303,13 +443,17 @@ where
     let num_parties = session.num_parties();
     // Receiving Echo or Vote messages one by one
     let mut answering_parties = HashSet::<Role>::new();
-    while let Some(v) = rcv_tasks.join_next().await {
+    while let Some(v) = {
+        let _timer = measure_echo.then(|| DIAG.time_detail("echo_receive_wait"));
+        rcv_tasks.join_next().await
+    } {
         let task_out = v?;
         // if no timeout error then we count it towards casting a vote
         if let Ok((from_party, data)) = task_out {
             answering_parties.insert(from_party);
             //Each message we receive is a Map from Sender Roles to claimed contributions
             if let Ok(rcv_vote_or_echo) = data {
+                let _timer = measure_echo.then(|| DIAG.time_detail("echo_tally"));
                 debug_assert!(rcv_vote_or_echo.len() <= num_parties);
                 // iterate through the echo batched message and check the frequency of each message
                 rcv_vote_or_echo.into_iter().for_each(|(role, m)| {
@@ -354,10 +498,12 @@ async fn process_echos<Z: Ring, B: BaseSessionHandles>(
         echo_recv_tasks,
         &mut echoed_data,
         non_answering_parties,
+        true,
     )
     .await?;
 
     let (registered_vote, map_hash_to_value) = spawn_compute_bound(move || {
+        let _timer = DIAG.time_detail("echo_hash");
         let mut registered_votes = HashMap::new();
         let mut map_hash_to_value = HashMap::new();
         //Any entry with at least N-t times is good for a vote
@@ -437,6 +583,7 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
             &mut vote_recv_tasks,
             registered_votes,
             non_answering_parties,
+            false,
         )
         .await?;
 
@@ -493,12 +640,13 @@ impl Broadcast for SyncReliableBroadcast {
         // Communication round 1
         // Sender parties send the message they intend to broadcast to others
         // The send calls are followed by receive to get the incoming messages from the others
+        let send_timer = DIAG.time_dkg_phase(DkgPhase::BcastSend);
         let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
         match (my_message, is_sender) {
             (Some(my_message), true) => {
                 bcast_data.insert(my_role, my_message.clone());
                 let msg = NetworkValue::Send(my_message);
-                send_to_all(session, &msg).await?;
+                let msg = send_network_value_to_all(session, msg).await?;
                 let msg = match msg {
                     NetworkValue::Send(v) => v,
                     _ => panic!("Bug here, we just wrapped send into Send"),
@@ -514,8 +662,10 @@ impl Broadcast for SyncReliableBroadcast {
                 ));
             }
         }
+        send_timer.finish();
 
         // The error we propagate here is if sender IDs and roles cannot be tied together.
+        let recv_timer = DIAG.time_dkg_phase(DkgPhase::BcastRecv);
         receive_contribution_from_all_senders(
             &mut round1_contributions,
             session,
@@ -523,11 +673,13 @@ impl Broadcast for SyncReliableBroadcast {
             &mut non_answering_parties,
         )
         .await?;
+        recv_timer.finish();
 
         // Communication round 2
         // Parties send Echo to the other parties
+        let echo_timer = DIAG.time_dkg_phase(DkgPhase::BcastEchoWait);
         let to_send = NetworkValue::EchoBatch(round1_contributions);
-        send_to_all(session, &to_send).await?;
+        let to_send = send_network_value_to_all(session, to_send).await?;
         let round1_contributions = match to_send {
             NetworkValue::EchoBatch(v) => v,
             _ => panic!("Bug here, we just wrapped send into EchoBatch"),
@@ -536,18 +688,26 @@ impl Broadcast for SyncReliableBroadcast {
         // Parties receive Echo from others and process them,
         // if there are enough Echo messages then they will cast a vote in subsequent rounds
         // adding own echo to the map
-        let echos_count: HashMap<(Role, BroadcastValue<Z>), HashSet<Role>> = round1_contributions
-            .into_iter()
-            .map(|(k, v)| ((k, v), HashSet::from([my_role])))
-            .collect();
         // receive echos from all parties,
         // updates the echos_count and outputs the values I should vote for
-        let (mut registered_votes, mut map_hash_to_value) =
-            receive_echos_from_all_batched(session, &mut non_answering_parties, echos_count)
-                .await?;
+        let (mut registered_votes, mut map_hash_to_value) = if *BCAST_ECHO_HASH_KEYS {
+            receive_echos_from_all_hashed(session, &mut non_answering_parties, round1_contributions)
+                .await?
+        } else {
+            let tally_timer = DIAG.time_detail("echo_tally");
+            let echos_count: HashMap<(Role, BroadcastValue<Z>), HashSet<Role>> =
+                round1_contributions
+                    .into_iter()
+                    .map(|(k, v)| ((k, v), HashSet::from([my_role])))
+                    .collect();
+            drop(tally_timer);
+            receive_echos_from_all_batched(session, &mut non_answering_parties, echos_count).await?
+        };
+        echo_timer.finish();
 
         // Communication round 3 onward
         // We are only exchanging hashes at this point, so we use the tokio runtime for deserialization
+        let votes_timer = DIAG.time_dkg_phase(DkgPhase::BcastVotes);
         let old_deser_runtime = session.get_deserialization_runtime();
         session.set_deserialization_runtime(DeSerializationRunTime::Tokio);
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
@@ -566,6 +726,7 @@ impl Broadcast for SyncReliableBroadcast {
             &mut non_answering_parties,
         )
         .await?;
+        votes_timer.finish();
         for ((role, hash), hits) in registered_votes.into_iter() {
             if hits.len() >= min_honest_nodes {
                 //Retrieve the actual data from the hash

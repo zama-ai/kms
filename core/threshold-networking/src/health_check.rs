@@ -3,7 +3,7 @@ use crate::grpc::HealthTag;
 use error_utils::anyhow_error_and_log;
 use observability::telemetry::ContextPropagator;
 use rand::RngCore;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use threshold_types::party::Identity;
 use threshold_types::role::RoleTrait;
 use tokio::task::JoinSet;
@@ -32,8 +32,17 @@ pub enum BenchKind {
 }
 
 pub type HealthCheckResult<R> = HashMap<(R, Identity), HealthCheckStatus>;
+/// Maps each peer to acknowledged payload bytes, elapsed time, and every attempted RPC's status.
 pub type BandwidthBenchmarkResult<R> =
     HashMap<(R, Identity), (usize, Duration, Vec<HealthCheckStatus>)>;
+
+fn acknowledged_payload_bytes(payload_size: usize, answers: &[HealthCheckStatus]) -> usize {
+    answers
+        .iter()
+        .filter(|answer| matches!(answer, HealthCheckStatus::Ok(_)))
+        .count()
+        * payload_size
+}
 
 impl<R: RoleTrait> HealthCheckSession<R> {
     pub fn new(
@@ -104,6 +113,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
         Ok(results)
     }
 
+    /// Measures acknowledged payload bytes per peer and retains failed attempts in the returned statuses.
     pub async fn run_bandwidth_benchmark(
         &self,
         payload_size: usize,
@@ -130,6 +140,8 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             let mut rng = rand::thread_rng();
             rng.fill_bytes(&mut payload);
         }
+        // Peers share the retained source buffer. Each protobuf request still owns its payload copy.
+        let payload = Arc::new(payload);
         for ((role, id), client) in self.connection_channels.iter() {
             let (role, id, client, tag_serialized, timeout) = (
                 *role,
@@ -139,9 +151,8 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                 self.timeout,
             );
 
-            let payload = payload.clone();
+            let payload = Arc::clone(&payload);
             join_set.spawn(async move {
-                let mut total_bytes_sent = 0;
                 let start = std::time::Instant::now();
                 let mut answers = Vec::new();
                 match duration {
@@ -152,14 +163,13 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                                 tag_serialized.clone(),
                                 client.clone(),
                                 timeout,
-                                payload.clone(),
+                                payload.as_ref().clone(),
                                 role,
                                 id.clone(),
                             )
                             .await
                             .2,
                         );
-                        total_bytes_sent += payload_size;
                     }
                     BenchKind::Duration(target_duration) => {
                         // For the "duration" kind, we keep sending payloads until the target duration has elapsed.
@@ -169,18 +179,22 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                                     tag_serialized.clone(),
                                     client.clone(),
                                     timeout,
-                                    payload.clone(),
+                                    payload.as_ref().clone(),
                                     role,
                                     id.clone(),
                                 )
                                 .await
                                 .2,
                             );
-                            total_bytes_sent += payload_size;
                         }
                     }
                 }
-                tracing::debug!("Total bytes sent to party {}: {}", id, total_bytes_sent);
+                let total_bytes_sent = acknowledged_payload_bytes(payload_size, &answers);
+                tracing::debug!(
+                    "Acknowledged payload bytes for party {}: {}",
+                    id,
+                    total_bytes_sent
+                );
                 ((role, id), (total_bytes_sent, start.elapsed(), answers))
             });
         }
@@ -210,5 +224,33 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             Err(_e) => HealthCheckStatus::TimeOut(timeout),
         };
         (role, id, response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_goodput_counts_only_successful_rpc_payloads() {
+        let elapsed = Duration::from_millis(5);
+        let answers = [
+            HealthCheckStatus::Ok(elapsed),
+            HealthCheckStatus::Error((elapsed, Status::unavailable("peer unavailable"))),
+            HealthCheckStatus::TimeOut(elapsed),
+            HealthCheckStatus::Ok(elapsed),
+        ];
+        assert_eq!(acknowledged_payload_bytes(8_320_000, &answers), 16_640_000);
+    }
+
+    #[test]
+    fn benchmark_goodput_is_zero_without_successful_rpcs() {
+        let elapsed = Duration::from_secs(1);
+        let answers = [
+            HealthCheckStatus::Error((elapsed, Status::resource_exhausted("queue full"))),
+            HealthCheckStatus::TimeOut(elapsed),
+        ];
+        assert_eq!(acknowledged_payload_bytes(8_320_000, &answers), 0);
+        assert_eq!(acknowledged_payload_bytes(8_320_000, &[]), 0);
     }
 }

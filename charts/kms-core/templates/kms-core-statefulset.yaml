@@ -413,6 +413,11 @@ spec:
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
+            {{- with .Values.kmsCore.extraEnv }}
+            # Extra environment of the kms-core container (non-enclave deployments; an enclave
+            # does not inherit it — use kmsCore.tuning.env there).
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
             {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID

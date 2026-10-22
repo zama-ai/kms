@@ -43,6 +43,56 @@ cfg_if::cfg_if! {
             value
         }
 
+        /// Reads a boolean tuning value from environment variable `name` (`1`/`true`/`yes`/`on`
+        /// or `0`/`false`/`no`/`off`, case-insensitive), falling back to `default` when unset or
+        /// unparseable.
+        fn env_bool(name: &str, default: bool) -> bool {
+            let value = match std::env::var(name) {
+                Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+                    "1" | "true" | "yes" | "on" => true,
+                    "0" | "false" | "no" | "off" => false,
+                    other => {
+                        tracing::warn!(
+                            "Invalid bool value {other:?} for env var {name}; using default {default}"
+                        );
+                        default
+                    }
+                },
+                Err(_) => default,
+            };
+            tracing::info!("Using tuning value {value} from env var {name} ");
+            value
+        }
+
+        // ---- Bench diagnostics and experimental fixes (all default to the current behaviour) ----
+        //
+        // Inside a Nitro enclave the process environment is not inherited from the pod; set these
+        // through the `[tuning.env]` table of the kms-server config instead (the chart renders
+        // `kmsCore.tuning.env` there), which `kms-server` exports into its own environment at
+        // start-up. See `BENCH-DIAGNOSTICS.md`.
+
+        /// Log, per producer session, the cumulative phase timers every this many batches
+        /// (0 = never; the Prometheus series are recorded regardless).
+        /// Env: `MPC_DKG_PHASE_LOG_EVERY` (default 0).
+        pub(crate) static DKG_PHASE_LOG_EVERY: std::sync::LazyLock<usize> =
+            std::sync::LazyLock::new(|| env_usize("MPC_DKG_PHASE_LOG_EVERY", 0));
+        /// Experimental: count the echoes of the reliable broadcast by `BcastHash` instead of by the
+        /// full `BroadcastValue`, so that tallying 13 × 640 KB vectors per peer hashes 32-byte keys
+        /// on the tokio worker and does the SHA-3 of each value once, on rayon.
+        /// Env: `MPC_BCAST_ECHO_HASH_KEYS` (default false).
+        pub(crate) static BCAST_ECHO_HASH_KEYS: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| env_bool("MPC_BCAST_ECHO_HASH_KEYS", false));
+        /// Experimental: serialise the (large) round-1 and echo messages of the reliable broadcast
+        /// on the rayon pool instead of inline on the protocol task (a tokio worker).
+        /// Env: `MPC_SERIALIZE_ON_RAYON` (default false).
+        pub(crate) static SERIALIZE_ON_RAYON: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| env_bool("MPC_SERIALIZE_ON_RAYON", false));
+        /// Experimental: draw the PRSS/PRZS values of the next preprocessing batch on rayon while the
+        /// current batch waits on its network rounds (see `small_execution::offline::PrssPrefetch`).
+        /// Env: `MPC_DKG_PRSS_PIPELINE` (default false).
+        pub(crate) static DKG_PRSS_PIPELINE: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| env_bool("MPC_DKG_PRSS_PIPELINE", false));
+
         /// Amount of triples generated in one batch by the orchestrator.
         /// Env: `MPC_DKG_BATCH_SIZE_TRIPLES` (default 10000).
         pub(crate) static BATCH_SIZE_TRIPLES: std::sync::LazyLock<usize> =

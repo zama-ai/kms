@@ -96,8 +96,9 @@ pub(crate) async fn run_bandwidth_benchmark(
         )
     })?;
 
+    let started = std::time::Instant::now();
     let mut join_set = tokio::task::JoinSet::new();
-    for _ in 0..num_sessions {
+    for index in 0..num_sessions {
         let session = session_maker
             .get_healthcheck_session(&context_id)
             .await
@@ -108,11 +109,47 @@ pub(crate) async fn run_bandwidth_benchmark(
                 ))
             })?;
         join_set.spawn(async move {
-            session
+            let result = session
                 .run_bandwidth_benchmark(payload_size, duration)
-                .await
+                .await;
+            tracing::info!(
+                "Bandwidth benchmark session {}/{} finished after {:.1} s: {}",
+                index + 1,
+                num_sessions,
+                started.elapsed().as_secs_f64(),
+                match &result {
+                    Ok(per_peer) => per_peer
+                        .iter()
+                        .map(|((role, _), (bytes, elapsed, answers))| {
+                            let timeouts = answers
+                                .iter()
+                                .filter(|a| matches!(a, HealthCheckStatus::TimeOut(_)))
+                                .count();
+                            let errors = answers
+                                .iter()
+                                .filter(|a| matches!(a, HealthCheckStatus::Error(_)))
+                                .count();
+                            format!(
+                                "{role}: {:.1} MiB in {:.1} s ({:.1} MiB/s, {} sends, {timeouts} timeouts, {errors} errors)",
+                                *bytes as f64 / 1_048_576.0,
+                                elapsed.as_secs_f64(),
+                                *bytes as f64 / 1_048_576.0 / elapsed.as_secs_f64().max(1e-9),
+                                answers.len(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    Err(e) => format!("error: {e}"),
+                }
+            );
+            result
         });
     }
+    tracing::info!(
+        "Bandwidth benchmark: {num_sessions} sessions created after {:.1} s, sending {payload_size}-byte payloads for {:?}",
+        started.elapsed().as_secs_f64(),
+        duration
+    );
 
     let mut results = HashMap::new();
 
@@ -122,34 +159,52 @@ pub(crate) async fn run_bandwidth_benchmark(
                 Status::internal(format!("Failed to join bandwidth benchmark task: {}", e))
             })?
             .map_err(|e| Status::internal(format!("Bandwidth benchmark task failed: {}", e)))?;
-        for ((role, id), (bytes_sent, duration, status)) in result {
-            let (entry_sent, entry_duration, entry_status) = results
-                .entry((role, id))
-                .or_insert_with(|| (0, vec![], vec![]));
+        for ((role, id), (bytes_sent, _, status)) in result {
+            let (entry_sent, entry_status) =
+                results.entry((role, id)).or_insert_with(|| (0, vec![]));
             entry_sent.add_assign(bytes_sent);
-            entry_duration.push(duration);
             entry_status.extend(status);
         }
     }
 
+    // One interval covers setup and every session, including staggered starts and slow final RPCs.
+    let elapsed = started.elapsed();
+    let mut successes = 0usize;
+    let mut timeouts = 0usize;
+    let mut errors = 0usize;
+    let mut acknowledged_bytes = 0usize;
+    for (bytes, statuses) in results.values() {
+        acknowledged_bytes += bytes;
+        for status in statuses {
+            match status {
+                HealthCheckStatus::Ok(_) => successes += 1,
+                HealthCheckStatus::TimeOut(_) => timeouts += 1,
+                HealthCheckStatus::Error(_) => errors += 1,
+            }
+        }
+    }
+    let status = if successes == 0 {
+        "no-success"
+    } else if timeouts > 0 || errors > 0 {
+        "partial"
+    } else {
+        "complete"
+    };
+    tracing::info!(
+        "Bandwidth benchmark aggregate: status={status} sessions={num_sessions}/{num_sessions} acknowledged_bytes={acknowledged_bytes} attempts={} successes={successes} timeouts={timeouts} errors={errors} elapsed_s={:.6}",
+        successes + timeouts + errors,
+        elapsed.as_secs_f64(),
+    );
+
     let peers_info = results
         .into_iter()
-        .map(|((role, id), (bytes_sent, durations, status))| {
+        .map(|((role, id), (bytes_sent, status))| {
             // Fill up the latency struct
             let latency = make_latency(status)
                 .inspect_err(|e| tracing::warn!("Error computing latency info: {}", e))
                 .ok();
-            let duration = match kind {
-                BandwidthKind::Once => durations
-                    .into_iter()
-                    .map(|d| d.as_secs())
-                    .max()
-                    .unwrap_or(0),
-                BandwidthKind::Duration => {
-                    (durations.iter().sum::<Duration>().as_secs_f64() / durations.len() as f64)
-                        as u64
-                }
-            };
+            // The wire field stores whole seconds. Round up to avoid overstating goodput.
+            let duration = elapsed.as_secs() + u64::from(elapsed.subsec_nanos() != 0);
             PeerBandwidthInfo {
                 peer_id: role.one_based() as u32,
                 endpoint: id.hostname().to_string(),
@@ -166,6 +221,9 @@ pub(crate) async fn run_bandwidth_benchmark(
 }
 
 fn make_latency(status: Vec<HealthCheckStatus>) -> Result<LatencyInfo, String> {
+    if status.is_empty() {
+        return Err("No RPC attempts completed".to_string());
+    }
     let latencies: Vec<u128> = status
         .iter()
         .map(|s| match s {
@@ -204,6 +262,27 @@ fn make_latency(status: Vec<HealthCheckStatus>) -> Result<LatencyInfo, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bandwidth_latency_requires_successful_attempts() {
+        assert!(make_latency(vec![]).is_err());
+        assert!(make_latency(vec![HealthCheckStatus::TimeOut(Duration::from_secs(1))]).is_err());
+        assert!(
+            make_latency(vec![HealthCheckStatus::Error((
+                Duration::from_millis(5),
+                Status::unavailable("peer unavailable"),
+            ))])
+            .is_err()
+        );
+        let latency = make_latency(vec![
+            HealthCheckStatus::Ok(Duration::from_millis(10)),
+            HealthCheckStatus::Ok(Duration::from_millis(30)),
+        ])
+        .unwrap();
+        assert_eq!(latency.average, 20);
+        assert_eq!(latency.fastest, 10);
+        assert_eq!(latency.slowest, 30);
+    }
 
     #[test]
     fn bandwidth_bench_limiter_bounds_concurrency() {

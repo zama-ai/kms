@@ -32,7 +32,7 @@ use std::fmt;
 use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
-use thread_handles::spawn_compute_bound;
+use thread_handles::{ComputeHandle, spawn_compute_bound, spawn_compute_bound_deferred};
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
@@ -73,6 +73,32 @@ pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
         threshold: u8,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>>;
+
+    /// Deferred [`Self::prss_next_vec`]: reserve the counters now and submit the computation to
+    /// the rayon pool, returning a handle to await later (so that the draw of the next batch can
+    /// overlap the network rounds of the current one). `None` means the implementation cannot
+    /// defer and the caller must use [`Self::prss_next_vec`] instead. The counter semantics are
+    /// identical: the `amount` values are the ones the direct call would have returned.
+    async fn prss_next_vec_deferred(
+        &mut self,
+        party_id: Role,
+        amount: usize,
+    ) -> anyhow::Result<Option<ComputeHandle<Vec<Z>>>> {
+        let _ = (party_id, amount);
+        Ok(None)
+    }
+
+    /// Deferred [`Self::przs_next_vec`]; see [`Self::prss_next_vec_deferred`].
+    async fn przs_next_vec_deferred(
+        &mut self,
+        party_id: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Option<ComputeHandle<Vec<Z>>>> {
+        let _ = (party_id, threshold, amount);
+        Ok(None)
+    }
+
     async fn mask_next_vec(
         &mut self,
         party_id: Role,
@@ -853,6 +879,23 @@ where
         Ok(res)
     }
 
+    /// Deferred PRSS.Next(): the counters are reserved up front (the draw is committed once the
+    /// work is submitted), the values arrive through the returned handle.
+    async fn prss_next_vec_deferred(
+        &mut self,
+        party_role: Role,
+        amount: usize,
+    ) -> anyhow::Result<Option<ComputeHandle<Vec<Z>>>> {
+        assert_eq!(party_role, self.prfs.role);
+        let prss_ctr = self.counters.prss_ctr;
+        check_counter_range("psi", prss_ctr, amount as u128, PSI_COUNTER_BITS)?;
+        let prfs = Arc::clone(&self.prfs);
+        let handle =
+            spawn_compute_bound_deferred(move || compute_prss(&prfs, prss_ctr, amount)).await?;
+        self.counters.prss_ctr += amount as u128;
+        Ok(Some(handle))
+    }
+
     /// PRZS.Next() for a single party
     /// `party_id`: The party's role to derive IDs
     /// `t`: The threshold parameter for the session
@@ -891,6 +934,31 @@ where
         self.counters.przs_ctr += amount as u128;
 
         Ok(res)
+    }
+
+    /// Deferred PRZS.Next(); see [`Self::prss_next_vec_deferred`].
+    async fn przs_next_vec_deferred(
+        &mut self,
+        party_role: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Option<ComputeHandle<Vec<Z>>>> {
+        assert_eq!(party_role, self.prfs.role);
+        if self.prfs.alpha_powers.len() <= threshold as usize {
+            return Err(anyhow_error_and_log(format!(
+                "przs.next: missing alpha powers for party {party_role} at threshold {threshold}"
+            )));
+        }
+        let przs_ctr = self.counters.przs_ctr;
+        if threshold > 0 {
+            check_counter_range("chi", przs_ctr, amount as u128, CHI_COUNTER_BITS)?;
+        }
+        let prfs = Arc::clone(&self.prfs);
+        let handle =
+            spawn_compute_bound_deferred(move || compute_przs(&prfs, threshold, przs_ctr, amount))
+                .await?;
+        self.counters.przs_ctr += amount as u128;
+        Ok(Some(handle))
     }
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.

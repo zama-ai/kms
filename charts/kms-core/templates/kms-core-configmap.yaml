@@ -226,6 +226,17 @@ data:
       {{- end }}
     {{- end }}
 
+    {{- if .Values.kmsCore.tuning.env }}
+
+    # Bench diagnostics / experimental knobs: kms-server exports these into its own environment
+    # at start-up, so they reach the MPC crates even inside a Nitro enclave (which does not
+    # inherit the pod environment). See BENCH-DIAGNOSTICS.md.
+    [tuning.env]
+      {{- range $key, $value := .Values.kmsCore.tuning.env }}
+    {{ $key }} = {{ $value | toString | quote }}
+      {{- end }}
+    {{- end }}
+
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
   enclave.json: |
     {

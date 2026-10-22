@@ -212,8 +212,18 @@ pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
 where
     T: AsRef<NetworkValue<Z>>,
 {
-    let my_role = session.my_role();
     let serialized_message = msg.as_ref().to_network()?;
+    send_bytes_to_all(session, serialized_message).await
+}
+
+/// [`send_to_all`] for a message that is already serialised, e.g. on the rayon pool rather than
+/// inline on the protocol task (see `MPC_SERIALIZE_ON_RAYON`). Advances the round counter and
+/// sends the same bytes to every other party.
+pub async fn send_bytes_to_all<B: BaseSessionHandles>(
+    session: &B,
+    serialized_message: bytes::Bytes,
+) -> anyhow::Result<()> {
+    let my_role = session.my_role();
 
     session.network().increase_round_counter().await;
     for other_role in session.roles() {

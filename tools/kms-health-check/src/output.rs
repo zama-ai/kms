@@ -226,6 +226,14 @@ pub fn print_bandwidth_benchmark_text(
     }
     writeln!(output, "Parallel sessions:   {}", num_sessions)?;
     writeln!(output, "Payload per session: {} bytes", payload_size)?;
+    writeln!(
+        output,
+        "Rates count acknowledged payload bytes over the common interval, including setup."
+    )?;
+    writeln!(
+        output,
+        "RPC latency includes payload transfer and service work; it is not network RTT."
+    )?;
 
     for (endpoint, result) in results {
         writeln!(output, "\n{}", "-".repeat(78))?;
@@ -286,6 +294,12 @@ pub fn print_bandwidth_benchmark_text(
             "Summary: total {:.2} MiB in ~{}s, aggregate {:.2} MiB/s",
             total_mib, max_duration_secs, aggregate_mib_per_sec
         )?;
+        if total_bytes_sent == 0 || result.peers_info.iter().any(|peer| peer.latency.is_none()) {
+            writeln!(
+                output,
+                "Incomplete sample: do not interpret this rate as a transport ceiling."
+            )?;
+        }
     }
 
     writeln!(output, "\n{}", "=".repeat(78))?;
@@ -302,9 +316,10 @@ pub fn print_bandwidth_benchmark_text(
 /// parse it with `jq` or `serde_json` directly.
 ///
 /// All MiB values are computed with a 1024 × 1024 divisor (matching the
-/// text formatter). Throughput fields are 0.0 when the relevant duration
-/// is 0 (one-shot mode), since per-second rates are not meaningful in
-/// that case.
+/// text formatter). The rates count acknowledged payload bytes over the common
+/// benchmark interval, including setup. A missing latency or zero acknowledged
+/// bytes prevents interpretation as a complete transport measurement.
+/// Throughput fields are 0.0 when the reported duration is 0.
 pub fn print_bandwidth_benchmark_json(
     duration: u64,
     num_sessions: u32,

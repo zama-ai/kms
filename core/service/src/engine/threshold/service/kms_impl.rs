@@ -649,8 +649,9 @@ where
         .write()
         .await
         .new_server(TlsExtensionGetter::SslConnectInfo);
-    let router = Server::builder()
-        .http2_adaptive_window(Some(true))
+    // HTTP/2 flow-control settings of the core-to-core server (bench knobs, see
+    // `threshold_networking::tuning`; the default is the adaptive window as before).
+    let router = threshold_networking::tuning::apply_h2_server_settings(Server::builder())
         .add_service(networking_server)
         .add_service(threshold_health_service);
 
