@@ -60,11 +60,8 @@ jobs:
         id: generate-test-material
         env:
           # One leaf dir per material set. MATERIAL_SET_NAME encodes the
-          # `--profile`/`--parties` combo so distinct sets (e.g. wasm's
-          # `insecure 4,10`) never share a path or a `ready` flag with this
-          # one. The hash prefix (computed below from the generator-relevant
-          # sources + args) makes a changed generator/crypto produce a fresh
-          # path instead of silently reusing stale material across branches.
+          # `--profile`/`--parties` combo. The hash prefix, computed from the
+          # generator-relevant sources, gives changed code a fresh path.
           MATERIAL_PROFILE: insecure,secure
           MATERIAL_PARTIES: 4,13
           MATERIAL_SET_NAME: insecure_secure_4_13

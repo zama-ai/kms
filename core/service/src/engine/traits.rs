@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 use hashing::DomainSep;
 use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
@@ -50,6 +51,15 @@ pub trait Kms: BaseKms {
     ) -> anyhow::Result<Vec<u8>>;
 }
 
+=======
+use kms_grpc::ContextId;
+use kms_grpc::kms::v1::*;
+use tonic::Request;
+use tonic::Response;
+
+use crate::engine::base::KeyGenMetadata;
+use crate::engine::utils::MetricedError;
+>>>>>>> tore/fix/3237/sign-destruction-calls
 #[tonic::async_trait]
 pub trait ContextManager {
     async fn new_mpc_context(
