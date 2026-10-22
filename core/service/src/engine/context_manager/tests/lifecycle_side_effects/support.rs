@@ -58,13 +58,14 @@ impl TestContextManager {
     pub(super) async fn destroy_mpc_context(
         &self,
         context_id: ContextId,
-    ) -> Result<(), MetricedError> {
-        let request = Request::new(DestroyMpcContextRequest {
-            context_id: Some(context_id.into()),
-        });
+    ) -> Result<Response<DestroyMpcContextResponse>, MetricedError> {
         match self {
-            Self::Centralized(manager) => manager.destroy_mpc_context(request).await,
-            Self::Threshold(manager) => manager.destroy_mpc_context(request).await,
+            Self::Centralized(manager) => {
+                destroy_mpc_context_without_epochs(manager, context_id).await
+            }
+            Self::Threshold(manager) => {
+                destroy_mpc_context_without_epochs(manager, context_id).await
+            }
         }
     }
 
@@ -225,6 +226,27 @@ impl ContextFixture {
 
     pub(super) async fn events(&self) -> Vec<StorageEvent> {
         self.storage.private_storage.lock().await.events().to_vec()
+    }
+
+    /// Check that `response` is a confirmation, signed with the fixture's key, that `context_id`
+    /// no longer exists.
+    pub(super) fn assert_confirms(
+        &self,
+        response: &Response<DestroyMpcContextResponse>,
+        context_id: &ContextId,
+    ) {
+        let client = crate::testing::helpers::client_knowing(
+            &NodeSigningIdentity::ecdsa_only(self.signing_key.clone()),
+            &[SigningSchemeType::Ecdsa256k1],
+        );
+        client
+            .process_destroy_mpc_context_response(
+                response.get_ref(),
+                context_id,
+                &[],
+                &crate::dummy_domain(),
+            )
+            .unwrap();
     }
 }
 

@@ -2112,50 +2112,35 @@ impl<
     }
 
     /// Destroy every epoch associated with `context_id`.
-    /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
+    ///
+    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
+    /// created on this party) is skipped; every epoch is attempted even if an earlier one fails;
+    /// the first deletion error is returned only after all attempts, so a failed run can be
+    /// retried until no shares remain.
     pub(crate) async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
-    ) -> Result<Vec<EpochId>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
 
-    /// Destroy every epoch in `epoch_ids` as part of a context destruction.
-    ///
-    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
-    /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
-    /// fails; the first deletion error is returned only after all attempts, so a failed run can be
-    /// retried until no shares remain.
-    pub(crate) async fn destroy_mpc_epochs(
-        &self,
-        epoch_ids: &[EpochId],
-    ) -> Result<Vec<EpochId>, MetricedError> {
-        let mut destroyed_epochs = Vec::new();
+    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
         let mut first_error: Option<MetricedError> = None;
         for epoch_id in epoch_ids {
-            if !self.session_maker.epoch_exists(epoch_id).await {
-                tracing::info!(
-                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
-                );
-                continue;
-            }
-
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-                continue;
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(e);
             }
-            destroyed_epochs.push(*epoch_id);
         }
 
         match first_error {
             Some(e) => Err(e),
-            None => Ok(destroyed_epochs),
+            None => Ok(()),
         }
     }
 
@@ -3849,8 +3834,8 @@ pub(crate) mod tests {
     }
 
     /// `destroy_epochs_for_context` erases every epoch of the given context, with all of its
-    /// private material, reports them, and leaves the epochs of other contexts intact. A repeated
-    /// call, and a call for a context without epochs, succeed without changing anything.
+    /// private material, and leaves the epochs of other contexts intact. A repeated call, and a
+    /// call for a context without epochs, succeed without changing anything.
     #[tokio::test]
     async fn test_destroy_epochs_for_context() {
         let mut rng = AesRng::seed_from_u64(13);
@@ -3902,14 +3887,10 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        // The destroyed epochs are reported, in any order since they come from a map.
-        let destroyed: std::collections::HashSet<EpochId> = epoch_manager
+        epoch_manager
             .destroy_epochs_for_context(&context_a)
             .await
-            .unwrap()
-            .into_iter()
-            .collect();
-        assert_eq!(destroyed, [epoch_a1, epoch_a2].into_iter().collect());
+            .unwrap();
 
         // Context A's epochs are gone from the session maker, and all of their private data — key
         // shares, CRS, and PRSS, the legacy one included — has been erased from storage.
@@ -3971,22 +3952,15 @@ pub(crate) mod tests {
             vec![epoch_b]
         );
 
-        // A repeated call, and a call for a context without epochs, are successful no-ops that
-        // report no epochs.
-        assert!(
-            epoch_manager
-                .destroy_epochs_for_context(&context_a)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            epoch_manager
-                .destroy_epochs_for_context(&ContextId::new_random(&mut rng))
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        // A repeated call, and a call for a context without epochs, are successful no-ops.
+        epoch_manager
+            .destroy_epochs_for_context(&context_a)
+            .await
+            .unwrap();
+        epoch_manager
+            .destroy_epochs_for_context(&ContextId::new_random(&mut rng))
+            .await
+            .unwrap();
         assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
         assert!(
             epoch_manager
