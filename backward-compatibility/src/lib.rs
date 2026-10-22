@@ -1148,6 +1148,30 @@ impl TestType for StoredTypedSignatureTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NewMpcContextSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    pub previous_context_id: [u8; 32],
+    pub new_context_id: [u8; 32],
+    pub node_config_hash: [u8; 32],
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for NewMpcContextSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "NewMpcContextSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrepKeygenSignedPayloadTest {
     pub test_filename: Cow<'static, str>,
     /// Seed for the RNG that produces the deterministic `prep_id`. The generator
@@ -1382,6 +1406,7 @@ pub enum TestMetadataKMS {
     TransferableCustodianRecoveryOutput(TransferableCustodianRecoveryOutputTest),
     OperatorBackupOutput(OperatorBackupOutputTest),
     StoredTypedSignature(StoredTypedSignatureTest),
+    NewMpcContextSignedPayload(NewMpcContextSignedPayloadTest),
     PrepKeygenSignedPayload(PrepKeygenSignedPayloadTest),
     KeygenSignedPayload(KeygenSignedPayloadTest),
     CrsSignedPayload(CrsSignedPayloadTest),

@@ -1589,7 +1589,6 @@ mod tests {
         identifiers::ContextId,
         kms::v1::{
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
-            NewMpcContextRequest,
         },
         rpc_types::{KMSType, PrivDataType},
     };
