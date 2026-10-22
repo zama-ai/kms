@@ -296,17 +296,19 @@ This party's own peersList entry, as JSON ("{}" when absent).
 {{- end -}}
 
 {{/*
-Public vault folder of this party, for its TLS certificate and key.
-Fails if its peersList entry sets a prefix other than publicVault.s3.prefix,
-because the core writes to publicVault.s3.prefix while peers read the entry.
+Public vault folder of this party, for its TLS certificate and key:
+publicVault.s3.prefix, else PUB-p<id>. Fails if its peersList entry sets
+another prefix, because the core storage and the vault config use only
+publicVault.s3.prefix while peers and clients read the entry.
 */}}
 {{- define "kmsOwnPrefix" -}}
 {{- $own := include "kmsOwnPeer" . | fromJson -}}
-{{- $publicPrefix := .Values.kmsCore.publicVault.s3.prefix -}}
-{{- if and $own.prefix $publicPrefix (ne $own.prefix $publicPrefix) -}}
-{{- fail (printf "peersList entry %d has prefix %q but kmsCore.publicVault.s3.prefix is %q; they must match" (include "kmsPeersStartID" . | int) $own.prefix $publicPrefix) -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $prefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $ownID) -}}
+{{- if and $own.prefix (ne $own.prefix $prefix) -}}
+{{- fail (printf "peersList entry %d has prefix %q but this party's public vault folder is %q; set kmsCore.publicVault.s3.prefix to %q" $ownID $own.prefix $prefix $own.prefix) -}}
 {{- end -}}
-{{- $own.prefix | default $publicPrefix | default (printf "PUB-p%d" (include "kmsPeersStartID" . | int)) -}}
+{{- $prefix -}}
 {{- end -}}
 
 {{/*

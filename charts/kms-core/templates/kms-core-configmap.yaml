@@ -80,6 +80,7 @@ data:
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
       {{- include "kmsCheckPeerName" . }}
+      {{- $_ := include "kmsOwnPrefix" . }}
       {{- if .Values.kmsPeers.name }}
     tls_subject = {{ .Values.kmsPeers.name | quote }}
       {{- else if .Values.kmsCore.addressOverride }}

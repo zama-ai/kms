@@ -68,13 +68,12 @@ An empty `peersList` already means "generate peers `1..kmsPeers.count`", which r
 
 ## Public vault folder and TLS subject of a party
 
-The TLS certificate and key of party `<id>` live in the public vault under one folder. The chart resolves it in this order:
+The TLS certificate and key of party `<id>` live in the public vault under one folder. The same folder is used to upload this party's certificate, to fetch its key and CA at boot, and by clients and key generation.
 
-1. The `prefix` of the party's `peersList` entry.
-2. For this party only, `kmsCore.publicVault.s3.prefix`.
-3. `PUB-p<id>`.
+- For this party: `kmsCore.publicVault.s3.prefix`, else `PUB-p<id>`.
+- For another party: the `prefix` of its `peersList` entry, else `PUB-p<id>`.
 
-The same folder is used to upload this party's certificate, to fetch its key and CA at boot, and by clients and key generation. If this party's own `peersList` entry sets a `prefix`, it must equal `kmsCore.publicVault.s3.prefix` (when set): the core writes there, and peers read the entry.
+The core's vault configuration uses only `kmsCore.publicVault.s3.prefix`. If this party's own `peersList` entry sets a `prefix`, it must equal this party's folder, so set `kmsCore.publicVault.s3.prefix` to the same value. The chart fails to render otherwise.
 
 `kmsPeers.name`, when set, is the TLS subject and the certificate name. It must equal the `host` of this party's `peersList` entry, because peers check the certificate against that host. The chart fails to render if they differ.
 
