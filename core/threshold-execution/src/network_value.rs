@@ -115,7 +115,7 @@ pub enum AgreeRandomValue {
 /// `Round1VSS` and `CompressedXofKeySet`.
 /// Otherwise we will have issues when performing a rolling upgrade.
 ///
-/// The test variants are `PubKeySet`, `Crs`, `DecompressionKey`,
+/// The test variants `PubKeySet`, `Crs`, `DecompressionKey`,
 /// `SnsCompressionKey` and `CompressedXofKeySet` exist in every build, so that
 /// testing and production builds use the same variant indices. Only a testing
 /// build may send or receive them.
