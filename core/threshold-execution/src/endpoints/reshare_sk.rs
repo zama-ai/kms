@@ -1,7 +1,9 @@
 use crate::{
     communication::broadcast::SyncReliableBroadcast,
     config::BatchParams,
-    endpoints::reshare_input_validation::{ComponentSizes, check_batch_lens, check_input_keyset},
+    endpoints::reshare_input_validation::{
+        ComponentSizes, check_batch_lens, check_input_keyset, check_output_len,
+    },
     online::{
         preprocessing::{BasePreprocessing, memory::InMemoryBasePreprocessing},
         reshare::{
@@ -76,56 +78,18 @@ impl ResharePreprocRequired {
         parameters: DKGParams,
         dedicated_keys: DedicatedOprfKeysPresent,
     ) -> Self {
-        let mut num_randoms_128 = 0;
-        let mut num_randoms_64 = 0;
-
-        match parameters.dkg_mode() {
-            DkgMode::Z64 => {
-                num_randoms_64 += parameters.lwe_hat_dimension().0;
-                num_randoms_64 += parameters.lwe_dimension().0;
-                if dedicated_keys.oprf {
-                    num_randoms_64 += parameters.lwe_dimension().0;
-                }
-                if dedicated_keys.transciphering {
-                    num_randoms_64 += parameters
-                        .transciphering_lwe_dimension()
-                        .expect("transciphering key requires transciphering parameters")
-                        .0;
-                }
-                num_randoms_64 +=
-                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits()
-            }
-            DkgMode::Z128 => {
-                num_randoms_128 += parameters.lwe_hat_dimension().0;
-                num_randoms_128 += parameters.lwe_dimension().0;
-                if dedicated_keys.oprf {
-                    num_randoms_128 += parameters.lwe_dimension().0;
-                }
-                if dedicated_keys.transciphering {
-                    num_randoms_128 += parameters
-                        .transciphering_lwe_dimension()
-                        .expect("transciphering key requires transciphering parameters")
-                        .0;
-                }
-                num_randoms_128 +=
-                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits();
-                if let Some(p) = parameters.sns() {
-                    num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
-                }
-            }
-        }
-
-        num_randoms_128 *= num_parties_reshare_from;
-        num_randoms_64 *= num_parties_reshare_from;
+        let sizes = ComponentSizes::new(parameters, dedicated_keys)
+            .expect("transciphering key requires transciphering parameters");
+        let (total128, total64) = sizes.ring_totals(parameters.dkg_mode());
 
         ResharePreprocRequired {
             batch_params_128: BatchParams {
                 triples: 0,
-                randoms: num_randoms_128,
+                randoms: total128 * num_parties_reshare_from,
             },
             batch_params_64: BatchParams {
                 triples: 0,
-                randoms: num_randoms_64,
+                randoms: total64 * num_parties_reshare_from,
             },
         }
     }
@@ -671,22 +635,7 @@ where
     }
 
     // Total shares per ring (from the sizes, so it is correct for Set 2 too).
-    let dkg_ring_total = lwe_compute_size
-        + lwe_encryption_size
-        + oprf_size.unwrap_or(0)
-        + transciphering_size.unwrap_or(0)
-        + glwe_size
-        + compression_size.unwrap_or(0);
-    let (total128, total64) = match dkg_mode {
-        DkgMode::Z64 => (
-            sns_size.unwrap_or(0) + sns_compression_size.unwrap_or(0),
-            dkg_ring_total,
-        ),
-        DkgMode::Z128 => (
-            sns_size.unwrap_or(0) + sns_compression_size.unwrap_or(0) + dkg_ring_total,
-            0,
-        ),
-    };
+    let (total128, total64) = sizes.ring_totals(dkg_mode);
 
     if has_input {
         check_batch_lens(&mut batch128, total128, &mut batch64, total64)?;
@@ -719,6 +668,9 @@ where
     } else {
         None
     };
+
+    check_output_len("Z128", out128.as_deref(), total128)?;
+    check_output_len("Z64", out64.as_deref(), total64)?;
 
     // Split the reshared output back apart, in the same order it was concatenated.
     // 1. GLWE SnS key.

@@ -1,4 +1,4 @@
-//! Validation of the input keyset of a secret key reshare.
+//! Sizing and validation of the shares in a secret key reshare.
 
 use crate::{
     endpoints::reshare_sk::DedicatedOprfKeysPresent,
@@ -66,11 +66,28 @@ impl ComponentSizes {
             }),
         })
     }
+
+    /// Returns the total share count per ring as `(z128, z64)`. The SnS
+    /// components are always Z128, and the other components are in the ring
+    /// of `dkg_mode`.
+    pub(super) fn ring_totals(&self, dkg_mode: DkgMode) -> (usize, usize) {
+        let sns_total = self.sns.unwrap_or(0) + self.sns_compression.unwrap_or(0);
+        let dkg_ring_total = self.lwe_compute
+            + self.lwe_encryption
+            + self.oprf.unwrap_or(0)
+            + self.transciphering.unwrap_or(0)
+            + self.glwe
+            + self.compression.unwrap_or(0);
+        match dkg_mode {
+            DkgMode::Z64 => (sns_total, dkg_ring_total),
+            DkgMode::Z128 => (sns_total + dkg_ring_total, 0),
+        }
+    }
 }
 
 /// Checks that `keyset` holds exactly the components in `sizes`, each in the
 /// ring of the DKG mode and with the expected share count. Also checks that the
-/// stored GLWE and compression metadata match `parameters`, because the
+/// stored PBS, GLWE and compression metadata match `parameters`, because the
 /// reshared keyset takes this metadata from `parameters`.
 ///
 /// The reshare concatenates the components into one batch per ring and splits
@@ -82,6 +99,14 @@ pub(super) fn check_input_keyset<const EXTENSION_DEGREE: usize>(
     parameters: DKGParams,
     sizes: &ComponentSizes,
 ) -> anyhow::Result<()> {
+    if keyset.parameters != parameters.classic_pbs() {
+        return Err(anyhow_error_and_log(format!(
+            "Reshare input keyset has PBS parameters {:?}, expected {:?}",
+            keyset.parameters,
+            parameters.classic_pbs()
+        )));
+    }
+
     let dkg_mode = parameters.dkg_mode();
     let lwe_len =
         |component: &str, key: &LweSecretKeyShareEnum<EXTENSION_DEGREE>| match (key, dkg_mode) {
@@ -239,6 +264,23 @@ pub(super) fn check_batch_lens<const EXTENSION_DEGREE: usize>(
     Err(err)
 }
 
+/// Checks that a reshared batch holds `expected` shares, because the split of
+/// the batch by component sizes must use every share. `output` is `None` for a
+/// party without output.
+pub(super) fn check_output_len<T>(
+    ring: &str,
+    output: Option<&[T]>,
+    expected: usize,
+) -> anyhow::Result<()> {
+    match output {
+        Some(output) if output.len() != expected => Err(anyhow_error_and_log(format!(
+            "Reshare output has {} {ring} shares, expected {expected}",
+            output.len()
+        ))),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +388,11 @@ mod tests {
     #[test]
     fn check_input_keyset_rejects_wrong_metadata() {
         let (mut keyset, sizes) = valid_reshare_input();
+        keyset.parameters.ks_level.0 += 1;
+        let err = check_input_keyset(&keyset, PARAMS_TEST_RESHARE, &sizes).unwrap_err();
+        assert!(err.to_string().contains("PBS parameters"), "{err}");
+
+        let (mut keyset, sizes) = valid_reshare_input();
         keyset
             .glwe_secret_key_share
             .try_cast_mut_to_z128()
@@ -399,5 +446,14 @@ mod tests {
         check_batch_lens(&mut batch128, 3, &mut batch64, 1).unwrap_err();
         assert!(batch128.is_empty());
         assert!(batch64.is_empty());
+    }
+
+    #[test]
+    fn check_output_len_rejects_wrong_len() {
+        let output = [0u8; 3];
+        check_output_len("Z128", Some(&output[..]), 3).unwrap();
+        check_output_len::<u8>("Z128", None, 3).unwrap();
+        let err = check_output_len("Z128", Some(&output[..]), 4).unwrap_err();
+        assert!(err.to_string().contains("Z128"), "{err}");
     }
 }
