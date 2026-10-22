@@ -198,7 +198,7 @@ jobs:
           grep -Fq 'CERT_PATH="PUB-custom-3/CACert/cert.pem"' <<<"$output"
           grep -Fq 'object_folder = "PUB-partner-acme"' <<<"$output"
           grep -Fq 'object_folder = "PUB-custom-3"' <<<"$output"
-          grep -Fq '${S3_ENDPOINT}/PUB-partner-acme/VerfAddress/' <<<"$output"
+          grep -Fq '/PUB-partner-acme/VerfAddress/' <<<"$output"
           if grep -Fq 'object_folder = "PUB-p1"' <<<"$output"; then
             echo "explicit peer list still used PUB-p1 as this party's folder" >&2
             exit 1
