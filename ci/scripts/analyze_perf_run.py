@@ -103,7 +103,7 @@ def parse_labels(raw: str | None) -> dict[str, str]:
         return {}
     return {
         match.group(1): match.group(2)
-        for match in re.finditer(r'(\w+)="((?:\\.|[^"])*)"', raw)
+        for match in re.finditer(r'(\w+)="((?:\\.|[^"\\])*)"', raw)
     }
 
 
