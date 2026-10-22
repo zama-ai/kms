@@ -66,10 +66,6 @@ where
     fn mul_by_u128(self, other: u128) -> Self {
         self * Self::from_u128(other)
     }
-
-    fn is_zero(&self) -> bool {
-        *self == Self::ZERO
-    }
 }
 
 pub trait FromU128 {
@@ -166,13 +162,6 @@ pub trait ErrorCorrect: RingWithExceptionalSequence {
         _hints: &ReconstructionHints<Self>,
     ) -> anyhow::Result<Poly<Self>> {
         Self::error_correct(sharing, degree, max_errors)
-    }
-
-    /// The inverse of a unit of the ring, when the ring offers one. The optimistic reconstruction
-    /// ([`crate::sharing::optimistic`]) needs it for its Lagrange constants and is skipped for rings that
-    /// return `None` (the default).
-    fn invert_unit(_value: Self) -> Option<Self> {
-        None
     }
 }
 
