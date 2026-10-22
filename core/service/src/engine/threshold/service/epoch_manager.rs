@@ -1905,29 +1905,6 @@ impl<
                 .boxed(),
         })
     }
-<<<<<<< HEAD
-
-    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
-        let mut first_error: Option<MetricedError> = None;
-        for epoch_id in epoch_ids {
-            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
-            // caller learns that some shares may remain and can retry. Later failures are logged via their own
-            // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
-                && first_error.is_none()
-            {
-                first_error = Some(e);
-            }
-        }
-
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-}
-=======
->>>>>>> tore/fix/3237/sign-destruction-calls
 
     pub(crate) async fn new_mpc_epoch(
         &self,
@@ -2135,7 +2112,11 @@ impl<
     }
 
     /// Destroy every epoch associated with `context_id`.
-    /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
+    ///
+    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
+    /// created on this party) is skipped; every epoch is attempted even if an earlier one fails;
+    /// the first deletion error is returned only after all attempts, so a failed run can be
+    /// retried until no shares remain.
     pub(crate) async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
@@ -2144,49 +2125,26 @@ impl<
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
 
-<<<<<<< HEAD
-    async fn get_epoch_result(
-=======
-    /// Destroy every epoch in `epoch_ids` as part of a context destruction.
-    ///
-    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
-    /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
-    /// fails; the first deletion error is returned only after all attempts, so a failed run can be
-    /// retried until no shares remain.
-    pub(crate) async fn destroy_mpc_epochs(
-        &self,
-        epoch_ids: &[EpochId],
-    ) -> Result<Vec<EpochId>, MetricedError> {
-        let mut destroyed_epochs = Vec::new();
+    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
         let mut first_error: Option<MetricedError> = None;
         for epoch_id in epoch_ids {
-            if !self.session_maker.epoch_exists(epoch_id).await {
-                tracing::info!(
-                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
-                );
-                continue;
-            }
-
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-                continue;
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(e);
             }
-            destroyed_epochs.push(*epoch_id);
         }
 
         match first_error {
             Some(e) => Err(e),
-            None => Ok(destroyed_epochs),
+            None => Ok(()),
         }
     }
 
     pub(crate) async fn get_epoch_result(
->>>>>>> tore/fix/3237/sign-destruction-calls
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<EpochResultResponse>, MetricedError> {
