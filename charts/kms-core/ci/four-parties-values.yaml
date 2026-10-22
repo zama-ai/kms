@@ -1,0 +1,18 @@
+# Lint and test fixture: a 4-party network (thresholdValue 1). Each release runs one
+# party, so the chart needs the whole network in peersList to render.
+kmsCore:
+  thresholdMode:
+    thresholdValue: 1
+    peersList:
+      - id: 1
+        host: kms-core-1
+        port: 50001
+      - id: 2
+        host: kms-core-2
+        port: 50001
+      - id: 3
+        host: kms-core-3
+        port: 50001
+      - id: 4
+        host: kms-core-4
+        port: 50001

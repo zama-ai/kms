@@ -55,16 +55,7 @@ Version 0.16 removes the centralized KMS mode. Every node runs as a party of a t
 
 ### Helm chart
 
-The chart deploys threshold networks only. Rendering fails if `kmsCore.thresholdMode.enabled` is `false`.
-
-The chart defaults changed:
-
-| Setting | Old default | New default |
-| --- | --- | --- |
-| `kmsPeers.count` | `1` | `4` |
-| `kmsCore.thresholdMode.thresholdValue` | `4` | `1` |
-
-The new defaults describe one release that runs all 4 parties. If your release relies on the old defaults, set `kmsPeers.count: 1` and `kmsCore.thresholdMode.thresholdValue: 4` explicitly. Rendering fails if the number of parties is not `3 * thresholdValue + 1`.
+The chart deploys threshold networks only. `kmsCore.thresholdMode.enabled` defaults to `true`, and rendering fails if it is `false`.
 
 ### core-client configuration
 
