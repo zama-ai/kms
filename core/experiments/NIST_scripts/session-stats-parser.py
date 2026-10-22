@@ -234,7 +234,6 @@ class MetricLine:
     num_sessions: int
     num_rounds: int
     network_sent: int
-    network_received: int
     time_active: int
     # ``peak_mem(B)`` is only emitted when the party binary was compiled with
     # the ``measure_memory`` feature. ``None`` on lines from non-mem runs.
@@ -257,7 +256,6 @@ def parse_metric_line(raw_line: str) -> MetricLine:
             num_sessions=int(fields["num_sessions"]),
             num_rounds=int(fields["num_rounds"]),
             network_sent=int(fields["network_sent(B)"]),
-            network_received=int(fields["network_received(B)"]),
             time_active=int(fields["time_active(ms)"]),
             peak_mem_B=int(peak_mem_raw) if peak_mem_raw is not None else None,
         )
@@ -295,8 +293,8 @@ def parse_session_stats_file(path: str) -> List[MetricLine]:
 class AggregatedOperation:
     """Cross-party averaged metrics for one operation in one run.
 
-    ``avg_time_active_ms``, ``avg_num_rounds``, ``avg_network_sent_B`` and
-    ``avg_network_received_B`` are divided by ``num_ctxts_for_label(label)``,
+    ``avg_time_active_ms``, ``avg_num_rounds`` and ``avg_network_sent_B``
+    are divided by ``num_ctxts_for_label(label)``,
     so they are per-ciphertext for DDEC / PREPROC labels (divisor =
     ``bp.num_ctxts``) and per-operation for everything else (divisor = 1).
 
@@ -311,7 +309,6 @@ class AggregatedOperation:
     avg_num_sessions: float
     avg_num_rounds: int
     avg_network_sent_B: float
-    avg_network_received_B: float
     avg_time_active_ms: float
     max_peak_mem_B: Optional[float] = None
     avg_peak_mem_B: Optional[float] = None
@@ -474,20 +471,10 @@ def aggregate_run(
             )
 
         net_sent_values = [ml.network_sent for ml in op_lines]
-        net_recv_values = [ml.network_received for ml in op_lines]
         time_values = [ml.time_active for ml in op_lines]
-
-        for path, ml in zip(party_files, op_lines):
-            if ml.network_sent != ml.network_received:
-                logger.warning(
-                    "Run %s op %s in %s: network_sent != network_received: sent=%s, recv=%s",
-                    bp.experiment_name, label, path,
-                    ml.network_sent, ml.network_received,
-                )
 
         for metric, vals in (
             ("network_sent(B)", net_sent_values),
-            ("network_received(B)", net_recv_values),
             ("time_active(ms)", time_values),
         ):
             _warn_if_large_spread(bp.experiment_name, label, metric, vals, spread_threshold)
@@ -518,7 +505,6 @@ def aggregate_run(
                 # cells integer for offline and online alike.
                 avg_num_rounds=int(round(_average(num_rounds_values) / num_ctxts)),
                 avg_network_sent_B=_average(net_sent_values) / num_ctxts,
-                avg_network_received_B=_average(net_recv_values) / num_ctxts,
                 avg_time_active_ms=_average(time_values) / num_ctxts,
                 # Peak memory is intentionally NOT divided.
                 max_peak_mem_B=max_peak_mem_B,
@@ -663,7 +649,6 @@ CRS_HEADERS = [
     "avg_latency_ms",
     "rounds",
     "avg_bytes_sent_per_party",
-    "avg_bytes_received_per_party",
     "max_memory_kBytes",
 ] + META_HEADERS
 
@@ -675,13 +660,11 @@ TWO_PHASE_HEADERS = [
     "offline_avg_latency_ms",
     "offline_rounds",
     "offline_avg_bytes_sent_per_party",
-    "offline_avg_bytes_received_per_party",
     "offline_max_memory_kBytes",
     "offline_avg_mem_kBytes",
     "online_avg_latency_ms",
     "online_rounds",
     "online_avg_bytes_sent_per_party",
-    "online_avg_bytes_received_per_party",
     "online_max_memory_kBytes",
     "online_avg_mem_kBytes",
 ] + META_HEADERS
@@ -699,9 +682,7 @@ TDEC_HEADERS = [
     "offline_rounds",
     "online_rounds",
     "offline_avg_bytes_sent_per_party",
-    "offline_avg_bytes_received_per_party",
     "online_avg_bytes_sent_per_party",
-    "online_avg_bytes_received_per_party",
     "offline_max_memory_kBytes",
     "online_max_memory_kBytes",
 ] + META_HEADERS
@@ -717,7 +698,6 @@ BGV_TDEC_HEADERS = [
     "throughput_per_sec",
     "rounds",
     "avg_bytes_sent_per_party",
-    "avg_bytes_received_per_party",
     "max_memory_kBytes",
     "avg_mem_kBytes",
 ] + META_HEADERS
@@ -757,13 +737,11 @@ def _two_phase_row(
         preproc.avg_time_active_ms if offline_present else -1,
         preproc.avg_num_rounds if offline_present else -1,
         preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
         offline_max_mem if offline_present else -1,
         offline_avg_mem if offline_present else -1,
         online.avg_time_active_ms,
         online.avg_num_rounds,
         online.avg_network_sent_B,
-        online.avg_network_received_B,
         online_max_mem,
         online_avg_mem,
     ] + _meta_cells(bp)
@@ -786,7 +764,6 @@ def _tdec_one_row(
     online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
     online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
     online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
-    online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
     ddec_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_run)
     if offline_max_mem == -1 and ddec_max_mem == -1:
@@ -804,9 +781,7 @@ def _tdec_one_row(
         preproc.avg_num_rounds if offline_present else -1,
         online_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
         online_bytes_sent,
-        online_bytes_received,
         offline_max_mem if offline_present else -1,
         online_max_mem,
     ] + _meta_cells(bp)
@@ -838,9 +813,7 @@ def _tdec_two_row(
         preproc.avg_num_rounds if offline_present else -1,
         ddec.avg_num_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
         ddec.avg_network_sent_B,
-        ddec.avg_network_received_B,
         offline_max_mem if offline_present else -1,
         online_max_mem,
     ] + _meta_cells(bp)
@@ -899,7 +872,6 @@ def _emit_rows(
                         crs_op.avg_time_active_ms,
                         crs_op.avg_num_rounds,
                         crs_op.avg_network_sent_B,
-                        crs_op.avg_network_received_B,
                         crs_max_mem,
                     ] + _meta_cells(bp))
 
@@ -968,7 +940,6 @@ def _emit_rows(
                     throughput,
                     ddec.avg_num_rounds,
                     ddec.avg_network_sent_B,
-                    ddec.avg_network_received_B,
                     max_mem,
                     avg_mem,
                 ] + _meta_cells(bp))
