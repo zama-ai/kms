@@ -16,6 +16,8 @@ The treatment also has a benchmark switch, `MPC_OPTIMISTIC_RECONSTRUCTION`.
 Its default is `1`. Setting it to `0` uses the decoder through the same instrumented batch code.
 Use this same-binary comparison first. It controls compilation, placement, and instrumentation differences.
 The decoder-baseline image provides a separate cross-check; it is not identical to the runtime-disabled treatment.
+The runtime-disabled treatment retains optimistic hint preparation and the commits' scheduling changes.
+Its result isolates dispatch and reconstruction cost; use the baseline image to measure the complete commits' net effect.
 
 ## 1. Validate the tooling before deployment
 
@@ -23,17 +25,15 @@ From the repository root:
 
 ```bash
 bash ci/perf-testing/check-bench-tooling.sh
+bash ci/perf-testing/check-bench-rust.sh
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test -p observability -p thread-handles --lib
-cargo test -p threshold-networking connection_selection_rotates_independently_for_twelve_peers
-cargo test -p threshold-networking benchmark_goodput
-cargo test -p kms bandwidth_latency_requires_successful_attempts
-cargo test -p threshold-algebra optimistic
-cargo test -p threshold-execution --features testing reconstruct_batch
-MPC_OPTIMISTIC_RECONSTRUCTION=0 cargo test -p threshold-execution --features testing reconstruct_batch
 ```
+
+`check-bench-tooling.sh` runs local regression fixtures, including a mocked Kubernetes lifecycle.
+`check-bench-rust.sh` runs the focused Rust checks and experimental-path protocol tests below with bounded parallelism.
+Use the commands inside the Rust checker to rerun an individual failure; workspace-wide Clippy remains a separate check.
 
 Run the relevant honest, corrupt-share, and dropout protocol tests before accepting an optimization.
 In particular, PRSS pipelining and hashed echo tallying remain separate experiments:
@@ -46,6 +46,8 @@ MPC_SERIALIZE_ON_RAYON=1 cargo test -p threshold-execution --features testing br
 
 Use bounded build parallelism on machines with restricted process limits.
 For example, `CARGO_BUILD_JOBS=2` limits concurrent compiler processes.
+The Rust checks also require `protoc`; set `PROTOC` to its executable when it is not on `PATH`.
+The repository's pinned Rust toolchain needs its `rustfmt` and `clippy` components installed.
 Never use local test CPU limits as the cluster benchmark configuration.
 The validation report at the end of this file distinguishes checks executed here from cluster work.
 
@@ -80,6 +82,7 @@ Old images without the startup marker cannot use this strict runner; treat histo
 The default run lasts 1800 seconds, including a 180-second warmup.
 The analyzer measures throughput and CPU over the remaining common interval.
 Each party uses its first and last successful scrapes inside that interval; their exact bounds appear in the summary.
+Endpoint gaps and gaps between scrapes must stay within the greater of 30 seconds or three configured scrape intervals.
 Use a longer interval if it contains too few complete production waves.
 All thirteen parties must provide metrics before the workload starts.
 
@@ -192,6 +195,9 @@ Twelve sessions mean twelve concurrent RPC streams per peer, usually on one conn
 These shapes measure application goodput under all-to-all load. They do not measure isolated TCP RTT.
 
 Use only complete aggregate records with acknowledged payload bytes and zero errors/timeouts.
+The benchmark response keeps its protobuf fields but changes their measurement semantics:
+`bytes_sent` excludes failed attempts, and `duration` covers the common host interval rounded up to seconds.
+Update downstream benchmark consumers before comparing these responses with older results.
 The aggregate interval covers session setup through final completion on each host.
 It is conservative and has no shared start barrier across hosts.
 The benchmark shares retained payload buffers, but each protobuf request still copies its payload.
@@ -207,6 +213,8 @@ Timeouts alone do not prove packet loss, and zero drops do not exclude a vsock c
 
 Keep the environment fixed while changing one build or code factor.
 Use recorded artifact digests instead of assuming that rebuilding an old SHA recreates its old image.
+Unset `REFERENCE_FLEET` before changing images, because it deliberately rejects changed image identities.
+Establish a new reference within each image while preserving placement and build controls across image comparisons.
 Record compiler, Cargo.lock, build profile, CPU target, golden image, guest kernel, and tunnel identity.
 Treat an old full stack as a reproduction check, not a causal attribution to the environment.
 Normalize progress by completed items and preserve the workload totals.
@@ -230,6 +238,7 @@ A producer reaching 100% does not by itself prove that final aggregation and sto
 Retain the request ID and client result for correctness verification.
 
 Each run keeps a manifest, start/end fleet inventories, logs, raw metrics, and per-run summaries.
+These captures include complete configurations and logs; keep them private and do not commit or publish raw artifacts.
 Measurement closes before cleanup restarts the cores.
 An interrupted run, counter reset, failed collector, or changed fleet is invalid for controlled comparison.
 Historical captures without measurement boundaries remain exploratory.

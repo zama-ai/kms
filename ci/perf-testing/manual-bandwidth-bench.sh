@@ -4,6 +4,7 @@
 # add HTTP/2 streams rather than TCP connections. RPC latency is not network RTT.
 # A shape is valid only when all parties complete without errors or timeouts.
 set -Eeuo pipefail
+umask 077
 NS="${NS:?set NS=<namespace>}"
 [[ "$NS" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "invalid namespace" >&2; exit 1; }
 RUNS_DIR="${RUNS_DIR:-$HOME/Code/ai/DkgDdecBench/runs}"
@@ -34,6 +35,7 @@ LOCK_DIR="$RUNS_DIR/.namespace-$NS.lock"
 mkdir "$LOCK_DIR" || die "another local experiment holds $LOCK_DIR"
 mkdir -p "$OUT_DIR"
 BENCH_ACTIVE=0
+CURRENT_DIRECTORY=""
 STATEFULSETS=""
 cleanup_rollout() {
   local sts
@@ -43,11 +45,28 @@ cleanup_rollout() {
 finish() {
   local rc="$?"
   trap - EXIT INT TERM
+  set +e
   if [ "$BENCH_ACTIVE" = 1 ]; then
     if ! cleanup_rollout > "$OUT_DIR/cleanup-rollout.log" 2>&1; then
       echo "ERROR: cleanup rollout failed; benchmark work may remain active" >&2
       rc=1
     fi
+  fi
+  if [ "$rc" -ne 0 ] && [ -n "$CURRENT_DIRECTORY" ]; then
+    python3 - "$CURRENT_DIRECTORY/summary.json" "$rc" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    summary = json.loads(path.read_text())
+except (OSError, ValueError):
+    summary = {}
+summary["status"] = "invalid"
+summary["invalid_reason"] = "bandwidth lifecycle or collection failed (exit " + sys.argv[2] + ")"
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+temporary.replace(path)
+PY
   fi
   rmdir "$LOCK_DIR" || true
   exit "$rc"
@@ -118,6 +137,8 @@ for shape in $SHAPES; do
   IFS=: read -r n p d <<< "$shape"
   directory="$OUT_DIR/n$n-p$p-d$d"
   [ ! -e "$directory" ] || die "duplicate benchmark shape: $shape"
+  mkdir -p "$directory"
+  CURRENT_DIRECTORY="$directory"
   capture_pods "$directory/start" "$OUT_DIR/start/fleet.json"
   since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   say "$n sessions per party, $p-byte requests, $d seconds; every session contacts every peer"
@@ -140,6 +161,7 @@ for shape in $SHAPES; do
   [ "$tool_status" -eq 0 ] && [ "$logs_status" -eq 0 ] && [ "$analysis_status" -eq 0 ] \
     || die "incomplete/erroring bandwidth shape; stopping before the next shape"
   BENCH_ACTIVE=0
+  CURRENT_DIRECTORY=""
   sleep "$PAUSE"
 done
 say "valid all-to-all gRPC samples: $OUT_DIR"

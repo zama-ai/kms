@@ -6,6 +6,7 @@
 # MAX_MINUTES is a failure watchdog. Interruptions and incomplete captures are invalid.
 # Every run resets TOKIO, RAYON, PREPROC, and the complete TUNING_ENV table.
 set -Eeuo pipefail
+umask 077
 
 NS="${NS:?set NS=<namespace>}"
 TAG="${TAG:?set TAG=<unique run tag>}"
@@ -70,6 +71,7 @@ INVALID_REASON=""
 STOPPED_BECAUSE="setup"
 MUTATED=0
 LAUNCHED=0
+COMPLETED=0
 FINISHED=0
 WATCH_PID=""
 CAPTURE_PID=""
@@ -89,9 +91,11 @@ data = json.loads(path.read_text()) if path.exists() else {}
 for key, value in zip(sys.argv[2::2], sys.argv[3::2]):
     typed = {"schema_version", "num_parties", "watched_parties", "warmup_seconds",
              "duration_seconds", "measurement_start_epoch", "measurement_end_epoch", "knobs", "require_completion",
-             "scrape_interval_seconds"}
+             "scrape_interval_seconds", "capture_end_epoch"}
     data[key] = json.loads(value) if key in typed else value
-path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+temporary.replace(path)
 PY
 }
 invalidate() {
@@ -118,6 +122,52 @@ kill_own_driver() {
     fi
   done"
 }
+capture_client() {
+  local destination="$1" previous="${2:-}" reference=""
+  kubectl get pod -n "$NS" "$CLIENT_POD" -o json > "$destination/client-pod.json" || return
+  kubectl exec -n "$NS" "$CLIENT_POD" -- cat /app/kms-core-client/config.toml > "$destination/client-config.toml" || return
+  if [ -n "$REFERENCE_FLEET" ]; then reference="$(dirname "$REFERENCE_FLEET")/client-state.json"; fi
+  python3 - "$destination" "$previous" "$reference" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+pod = json.loads((directory / "client-pod.json").read_text())
+config = (directory / "client-config.toml").read_bytes()
+if not config:
+    raise SystemExit("client configuration is empty")
+status = pod.get("status", {})
+if pod["metadata"].get("deletionTimestamp") or not any(
+    c.get("type") == "Ready" and c.get("status") == "True" for c in status.get("conditions", [])
+):
+    raise SystemExit("client pod is not Ready")
+declared = {c["name"]: c for c in pod["spec"].get("containers", []) + pod["spec"].get("initContainers", [])}
+statuses = status.get("containerStatuses", []) + status.get("initContainerStatuses", [])
+if not declared or set(declared) != {c["name"] for c in statuses} or any(not c.get("imageID") for c in statuses):
+    raise SystemExit("client image provenance is incomplete")
+containers = {}
+for container in statuses:
+    name = container["name"]
+    containers[name] = {
+        "image_id": container["imageID"], "restarts": container.get("restartCount", 0),
+        "started_at": container.get("state", {}).get("running", {}).get("startedAt"),
+        "runtime_spec_sha256": hashlib.sha256(json.dumps({
+            key: declared[name].get(key) for key in ("args", "command", "env", "envFrom", "resources", "securityContext")
+        }, sort_keys=True).encode()).hexdigest(),
+    }
+current = {"uid": pod["metadata"]["uid"], "node": pod["spec"]["nodeName"], "containers": containers,
+           "config_sha256": hashlib.sha256(config).hexdigest()}
+if sys.argv[2] and json.loads(Path(sys.argv[2]).read_text()) != current:
+    raise SystemExit("client pod, image, configuration, or restart state changed during measurement")
+if sys.argv[3] and Path(sys.argv[3]).exists():
+    reference = json.loads(Path(sys.argv[3]).read_text())
+    if any(reference[key] != current[key] for key in ("node", "config_sha256")) or reference["containers"].keys() != containers.keys():
+        raise SystemExit("client placement, configuration, or container set differs from the paired reference")
+    for name, value in containers.items():
+        if any(reference["containers"][name][key] != value[key] for key in ("image_id", "runtime_spec_sha256")):
+            raise SystemExit("client image or runtime differs from the paired reference")
+(directory / "client-state.json").write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
+PY
+}
 snapshot() {
   local destination="$1"
   kubectl get pods -n "$NS" -l app=kms-core -o json > "$destination/pods.json" || return
@@ -134,7 +184,10 @@ snapshot() {
   local previous=()
   [ "$destination" != "$RUN_DIR/end" ] || previous=(--previous "$RUN_DIR/start/fleet.json")
   python3 "$VERIFIER" "$destination" --parties "$NUM_PARTIES" --tokio "$TOKIO" --rayon "$RAYON" \
-    --preproc "$PREPROC" --tuning "$TUNING_ENV" "${previous[@]}" > "$destination/fleet.json"
+    --preproc "$PREPROC" --tuning "$TUNING_ENV" "${previous[@]}" > "$destination/fleet.json" || return
+  local client_previous=""
+  [ "$destination" != "$RUN_DIR/end" ] || client_previous="$RUN_DIR/start/client-state.json"
+  capture_client "$destination" "$client_previous"
 }
 wait_pid() {
   local pid="$1" limit="$2" started
@@ -168,6 +221,10 @@ finish() {
   trap - ERR EXIT INT TERM
   set +e
   if [ "$exit_code" -ne 0 ] && [ -z "$INVALID_REASON" ]; then invalidate "command failed (exit $exit_code)"; fi
+  if [ "$LAUNCHED" = 1 ]; then
+    [ -n "$MEASUREMENT_END" ] || MEASUREMENT_END="$(python3 -c 'import time; print(time.time())')"
+    manifest_set measurement_end_epoch "$MEASUREMENT_END"
+  fi
   if [ -n "$WATCH_PID" ]; then
     touch "$STOP_FILE"
     if ! wait_pid "$WATCH_PID" "$HANDSHAKE_SECONDS"; then
@@ -176,8 +233,7 @@ finish() {
     fi
   fi
   if [ "$LAUNCHED" = 1 ]; then
-    MEASUREMENT_END="$(python3 -c 'import time; print(time.time())')"
-    manifest_set measurement_end_epoch "$MEASUREMENT_END"
+    manifest_set capture_end_epoch "$(python3 -c 'import time; print(time.time())')"
   fi
   stop_collector "$CAPTURE_PID"
   stop_collector "$TOP_PID"
@@ -185,8 +241,14 @@ finish() {
     snapshot "$RUN_DIR/end" > "$RUN_DIR/end/verification.log" 2>&1 || invalidate "fleet changed or final fleet verification failed"
     kill_own_driver > "$RUN_DIR/client/stop.log" 2>&1 || invalidate "could not stop this run's driver"
     for suffix in driver.log preproc-only.log exit-code; do
-      kubectl cp "$NS/$CLIENT_POD:/tmp/$TAG-$suffix" "$RUN_DIR/client/$TAG-$suffix" >/dev/null 2>&1 || true
+      if ! kubectl cp "$NS/$CLIENT_POD:/tmp/$TAG-$suffix" "$RUN_DIR/client/$TAG-$suffix" >/dev/null 2>&1; then
+        if [ "$COMPLETED" = 1 ] && [ "$suffix" != driver.log ]; then invalidate "missing completion artifact: $suffix"; fi
+      fi
     done
+    if [ "$COMPLETED" = 1 ]; then
+      [ -s "$RUN_DIR/client/$TAG-preproc-only.log" ] || invalidate "completion log is empty or missing"
+      [ "$(tr -d '[:space:]' < "$RUN_DIR/client/$TAG-exit-code" 2>/dev/null)" = 0 ] || invalidate "completion artifact does not confirm exit code 0"
+    fi
   fi
   # All measurements and provenance checks precede this restart.
   if [ "$MUTATED" = 1 ]; then
@@ -233,7 +295,8 @@ manifest_set schema_version 2 tag "$TAG" namespace "$NS" start "$(date -u +%Y-%m
   git_head "$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 kubectl get ns "$NS" >/dev/null
 kubectl get pod -n "$NS" "$CLIENT_POD" >/dev/null
-[ -z "$(preexisting_driver)" ] || die "a driver or kms-core-client already runs; no cluster changes were made"
+active_driver="$(preexisting_driver)"
+[ -z "$active_driver" ] || die "a driver or kms-core-client already runs; no cluster changes were made"
 client_sh "test ! -e /tmp/$TAG-driver.pid && test ! -e /tmp/$TAG-exit-code" || die "remote TAG files already exist"
 kubectl get pods -n "$NS" -l app=kms-core -o json > "$RUN_DIR/before-pods.json"
 STATEFULSETS="$(kubectl get sts -n "$NS" -l app=kms-core -o name)"
@@ -286,32 +349,36 @@ until [ -f "$READY_FILE" ]; do
   [ "$(( $(date +%s) - wait_started ))" -lt "$HANDSHAKE_SECONDS" ] || die "initial metrics handshake timed out"
   sleep 1
 done
-[ -z "$(preexisting_driver)" ] || die "another driver appeared before launch"
+active_driver="$(preexisting_driver)"
+[ -z "$active_driver" ] || die "another driver appeared before launch"
 kubectl cp "$SCRIPT_DIR/manual-dkg-under-load.sh" "$NS/$CLIENT_POD:/tmp/$TAG-driver.sh"
 MEASUREMENT_START="$(python3 -c 'import time; print(time.time())')"
-LAUNCH_EPOCH_SECONDS="$(date +%s)"
 manifest_set measurement_start_epoch "$MEASUREMENT_START" launched "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LAUNCHED=1
 DRIVER_MAX_ITER=$(( (MAX_MINUTES + 10) * 6 ))
-client_sh "cd /tmp; PREPROC_ONLY=1 RUN=$TAG LOG_DIR=/tmp DKG_POLL_INTERVAL_MS=10000 MAX_ITER=$DRIVER_MAX_ITER nohup bash /tmp/$TAG-driver.sh > /tmp/$TAG-driver.log 2>&1 < /dev/null & echo \$! > /tmp/$TAG-driver.pid"
+client_sh "cd /tmp; PREPROC_ONLY=1 RUN=$TAG LOG_DIR=/tmp CFG=/app/kms-core-client/config.toml DKG_POLL_INTERVAL_MS=10000 MAX_ITER=$DRIVER_MAX_ITER nohup bash /tmp/$TAG-driver.sh > /tmp/$TAG-driver.log 2>&1 < /dev/null & echo \$! > /tmp/$TAG-driver.pid"
 say "measuring all $NUM_PARTIES parties; duration=$DURATION_SECONDS seconds, warm-up=$WARMUP_SECONDS seconds"
 while :; do
   sleep "$POLL_SECS"
   kill -0 "$WATCH_PID" 2>/dev/null || die "metrics collector exited during measurement"
   kill -0 "$CAPTURE_PID" 2>/dev/null || die "core log collector exited during measurement"
-  elapsed=$(( $(date +%s) - LAUNCH_EPOCH_SECONDS ))
+  elapsed="$(python3 -c 'import sys,time; print(int(time.time() - float(sys.argv[1])))' "$MEASUREMENT_START")"
   state="$(driver_state)"
   case "$state" in
     ("exit 0")
       if [ "$REQUIRE_COMPLETION" = 0 ] && [ "$DURATION_SECONDS" -gt 0 ] && [ "$elapsed" -lt "$DURATION_SECONDS" ]; then
         die "driver completed before the requested measurement interval"
       fi
-      STOPPED_BECAUSE="driver completed successfully"; STATUS=valid; break;;
+      if [ "$REQUIRE_COMPLETION" = 0 ] && [ "$DURATION_SECONDS" -gt 0 ]; then
+        MEASUREMENT_END="$(python3 -c 'import sys; print(float(sys.argv[1]) + int(sys.argv[2]))' "$MEASUREMENT_START" "$DURATION_SECONDS")"
+      fi
+      COMPLETED=1; STOPPED_BECAUSE="driver completed successfully"; STATUS=valid; break;;
     (running) ;;
     (*) die "driver stopped without a successful exit marker: $state";;
   esac
   [ "$elapsed" -lt "$((MAX_MINUTES * 60))" ] || die "MAX_MINUTES watchdog elapsed"
   if [ "$REQUIRE_COMPLETION" = 0 ] && [ "$DURATION_SECONDS" -gt 0 ] && [ "$elapsed" -ge "$DURATION_SECONDS" ]; then
+    MEASUREMENT_END="$(python3 -c 'import sys; print(float(sys.argv[1]) + int(sys.argv[2]))' "$MEASUREMENT_START" "$DURATION_SECONDS")"
     STOPPED_BECAUSE="fixed duration reached"; STATUS=valid; break
   fi
   if [ "$REQUIRE_COMPLETION" = 0 ] && [ "$DURATION_SECONDS" -eq 0 ]; then

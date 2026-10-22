@@ -35,6 +35,13 @@ if args[:2] == ["rollout", "status"]:
     sys.exit(1 if scenario == "rollout_failure" and stage == 1 else 0)
 if args[0] == "get" and args[1] == "sts":
     print("statefulset/kms-core-1-core-1\nstatefulset/kms-core-2-core-2")
+elif args[0] == "get" and args[1] == "pod" and "json" in args:
+    changed = scenario == "client_restart" and (root / "launched").exists()
+    print(json.dumps({"metadata": {"name": "kms-core-client-0", "uid": "client-uid"},
+        "spec": {"nodeName": "client-node", "containers": [{"name": "kms-core-client"}]},
+        "status": {"conditions": [{"type": "Ready", "status": "True"}], "containerStatuses": [
+            {"name": "kms-core-client", "imageID": "sha256:client", "restartCount": 1 if changed else 0,
+             "state": {"running": {"startedAt": "2026-01-01"}}}]}}))
 elif args[0] == "get" and args[1] == "pods":
     event("pods-end" if (root / "launched").exists() else "pods-start")
     items = []
@@ -57,6 +64,10 @@ elif args[0] == "logs":
     print("tuning: exporting MPC_DKG_PHASE_LOG_EVERY=100 into the process environment")
     print("tuning: exporting MPC_DKG_TRACKER_LOG_PERCENTAGE=1 into the process environment")
 elif args[0] == "exec":
+    if args[-2:] == ["cat", "/app/kms-core-client/config.toml"]:
+        changed = scenario == "client_config_change" and (root / "launched").exists()
+        print("config_changed = true" if changed else "config_changed = false")
+        raise SystemExit(0)
     if "kms-health-check bandwidth-bench" in command:
         event("bandwidth-launch")
         sys.exit(1 if scenario == "bandwidth_tool_failure" else 0)
@@ -73,13 +84,19 @@ elif args[0] == "exec":
             counter.write_text(str(polls))
             print("exit 0" if polls == 2 else "running")
         else:
-            print({"driver_failure": "exit 9", "driver_missing": "missing", "driver_success": "exit 0"}.get(scenario, "running"))
+            print({"driver_failure": "exit 9", "driver_missing": "missing", "driver_success": "exit 0", "missing_completion_artifact": "exit 0"}.get(scenario, "running"))
     elif "for p in /proc/" in remote:
         event("preflight")
         if scenario == "preexisting":
             print("running")
+        if scenario == "preflight_exec_failure":
+            raise SystemExit(1)
 elif args[0] == "cp":
     event("copy")
+    if ":" not in args[-1]:
+        if scenario == "missing_completion_artifact" and args[-1].endswith("preproc-only.log"):
+            raise SystemExit(1)
+        Path(args[-1]).write_text("0\n" if args[-1].endswith("exit-code") else "preprocessing output\n")
 elif args[0] == "top":
     print("kms-core 1m 1Mi")
 '''
@@ -149,8 +166,12 @@ class ExperimentLifecycleTests(unittest.TestCase):
                 print("5 1")
             with (Path(os.environ["MOCK_ROOT"]) / "events").open("a") as handle:
                 handle.write("analysis-" + sys.argv[1] + "\\n")
-            if sys.argv[1] == "bw" and os.environ["SCENARIO"] == "bandwidth_partial":
-                raise SystemExit(1)
+            if sys.argv[1] == "bw":
+                partial = os.environ["SCENARIO"] == "bandwidth_partial"
+                path = Path(sys.argv[sys.argv.index("--json") + 1])
+                path.write_text(json.dumps({"status": "invalid" if partial else "valid"}))
+                if partial:
+                    raise SystemExit(1)
             if sys.argv[1] == "summarize":
                 run = Path(sys.argv[2])
                 manifest = json.loads((run / "manifest.json").read_text())
@@ -191,6 +212,9 @@ class ExperimentLifecycleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.manifest()["status"], "valid")
         self.assertEqual(self.manifest()["watched_parties"], [1, 2])
+        self.assertGreaterEqual(self.manifest()["capture_end_epoch"], self.manifest()["measurement_end_epoch"])
+        self.assertTrue((self.root / "runs/test-run/start/client-state.json").exists())
+        self.assertEqual((self.root / "runs/test-run/start/client-config.toml").stat().st_mode & 0o077, 0)
         self.assertTrue((self.root / "knobs").read_text().startswith("10|60|90|MPC_DKG_PHASE_LOG_EVERY=100,"))
         events = self.events()
         self.assertLess(events.index("watcher-ready"), events.index("launch"))
@@ -205,12 +229,32 @@ class ExperimentLifecycleTests(unittest.TestCase):
         self.assertNotIn("restart-1", self.events())
         self.assertNotIn("kill-own-driver", self.events())
 
+    def test_failed_preflight_exec_never_restarts_the_fleet(self):
+        result = self.run_script("preflight_exec_failure")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.manifest()["status"], "invalid")
+        self.assertNotIn("restart-1", self.events())
+        self.assertNotIn("launch", self.events())
+
     def test_completion_validation_waits_for_success_marker_past_progress_stop(self):
         result = self.run_script("delayed_success", REQUIRE_COMPLETION="1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.manifest()["status"], "valid")
         self.assertEqual(self.manifest()["stopped_because"], "driver completed successfully")
         self.assertEqual((self.root / "driver-polls").read_text(), "2")
+
+    def test_completion_requires_downloaded_completion_artifacts(self):
+        result = self.run_script("missing_completion_artifact", REQUIRE_COMPLETION="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.manifest()["status"], "invalid")
+        self.assertIn("missing completion artifact", self.manifest()["invalid_reason"])
+
+    def test_fixed_interval_excludes_final_collector_wait(self):
+        result = self.run_script(DURATION_SECONDS="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        manifest = self.manifest()
+        self.assertEqual(manifest["measurement_end_epoch"] - manifest["measurement_start_epoch"], 1)
+        self.assertGreaterEqual(manifest["capture_end_epoch"], manifest["measurement_end_epoch"])
 
     def test_premature_completion_does_not_validate_a_fixed_window(self):
         result = self.run_script("driver_success", DURATION_SECONDS="10")
@@ -239,7 +283,7 @@ class ExperimentLifecycleTests(unittest.TestCase):
                     (self.root / name).unlink(missing_ok=True)
 
     def test_final_failures_invalidate_successful_stop(self):
-        for scenario in ("final_scrape_failure", "changed_fleet", "cleanup_failure", "exploratory_analysis"):
+        for scenario in ("final_scrape_failure", "changed_fleet", "client_restart", "client_config_change", "cleanup_failure", "exploratory_analysis"):
             with self.subTest(scenario=scenario):
                 result = self.run_script(scenario)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -256,6 +300,8 @@ class ExperimentLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(self.events().count("bandwidth-launch"), 1)
                 self.assertIn("restart-2", self.events())
+                summary_path, = (self.root / "runs").glob("bw-*/n1-p100-d1/summary.json")
+                self.assertEqual(json.loads(summary_path.read_text())["status"], "invalid")
                 shutil.rmtree(self.root / "runs")
                 for name in ("events", "stage"):
                     (self.root / name).unlink(missing_ok=True)
