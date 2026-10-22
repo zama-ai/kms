@@ -54,7 +54,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int .id }}"
+    object_folder = {{ include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix) | quote }}
         {{ end }}
       {{- else }}
         {{ range $i := $peersIDList }}
@@ -66,7 +66,7 @@ data:
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
-    object_folder = "PUB-p{{ int $i }}"
+    object_folder = {{ include "kmsPeerPrefix" (dict "root" $ "id" $i) | quote }}
         {{ end }}
       {{- end }}
     EOF
@@ -131,11 +131,11 @@ data:
       echo "Client VerfKey found, retrieving KMS Signer Verif Addresses"
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range $i, $peer := .Values.kmsCore.thresholdMode.peersList }}
-      wget -O /keygen/kms_signer_address_{{ $peer.id }} "${S3_ENDPOINT}/PUB-p{{ $peer.id }}/VerfAddress/${verf_key_id}"
+      wget -O /keygen/kms_signer_address_{{ $peer.id }} "${S3_ENDPOINT}/{{ include "kmsPeerPrefix" (dict "root" $ "id" $peer.id "prefix" $peer.prefix) }}/VerfAddress/${verf_key_id}"
           {{- end }}
         {{- else }}
           {{ range $i := $peersIDList }}
-      wget -O /keygen/kms_signer_address_{{ $i }} "${S3_ENDPOINT}/PUB-p{{ $i }}/VerfAddress/${verf_key_id}"
+      wget -O /keygen/kms_signer_address_{{ $i }} "${S3_ENDPOINT}/{{ include "kmsPeerPrefix" (dict "root" $ "id" $i) }}/VerfAddress/${verf_key_id}"
           {{- end }}
         {{- end }}
     fi

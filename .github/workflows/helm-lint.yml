@@ -123,6 +123,8 @@ jobs:
             --set kmsCore.privateVault.awskms.rootKeySpec=invalid
           expect_invalid "invalid Kubernetes resource quantity" 'cpu' \
             --set-string kmsCore.resources.requests.cpu=invalid
+          expect_invalid "unsafe party name" 'kmsPeers\.name|/kmsPeers/name' \
+            --set kmsPeers.name='sbi;rm'
           expect_invalid "empty migration epoch list" 'epochIds' \
             --set-json 'kmsCore.migration.contextAssociations=[{"contextId":"0x0700000000000000000000000000000000000000000000000000000000000001","epochIds":[]}]'
 
@@ -143,3 +145,115 @@ jobs:
             exit 1
           fi
           grep -Fq "the chart deploys threshold mode only" <<<"$output"
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.count=1 \
+            --set kmsPeers.id=1 \
+            --set kmsCore.thresholdMode.thresholdValue=4 \
+            --set kmsCore.thresholdMode.omitPeers=true \
+            --set kmsCore.thresholdMode.tls.enabled=true 2>&1); then
+            echo "omitPeers should allow a party count other than 3*t+1" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          if grep -Fq "[[threshold.peers]]" <<<"$output"; then
+            echo "omitPeers rendered a peer list" >&2
+            exit 1
+          fi
+          grep -Fq 'KEY_PATH="PUB-p1/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq 'export KMS_CA_PEM_1=' <<<"$output"
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.count=1 \
+            --set kmsPeers.id=1 \
+            --set kmsPeers.name=partner-acme \
+            --set kmsCore.thresholdMode.thresholdValue=4 \
+            --set kmsCore.thresholdMode.omitPeers=true \
+            --set kmsCore.thresholdMode.tls.enabled=true \
+            --set kmsCore.publicVault.s3.prefix=PUB-partner-acme \
+            --set kmsGenCertAndKeys.enabled=true 2>&1); then
+            echo "named party should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'tls_subject = "partner-acme"' <<<"$output"
+          grep -Fq -- '--ca-names "partner-acme"' <<<"$output"
+          grep -Fq 'KEY_PATH="PUB-partner-acme/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq 'pod-name: test-core-1' <<<"$output"
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "named party still used PUB-p1" >&2
+            exit 1
+          fi
+
+          if ! output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.id=1 \
+            --set kmsCore.thresholdMode.thresholdValue=1 \
+            --set kmsCore.thresholdMode.tls.enabled=true \
+            --set kmsCore.publicVault.s3.prefix=PUB-partner-acme \
+            --set kmsCoreClient.enabled=true \
+            --set kmsGenKeys.enabled=true \
+            --set-json 'kmsCore.thresholdMode.peersList=[{"id":1,"host":"p1","port":50001},{"id":2,"host":"p2","port":50001},{"id":3,"host":"p3","port":50001,"prefix":"PUB-custom-3"},{"id":4,"host":"p4","port":50001}]' 2>&1); then
+            echo "explicit peer list with a public prefix should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'CERT_PATH="PUB-partner-acme/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'CERT_PATH="PUB-p2/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'CERT_PATH="PUB-custom-3/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'object_folder = "PUB-partner-acme"' <<<"$output"
+          grep -Fq 'object_folder = "PUB-custom-3"' <<<"$output"
+          grep -Fq '/PUB-partner-acme/VerfAddress/' <<<"$output"
+          if grep -Fq 'object_folder = "PUB-p1"' <<<"$output"; then
+            echo "explicit peer list still used PUB-p1 as this party's folder" >&2
+            exit 1
+          fi
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "explicit peer list still used PUB-p1 for this party" >&2
+            exit 1
+          fi
+
+          own_peers='[{"id":1,"host":"p1","port":50001,"prefix":"PUB-own"},{"id":2,"host":"p2","port":50001},{"id":3,"host":"p3","port":50001},{"id":4,"host":"p4","port":50001}]'
+          party=(--set kmsCore.thresholdMode.enabled=true --set kmsPeers.id=1
+            --set kmsCore.thresholdMode.thresholdValue=1 --set kmsCore.thresholdMode.tls.enabled=true
+            --set kmsGenCertAndKeys.enabled=true)
+          if ! output=$(helm template test charts/kms-core "${party[@]}" \
+            --set kmsCore.publicVault.s3.prefix=PUB-own \
+            --set kmsCoreClient.enabled=true --set kmsGenKeys.enabled=true \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}" 2>&1); then
+            echo "own peer entry with a prefix should render" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          grep -Fq 'CERT_PATH="PUB-own/CACert/cert.pem"' <<<"$output"
+          grep -Fq 'KEY_PATH="PUB-own/PrivateKey/key.pem"' <<<"$output"
+          grep -Fq '/PUB-own/CACert/cert.pem' <<<"$output"
+          grep -Fq 'object_folder = "PUB-own"' <<<"$output"
+          grep -Fq '/PUB-own/VerfAddress/' <<<"$output"
+          if grep -Fq 'PUB-p1/' <<<"$output"; then
+            echo "own peer entry prefix was not used for this party's folder" >&2
+            exit 1
+          fi
+
+          expect_fail() {
+            local message=$1
+            shift
+            if output=$(helm template test charts/kms-core "${party[@]}" "$@" 2>&1); then
+              echo "expected render failure: ${message}" >&2
+              exit 1
+            fi
+            grep -Fq "$message" <<<"$output"
+          }
+          expect_fail 'set kmsCore.publicVault.s3.prefix to "PUB-own"' \
+            --set kmsCore.publicVault.s3.prefix=PUB-other \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}"
+          expect_fail 'set kmsCore.publicVault.s3.prefix to "PUB-own"' \
+            --set kmsGenCertAndKeys.enabled=false --set kmsCore.thresholdMode.tls.enabled=false \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}"
+          expect_fail 'must match the host "p1"' \
+            --set kmsPeers.name=other --set kmsCore.publicVault.s3.prefix=PUB-own \
+            --set-json "kmsCore.thresholdMode.peersList=${own_peers}"
+          expect_fail 'kmsInit.enabled cannot be used with kmsCore.thresholdMode.omitPeers' \
+            --set kmsCore.thresholdMode.omitPeers=true --set kmsInit.enabled=true
