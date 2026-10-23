@@ -1659,7 +1659,7 @@ async fn new_mpc_context(config_path: &Path, context_path: &Path, test_path: &Pa
             SerializedNewMpcContextParameters {
                 input_path: context_path.to_path_buf(),
                 previous_context_id: None,
-                node_config_hash: [0u8; 32],
+                node_config_hash: [0xab; 32],
             },
         )),
         200,
@@ -1813,7 +1813,7 @@ async fn new_mpc_context_all_sets(
             SerializedNewMpcContextParameters {
                 input_path: context_path.to_path_buf(),
                 previous_context_id: None,
-                node_config_hash: [0u8; 32],
+                node_config_hash: [0xab; 32],
             },
         )),
         200,
