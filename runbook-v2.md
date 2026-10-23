@@ -5,8 +5,11 @@ The primary result is generated bits per second. Triple throughput is a secondar
 CPU usage, phase durations, and transport metrics explain changes in throughput.
 
 The original worktree remains at `../kms-ddec-bench` with its uncommitted changes intact.
-This worktree uses `codex/fix/773/reliable-dkg-bench`.
+This worktree uses `titouan/reliable-bench`.
 The local `codex/bench/773/dkg-baseline` branch identifies the instrumented decoder baseline.
+The treatment branch includes `main` at `6728e9b8a`; the separate baseline branch remains on its earlier base.
+Before a cross-image comparison, update the baseline to the same `main` revision and locked dependency versions.
+The same-binary off/on comparison below does not use that baseline branch.
 The treatment branch reapplies these commits in order:
 
 1. `372a7f9b612bfd5f5bb4c61d775c1b76cfc19a4c`
@@ -247,13 +250,18 @@ Historical captures without measurement boundaries remain exploratory.
 
 ## Validation status
 
-Local validation of the treatment worktree on 2026-10-23:
+Local validation before the rebase, at `e1509d302` on 2026-10-23:
 
 - Shell syntax checks and all 51 Python harness regression tests passed.
 - `cargo fmt --all --check` passed.
 - Rust unit tests passed: observability 39, thread handles 1, networking 55, and optimistic algebra 7.
 - The focused Rust runner stopped while compiling threshold-execution tests: rustc was OOM-killed by this workspace's 8 GiB memory limit. A one-job, package-only test optimization level 1 retry also exhausted memory. Threshold-execution and KMS tests remain unverified, not passing.
 - Both workspace Clippy configurations (`--all-targets` and `--all-targets --all-features`, with `-D warnings`) were attempted offline but could not start analysis because the cache lacks `quinn-proto v0.11.19`.
+
+After the rebase onto `main` at `6728e9b8a`, formatting, shell syntax checks, and all 51 harness tests passed again.
+An offline threshold-execution library check could not compile because the cache lacks `tfhe v1.8.2` from `main`.
+Both offline Clippy configurations still require the uncached `quinn-proto v0.11.19`.
+The Rust unit-test results above apply only to the pre-rebase revision.
 
 Rerun the Rust checker and both Clippy commands on a build host with more memory and access to the locked dependencies before accepting the candidate.
 The decoder-only baseline has a separate opening-test path in the checker; this avoids silently selecting absent optimistic tests, but the complete baseline Rust suite has not been run here.

@@ -388,14 +388,14 @@ async fn send_network_value_to_all<Z: Ring, B: BaseSessionHandles>(
             (msg, bytes)
         })
         .await?;
-        send_bytes_to_all(session, bytes).await?;
+        send_bytes_to_all(session, bytes?).await?;
         Ok(msg)
     } else {
         let bytes = {
             let _timer = DIAG.time_detail(operation);
             msg.to_network()
         };
-        send_bytes_to_all(session, bytes).await?;
+        send_bytes_to_all(session, bytes?).await?;
         Ok(msg)
     }
 }
