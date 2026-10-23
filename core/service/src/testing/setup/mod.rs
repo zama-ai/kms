@@ -1,35 +1,16 @@
 //! Test environment setup utilities
 //!
-//! This module provides high-level test environment builders for both
-//! centralized and threshold KMS configurations.
+//! This module provides high-level test environment builders for KMS
+//! configurations.
 //!
 //! # Examples
 //!
-//! ## Centralized Test
-//!
 //! ```no_run
 //! use kms_lib::testing::prelude::*;
 //!
 //! #[tokio::test]
-//! async fn test_centralized() -> Result<()> {
-//!     let env = CentralizedTestEnv::builder()
-//!         .with_test_name("my_test")
-//!         .build()
-//!         .await?;
-//!
-//!     // Use env.server, env.client
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Threshold Test
-//!
-//! ```no_run
-//! use kms_lib::testing::prelude::*;
-//!
-//! #[tokio::test]
-//! async fn test_threshold() -> Result<()> {
-//!     let env = ThresholdTestEnv::builder()
+//! async fn test_four_parties() -> Result<()> {
+//!     let env = TestEnv::builder()
 //!         .with_test_name("my_test")
 //!         .with_party_count(4)
 //!         .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1
@@ -40,13 +21,7 @@
 //!     Ok(())
 //! }
 //! ```
-pub mod centralized;
-pub mod threshold;
+pub mod environment;
 
 // Re-export for convenience
-pub use centralized::{
-    CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
-};
-pub use threshold::{
-    TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
-};
+pub use environment::{TestConfig, TestEnv, TestEnvBuilder, TestMaterialGuard};

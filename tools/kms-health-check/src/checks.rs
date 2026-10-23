@@ -1,6 +1,6 @@
 use anyhow::Result;
 use kms_grpc::kms::v1::{
-    BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, RequestId,
+    BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, NodeType, RequestId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -31,7 +31,7 @@ pub struct ContextStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerStatus {
-    pub peer_id: u32, // Party ID for threshold mode
+    pub peer_id: u32, // Party ID of the peer
     pub endpoint: String,
     pub reachable: bool,
     pub latency_ms: u32,
@@ -40,10 +40,10 @@ pub struct PeerStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
-    pub node_type: String,       // "threshold" or "centralized"
-    pub my_party_id: u32,        // Only meaningful for threshold
+    pub node_type: String, // Always "threshold"; other node types are rejected
+    pub my_party_id: u32,  // Party ID of this node
     pub threshold_required: u32, // Minimum nodes needed
-    pub nodes_reachable: u32,    // Currently reachable nodes
+    pub nodes_reachable: u32, // Currently reachable nodes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,135 +101,127 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
     };
 
     match config::parse_config(Path::new(config_path)).await {
-        Ok(config_type) => {
-            let (type_str, storage_type) = if config_type.threshold.is_some() {
-                // Threshold KMS mode
-                let storage_info = config_type
-                    .private_vault
-                    .as_ref()
-                    .map(|v| format!("{:?}", v.storage))
-                    .unwrap_or_else(|| "unknown".to_string());
-                ("threshold", storage_info)
-            } else {
-                // Centralized KMS mode
-                let storage_info = config_type
-                    .private_vault
-                    .as_ref()
-                    .map(|v| format!("{:?}", v.storage))
-                    .unwrap_or_else(|| "unknown".to_string());
-                ("centralized", storage_info)
-            };
-
-            result.config_valid = Some(ConfigValidation {
-                valid: true,
-                config_type: type_str.to_string(),
-                storage_type: storage_type.clone(),
-                errors: Vec::new(),
-            });
-
-            println!("\n[INFO]:");
-            println!("  [OK] Valid {} config", type_str);
-            println!("  [OK] Storage: {}", storage_type);
-
-            if type_str == "threshold"
-                && let Some(threshold_conf) = &config_type.threshold
-            {
-                // Report listen address for validation
-                println!(
-                    "  [OK] Listen address: {}:{}",
-                    config_type.service.listen_address, config_type.service.listen_port
-                );
-
-                // Validate threshold setting - consistent with server-side health logic
-                // threshold = max number of malicious/offline nodes tolerated
-                // For Byzantine fault tolerance, need 2/3 majority for healthy status
-                let threshold = threshold_conf.threshold;
-                let total_nodes = threshold_conf.peers.as_ref().map_or(0, |p| p.len()); // peers list includes self
-
-                // Ensure we have positive node count
-                if total_nodes == 0 {
-                    result.overall_health = HealthStatus::Unhealthy;
-                    result
-                        .recommendations
-                        .push("Config error: No nodes defined in peers list".to_string());
-                    return Ok(result);
-                }
-
-                let min_nodes_required = threshold as usize + 1; // Need t+1 nodes for threshold operations
-                let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority for Byzantine fault tolerance
-
-                if total_nodes < min_nodes_required {
-                    result.overall_health = HealthStatus::Unhealthy;
-                    result.recommendations.push(format!(
-                            "Config error: {} nodes defined but threshold={} requires at least {} nodes (t+1)",
-                            total_nodes, threshold, min_nodes_required
-                        ));
-                } else {
-                    println!("  [OK] Threshold: {} - Node requirements:", threshold);
-                    println!(
-                        "      - {} of {} nodes minimum for threshold operations (t+1)",
-                        min_nodes_required, total_nodes
-                    );
-                    println!(
-                        "      - {} of {} nodes for healthy status (2/3 majority)",
-                        min_nodes_for_healthy, total_nodes
-                    );
-                    println!(
-                        "      - {} of {} nodes for optimal status (all nodes online)",
-                        total_nodes, total_nodes
-                    );
-                    println!(
-                        "      (!!!)  Operational recommendation: All {} nodes should be online for best performance",
-                        total_nodes
-                    );
-                }
-
-                // Validate peer addresses
-                if let Some(peers) = &threshold_conf.peers {
-                    println!("  [OK] {} peers configured:", peers.len());
-                    for peer in peers {
-                        println!(
-                            "      - Peer {} at {}:{}",
-                            peer.party_id, peer.address, peer.port
-                        );
-                    }
-
-                    result.recommendations.push(format!(
-                        "Config defines {} peers for threshold KMS at {}:{}",
-                        peers.len(),
-                        threshold_conf.listen_address,
-                        threshold_conf.listen_port
-                    ));
-                } else {
-                    println!("  [WARN] No peers configured in peers list");
-                    result.recommendations.push(format!(
-                        "Config defines 0 peers for threshold KMS at {}:{}",
-                        threshold_conf.listen_address, threshold_conf.listen_port
-                    ));
-                }
-
-                result.recommendations.push(format!(
-                        "OPERATIONAL: Monitor that all {} nodes remain online. While {} nodes provide healthy status, having all nodes online ensures optimal performance and fault tolerance",
-                        total_nodes, min_nodes_for_healthy
-                    ));
-            }
-        }
-        Err(e) => {
-            result.config_valid = Some(ConfigValidation {
-                valid: false,
-                config_type: "unknown".to_string(),
-                storage_type: "unknown".to_string(),
-                errors: vec![e.to_string()],
-            });
-            result.overall_health = HealthStatus::Unhealthy;
-            result
-                .recommendations
-                .push("Fix configuration errors before deployment".to_string());
-            println!("  [FAIL] Invalid configuration:");
-        }
+        Ok(config_type) => validate_parsed_config(&config_type, &mut result),
+        Err(e) => record_invalid_config(&mut result, e.to_string()),
     }
 
     Ok(result)
+}
+
+/// Marks `result` as an invalid configuration with the given error.
+fn record_invalid_config(result: &mut HealthCheckResult, error: String) {
+    result.config_valid = Some(ConfigValidation {
+        valid: false,
+        config_type: "unknown".to_string(),
+        storage_type: "unknown".to_string(),
+        errors: vec![error],
+    });
+    result.overall_health = HealthStatus::Unhealthy;
+    result
+        .recommendations
+        .push("Fix configuration errors before deployment".to_string());
+    println!("  [FAIL] Invalid configuration:");
+}
+
+/// Checks a parsed KMS config and records the outcome in `result`.
+fn validate_parsed_config(config_type: &config::KmsConfig, result: &mut HealthCheckResult) {
+    let threshold_conf = &config_type.threshold;
+
+    let storage_type = config_type
+        .private_vault
+        .as_ref()
+        .map(|v| format!("{:?}", v.storage))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    result.config_valid = Some(ConfigValidation {
+        valid: true,
+        config_type: "threshold".to_string(),
+        storage_type: storage_type.clone(),
+        errors: Vec::new(),
+    });
+
+    println!("\n[INFO]:");
+    println!("  [OK] Valid threshold config");
+    println!("  [OK] Storage: {}", storage_type);
+
+    // Report listen address for validation
+    println!(
+        "  [OK] Listen address: {}:{}",
+        config_type.service.listen_address, config_type.service.listen_port
+    );
+
+    // Validate threshold setting - consistent with server-side health logic
+    // threshold = max number of malicious/offline nodes tolerated
+    // For Byzantine fault tolerance, need 2/3 majority for healthy status
+    let threshold = threshold_conf.threshold;
+    let total_nodes = threshold_conf.peers.as_ref().map_or(0, |p| p.len()); // peers list includes self
+
+    // Ensure we have positive node count
+    if total_nodes == 0 {
+        result.overall_health = HealthStatus::Unhealthy;
+        result
+            .recommendations
+            .push("Config error: No nodes defined in peers list".to_string());
+        return;
+    }
+
+    let min_nodes_required = threshold as usize + 1; // Need t+1 nodes for threshold operations
+    let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority for Byzantine fault tolerance
+
+    if total_nodes < min_nodes_required {
+        result.overall_health = HealthStatus::Unhealthy;
+        result.recommendations.push(format!(
+            "Config error: {} nodes defined but threshold={} requires at least {} nodes (t+1)",
+            total_nodes, threshold, min_nodes_required
+        ));
+    } else {
+        println!("  [OK] Threshold: {} - Node requirements:", threshold);
+        println!(
+            "      - {} of {} nodes minimum for threshold operations (t+1)",
+            min_nodes_required, total_nodes
+        );
+        println!(
+            "      - {} of {} nodes for healthy status (2/3 majority)",
+            min_nodes_for_healthy, total_nodes
+        );
+        println!(
+            "      - {} of {} nodes for optimal status (all nodes online)",
+            total_nodes, total_nodes
+        );
+        println!(
+            "      (!!!)  Operational recommendation: All {} nodes should be online for best performance",
+            total_nodes
+        );
+    }
+
+    // Validate peer addresses
+    if let Some(peers) = &threshold_conf.peers {
+        println!("  [OK] {} peers configured:", peers.len());
+        for peer in peers {
+            println!(
+                "      - Peer {} at {}:{}",
+                peer.party_id, peer.address, peer.port
+            );
+        }
+
+        result.recommendations.push(format!(
+            "Config defines {} peers for threshold KMS at {}:{}",
+            peers.len(),
+            threshold_conf.listen_address,
+            threshold_conf.listen_port
+        ));
+    } else {
+        println!("  [WARN] No peers configured in peers list");
+        result.recommendations.push(format!(
+            "Config defines 0 peers for threshold KMS at {}:{}",
+            threshold_conf.listen_address, threshold_conf.listen_port
+        ));
+    }
+
+    result.recommendations.push(format!(
+        "OPERATIONAL: Monitor that all {} nodes remain online. While {} nodes provide healthy status, having all nodes online ensures optimal performance and fault tolerance",
+        total_nodes, min_nodes_for_healthy
+    ));
 }
 
 // Helper function to check connectivity
@@ -272,6 +264,18 @@ async fn process_health_status(
     health_status: &kms_grpc::kms::v1::HealthStatusResponse,
     result: &mut HealthCheckResult,
 ) {
+    // Only threshold nodes are supported. Any other wire value, including values
+    // that the generated enum does not know, is reported with its number.
+    if NodeType::try_from(health_status.node_type) != Ok(NodeType::Threshold) {
+        result.overall_health = HealthStatus::Unhealthy;
+        result.recommendations.push(format!(
+            "Unsupported node type {}: only threshold nodes ({}) are supported",
+            health_status.node_type,
+            NodeType::Threshold as i32
+        ));
+        return;
+    }
+
     // Set key material from health status response
     let total_keys = health_status.my_fhe_key_ids.len() + health_status.my_crs_ids.len();
 
@@ -293,13 +297,6 @@ async fn process_health_status(
             .recommendations
             .push("No keys found - run key generation".to_string());
     }
-
-    // Set node info from health response
-    let node_type_str = match health_status.node_type {
-        1 => "centralized",
-        2 => "threshold",
-        _ => "unknown",
-    };
 
     let peers_status_for_all_contexts = &health_status.peers_from_all_contexts;
     let mut contexts_status = Vec::new();
@@ -351,7 +348,7 @@ async fn process_health_status(
         }
 
         let self_node_info = NodeInfo {
-            node_type: node_type_str.to_string(),
+            node_type: "threshold".to_string(),
             my_party_id: result_peers_status.my_party_id,
             threshold_required: result_peers_status.threshold_required,
             nodes_reachable: result_peers_status.nodes_reachable,
@@ -532,4 +529,116 @@ pub async fn run_bandwidth_benchmark(
     client
         .run_bandwidth_benchmark(request, Duration::from_secs(duration))
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kms_grpc::kms::v1::{HealthStatusResponse, PeersFromContext};
+
+    const THRESHOLD_CONFIG: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../core/service/config/default_1.toml"
+    );
+
+    fn empty_result() -> HealthCheckResult {
+        HealthCheckResult {
+            config_valid: None,
+            connectivity: None,
+            key_material: None,
+            operator_key: None,
+            context_info: None,
+            overall_health: HealthStatus::Optimal,
+            recommendations: Vec::new(),
+        }
+    }
+
+    fn health_status(node_type: i32) -> HealthStatusResponse {
+        HealthStatusResponse {
+            peers_from_all_contexts: vec![PeersFromContext {
+                context_id: None,
+                my_party_id: 1,
+                threshold_required: 2,
+                nodes_reachable: 4,
+                status: 1, // HEALTH_STATUS_OPTIMAL
+                peers: Vec::new(),
+            }],
+            my_fhe_key_ids: vec!["key".to_string()],
+            node_type,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn threshold_config_is_valid() {
+        let result = run_config_validation(THRESHOLD_CONFIG).await.unwrap();
+        let config = result.config_valid.unwrap();
+        assert!(config.valid, "errors: {:?}", config.errors);
+        assert_eq!(config.config_type, "threshold");
+        assert_ne!(result.overall_health, HealthStatus::Unhealthy);
+    }
+
+    /// A config without a `[threshold]` section fails to parse, and the error names the section.
+    #[tokio::test]
+    async fn config_without_threshold_section_is_rejected() {
+        let config_path = std::env::temp_dir().join(format!(
+            "kms-health-check-no-threshold-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &config_path,
+            r#"
+[service]
+listen_address = "127.0.0.1"
+listen_port = 50051
+timeout_secs = 360
+grpc_max_message_size = 104857600
+"#,
+        )
+        .unwrap();
+
+        let result = run_config_validation(config_path.to_str().unwrap()).await;
+        std::fs::remove_file(&config_path).unwrap();
+        let result = result.unwrap();
+
+        let validation = result.config_valid.unwrap();
+        assert!(!validation.valid);
+        assert_eq!(validation.errors.len(), 1, "got: {:?}", validation.errors);
+        assert!(
+            validation.errors[0].contains(r#"missing configuration field "threshold""#),
+            "the error does not name the missing section: {:?}",
+            validation.errors
+        );
+        assert_eq!(result.overall_health, HealthStatus::Unhealthy);
+    }
+
+    #[tokio::test]
+    async fn threshold_node_type_is_processed() {
+        let mut result = empty_result();
+        process_health_status(&health_status(NodeType::Threshold as i32), &mut result).await;
+
+        assert_eq!(result.overall_health, HealthStatus::Optimal);
+        let contexts = result.context_info.unwrap();
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].self_node_info.node_type, "threshold");
+        assert_eq!(contexts[0].context_health, HealthStatus::Optimal);
+    }
+
+    #[tokio::test]
+    async fn unsupported_node_types_are_reported_with_their_number() {
+        for node_type in [0, 1, 3, -5, 42] {
+            let mut result = empty_result();
+            process_health_status(&health_status(node_type), &mut result).await;
+
+            assert_eq!(result.overall_health, HealthStatus::Unhealthy);
+            assert!(result.context_info.is_none());
+            assert!(result.key_material.is_none());
+            assert_eq!(
+                result.recommendations,
+                vec![format!(
+                    "Unsupported node type {node_type}: only threshold nodes (2) are supported"
+                )]
+            );
+        }
+    }
 }

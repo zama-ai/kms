@@ -295,24 +295,10 @@ wait_tkms_infra_ready() {
     #-------------------------------------------------------------------------
     log_info "Waiting for Kmsparties to be ready..."
 
-    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-        # Centralized: Try both possible naming patterns
-        if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            wait_kmsparty_ready "${party_prefix}-1" || return 1
-        elif kubectl get Kmsparties "${party_prefix}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            wait_kmsparty_ready "${party_prefix}" || return 1
-        else
-            log_warn "No KMS party found with name ${party_prefix} or ${party_prefix}-1"
-            dump_tkms_infra_status
-            return 1
-        fi
-    elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-        # Threshold: Wait for all parties
-        for i in $(seq 1 "${NUM_PARTIES}"); do
-            local resource_name="${party_prefix}-${i}"
-            wait_kmsparty_ready "${resource_name}" || return 1
-        done
-    fi
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local resource_name="${party_prefix}-${i}"
+        wait_kmsparty_ready "${resource_name}" || return 1
+    done
 
     #-------------------------------------------------------------------------
     # Phase 4: Wait for enclave nodegroups (if applicable)

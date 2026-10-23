@@ -1,4 +1,4 @@
-use self::threshold::{ThresholdPartyConf, TlsConf};
+use self::party::{ThresholdPartyConf, TlsConf};
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -10,7 +10,7 @@ use strum_macros::EnumIs;
 use url::Url;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-pub mod threshold;
+pub mod party;
 
 /// Common configuration parameters that should be set in all scenarios
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
@@ -34,8 +34,9 @@ pub struct CoreConfig {
     pub backup_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub bandwidth_benchmark: Option<BandwidthBenchmarkConfig>,
+    /// Settings of this threshold party. A config without a `[threshold]` section fails to load.
     #[validate(nested)]
-    pub threshold: Option<ThresholdPartyConf>,
+    pub threshold: ThresholdPartyConf,
     #[validate(nested)]
     pub internal_config: Option<InternalConfig>,
     #[validate(nested)]
@@ -47,11 +48,7 @@ pub struct CoreConfig {
 impl CoreConfig {
     /// Whether MPC contexts must contain trusted PCR values.
     pub(crate) fn requires_pcr_allowlist(&self) -> bool {
-        let uses_auto_tls = self
-            .threshold
-            .as_ref()
-            .and_then(|threshold| threshold.tls.as_ref())
-            .is_some_and(TlsConf::is_auto);
+        let uses_auto_tls = self.threshold.tls.as_ref().is_some_and(TlsConf::is_auto);
 
         #[cfg(feature = "insecure")]
         if self.mock_enclave.is_some_and(|mock_enclave| mock_enclave) {
@@ -125,7 +122,7 @@ impl Default for InternalConfig {
 /// This interface has no TLS, authentication or authorization. The deployment ensures that only
 /// the operator's own KMS connector can reach it and that it is never publicly reachable, so the
 /// server trusts every message it receives. MPC traffic between KMS cores uses the separate,
-/// mutually authenticated core-to-core interface in [`crate::conf::threshold::ThresholdPartyConf`].
+/// mutually authenticated core-to-core interface in [`crate::conf::party::ThresholdPartyConf`].
 /// See `docs/explanations/trust_model.md`.
 ///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
@@ -366,7 +363,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::conf::threshold::{TlsCert, TlsConf, TlsKey};
+    use crate::conf::party::{TlsCert, TlsConf, TlsKey};
 
     fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
         VaultConfig {
@@ -400,8 +397,7 @@ mod tests {
     /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.
     #[test]
     fn config_validation_rejects_a_secret_sharing_private_vault() {
-        let mut config: CoreConfig =
-            init_conf("config/default_centralized.toml").expect("config must parse");
+        let mut config: CoreConfig = init_conf("config/default_1.toml").expect("config must parse");
         config.private_vault = Some(vault_with(Some(Keychain::SecretSharing(
             SecretSharingKeychain {},
         ))));
@@ -418,8 +414,6 @@ mod tests {
         let mut zero_interval = config.clone();
         zero_interval
             .threshold
-            .as_mut()
-            .expect("threshold section required for threshold config")
             .core_to_core_net
             .keepalive_interval_secs = Some(0);
         assert!(zero_interval.validate().is_err());
@@ -427,25 +421,20 @@ mod tests {
         let mut zero_timeout = config;
         zero_timeout
             .threshold
-            .as_mut()
-            .expect("threshold section required for threshold config")
             .core_to_core_net
             .keepalive_timeout_secs = Some(0);
         assert!(zero_timeout.validate().is_err());
     }
 
     #[test]
-    fn test_threshold_config() {
+    fn test_party_config() {
         let core_config: CoreConfig =
             init_conf("config/default_2").expect("default_2 config must parse");
         core_config
             .validate()
             .expect("default_2 config should validate");
 
-        let threshold_config = core_config
-            .threshold
-            .as_ref()
-            .expect("threshold section required for threshold config");
+        let threshold_config = &core_config.threshold;
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
         assert_eq!(core_config.service.listen_port, 50200);
         assert_eq!(threshold_config.listen_address, "0.0.0.0");
@@ -535,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_config_negative() {
+    fn test_party_config_negative() {
         // the test below assumes we're using a valid config with 4 parties and threshold 1, which is the case for the default configs
         let core_config: CoreConfig = init_conf("config/default_2").expect("config must parse");
         core_config
@@ -543,67 +532,35 @@ mod tests {
             .expect("baseline config must validate");
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().my_id = Some(0);
+        cc.threshold.my_id = Some(0);
         let s = cc.validate().unwrap_err().to_string();
         // the actual values are not ordered deterministically, so we just check for the generic error message
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().listen_port = 0;
+        cc.threshold.listen_port = 0;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().threshold = 0;
+        cc.threshold.threshold = 0;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().threshold = 42;
+        cc.threshold.threshold = 42;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Got t=42 but expected t=1 for n=4 parties"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().listen_address = "".to_string();
+        cc.threshold.listen_address = "".to_string();
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));
 
         let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().peers.as_mut().unwrap()[2].party_id = 123;
+        cc.threshold.peers.as_mut().unwrap()[2].party_id = 123;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Peer party ID cannot be greater than the number of parties (4)."));
-    }
-
-    #[test]
-    fn test_centralized_config() {
-        let core_config: CoreConfig = init_conf("config/default_centralized").unwrap();
-        core_config
-            .validate()
-            .expect("centralized config must validate");
-        assert_eq!(core_config.service.listen_address, "0.0.0.0");
-        assert_eq!(core_config.service.listen_port, 50051);
-
-        let private_vault = core_config.private_vault.as_ref().expect("private_vault");
-
-        assert_eq!(
-            private_vault.storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./keys"),
-                prefix: None,
-            })
-        );
-        assert!(private_vault.keychain.is_none(), "no keychain expected");
-        assert_eq!(
-            core_config.public_vault.unwrap().storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./keys"),
-                prefix: None,
-            })
-        );
-        assert!(
-            core_config.threshold.is_none(),
-            "threshold section should be absent in centralized config"
-        );
     }
 
     #[test]
@@ -611,7 +568,7 @@ mod tests {
         let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
         assert!(!core_config.requires_pcr_allowlist());
 
-        core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
+        core_config.threshold.tls = Some(TlsConf::Auto {
             eif_signing_cert: None,
             trusted_releases: vec![],
             attest_private_vault_root_key: None,
@@ -628,11 +585,17 @@ mod tests {
     }
 
     #[test]
-    fn test_centralized_enclave_config() {
-        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+    fn test_enclave_bootstrap_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("enclave.toml");
+        let mut contents = std::fs::read_to_string("config/default_1.toml").unwrap();
+        contents.push_str("\n[enclave_bootstrap]\nweb_identity_token_port = 4100\n");
+        std::fs::write(&config_path, contents).unwrap();
+
+        let core_config: CoreConfig = init_conf(config_path.to_str().unwrap()).unwrap();
         core_config
             .validate()
-            .expect("centralized enclave config must validate");
+            .expect("enclave config must validate");
 
         let enclave_bootstrap = core_config
             .enclave_bootstrap
@@ -704,10 +667,7 @@ mod tests {
         );
 
         // Threshold section
-        let threshold = core_config
-            .threshold
-            .as_ref()
-            .expect("threshold section required");
+        let threshold = &core_config.threshold;
         assert_eq!(threshold.my_id, Some(1));
         assert_eq!(threshold.threshold, 1);
         assert_eq!(threshold.listen_port, 50001);
@@ -738,64 +698,5 @@ mod tests {
         let aws = core_config.aws.as_ref().expect("aws config required");
         assert_eq!(aws.region, "us-east-1");
         assert!(aws.s3_endpoint.is_some(), "s3_endpoint expected");
-    }
-
-    #[test]
-    fn config_conformance_compose_centralized() {
-        let core_config: CoreConfig =
-            init_conf("config/compose_centralized").expect("compose_centralized config must parse");
-        core_config
-            .validate()
-            .expect("compose_centralized config must validate");
-
-        // Service endpoint
-        assert_eq!(core_config.service.listen_address, "0.0.0.0");
-        assert_eq!(core_config.service.listen_port, 50051);
-
-        // Public vault: S3 storage
-        let public_vault = core_config
-            .public_vault
-            .as_ref()
-            .expect("public_vault required");
-        assert!(
-            public_vault.storage.is_s_3(),
-            "compose_centralized public vault must use S3"
-        );
-
-        // Private vault: file storage
-        let private_vault = core_config
-            .private_vault
-            .as_ref()
-            .expect("private_vault required");
-        assert_eq!(
-            private_vault.storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./keys"),
-                prefix: None,
-            })
-        );
-
-        // Backup vault: file storage
-        let backup_vault = core_config
-            .backup_vault
-            .as_ref()
-            .expect("backup_vault required");
-        assert_eq!(
-            backup_vault.storage,
-            Storage::File(FileStorage {
-                path: PathBuf::from("./backup_vault"),
-                prefix: None,
-            })
-        );
-
-        // No threshold section
-        assert!(
-            core_config.threshold.is_none(),
-            "centralized compose must not have threshold section"
-        );
-
-        // AWS config
-        let aws = core_config.aws.as_ref().expect("aws config required");
-        assert_eq!(aws.region, "us-east-1");
     }
 }

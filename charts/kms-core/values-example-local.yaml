@@ -30,9 +30,9 @@ kmsCore:
       bucket: kms-public
       prefix: ""
   thresholdMode:
-    enabled: false
-    initializationScript:
-      enabled: true
+    enabled: true
+    # 1 corruption for the 4 parties in peersList.
+    thresholdValue: 1
     peersList:
       - id: 1
         host: kms-threshold-staging-1

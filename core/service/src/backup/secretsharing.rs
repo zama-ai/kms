@@ -97,7 +97,7 @@ mod pkcs7 {
     }
 }
 
-/// Note, normally we'll serialize a ThresholdFheKeys and then call this function.
+/// Note, normally we'll serialize a FheKeys and then call this function.
 pub(crate) fn share<R>(
     rng: &mut R,
     secrets: &[u8],

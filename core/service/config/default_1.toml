@@ -101,7 +101,6 @@ prefix = "BACKUP-p1"
 # root_key_spec = "asymm"
 
 # Configuration for communicating with other KMS nodes.
-# Not needed when running in centralized mode.
 [threshold]
 
 # Address and port that the TCP listener binds to for inter‑core communication.

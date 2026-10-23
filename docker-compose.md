@@ -33,14 +33,23 @@ graph
 
 The compose files at the repo root are layered: `docker-compose-core-base.yml`
 provides the S3 mock, and is combined with either
-`docker-compose-core-centralized.yml` (a single `dev-kms-core`),
-`docker-compose-core-threshold.yml` (4 parties), or
+`docker-compose-core-threshold.yml` (4 parties) or
 `docker-compose-core-threshold-6.yml` (6 parties).
 `docker-compose-telemetry.yml` adds Prometheus and Jaeger sidecars.
 
+To run the 4-party network locally, run these commands at the repository root:
+
+```bash
+make build-compose-threshold
+make start-compose-threshold
+```
+
+`make stop-compose-threshold` stops the network and removes its volumes.
+The core-client config [`core-client/config/client_local_threshold.toml`](core-client/config/client_local_threshold.toml) connects to this network.
+
 ```mermaid
 graph
-  subgraph Threshold Docker Compose dependencies
+  subgraph Docker Compose dependencies
     direction LR
     dsm[dev-s3-mock]
     dsms[dev-s3-mock-setup]

@@ -59,9 +59,9 @@ kmsCore:
     #    epochIds:
     #      - "0x0800000000000000000000000000000000000000000000000000000000000001" # Default Epoch ID
     #      - "0x0800000000000000000000000000000000000000000000000000000000000002" # ID of the first new epoch created
-  # Add the following to enable threshold mode:
+  # `enabled` accepts only `true`. Rendering fails if it is set to `false`.
   thresholdMode:
-    enabled: false
+    enabled: true
     # When true, render no [[threshold.peers]] and skip the 3*t+1 party check.
     # The server writes no default context and loads only the MPC contexts in its
     # private storage, which the connector fills from the on-chain ProtocolConfig.
@@ -112,7 +112,6 @@ kmsCore:
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       # Enables mutual attestation of private vault root key policies
       attestPrivateVaultRootKey: false
-    # This value appears in the config file as `threshold`.
     multiplier: 2.0
     maxInterval: 60
     maxElapsedTime: 300
@@ -124,7 +123,7 @@ kmsCore:
     tokioWorkerThreads: 10
     rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
-    # 1 for 4 parties, 4 for 13 parties
+    # 1 for 4 parties, 4 for 13 parties. It appears in the config file as `threshold`.
     thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
@@ -144,9 +143,9 @@ kmsCore:
     memoryGiB: 96
     networkTunnel:
       enabled: true
-      # If unset, queueCount defaults to a heuristic based on the threshold
+      # If unset, queueCount defaults to a heuristic based on the
       # party topology: 8 queues minimum, or the next power of two above the
-      # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
+      # hot peer-flow count (2 * (party_count - 1)).
       queueCount:
       # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
       # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.

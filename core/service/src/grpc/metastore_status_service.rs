@@ -20,7 +20,7 @@ use crate::{
     backup::operator::RecoveryValidationMaterial,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
-        threshold::service::BucketMetaStore,
+        service::BucketMetaStore,
     },
     util::meta_store::{EntryState, MetaStore},
 };

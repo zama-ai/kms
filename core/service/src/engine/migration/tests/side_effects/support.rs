@@ -2,7 +2,7 @@
 
 use super::super::super::*;
 use crate::{
-    engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion},
+    engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion, four_party_nodes},
     vault::storage::{
         Storage, StorageExt,
         ram::FailingRamStorage,
@@ -76,7 +76,7 @@ pub(super) fn test_prss(threshold: u8) -> PRSSSetupCombined {
 
 pub(super) fn test_context(context_id: ContextId) -> ContextInfo {
     ContextInfo {
-        mpc_nodes: vec![NodeInfo {
+        mpc_nodes: four_party_nodes(vec![NodeInfo {
             mpc_identity: "migration-test-node".to_string(),
             party_id: 1,
             external_url: "https://doesnotexist.zama.ai".to_string(),
@@ -85,10 +85,10 @@ pub(super) fn test_context(context_id: ContextId) -> ContextInfo {
             public_storage_prefix: None,
             extra_signer_addresses: vec![],
             scheme_digests: SchemeDigests::new(),
-        }],
+        }]),
         context_id,
         software_version: SoftwareVersion::current().unwrap(),
-        threshold: 0,
+        threshold: 1,
         pcr_values: vec![],
     }
 }

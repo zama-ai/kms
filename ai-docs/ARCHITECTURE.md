@@ -1,7 +1,7 @@
 # Architecture
 
 KMS provides FHE key generation, CRS generation, decryption, and resharing for FHEVM.
-Startup selects centralized mode or threshold MPC (`[threshold]` in server config; samples in [core/service/config/](../core/service/config/)); both share the service API.
+KMS runs as an `n`-party threshold MPC cluster; each party reads the required `[threshold]` section of its server config (samples in [core/service/config/](../core/service/config/)).
 Production threshold deployments typically run `n = 13` parties with threshold `t = 4`.
 This file records navigation and cross-module invariants. Read linked source or task-specific docs for implementation details.
 
@@ -18,7 +18,7 @@ Apply this summary in every review. Read the [trust model](../docs/explanations/
 
 | Area | Entry point |
 |---|---|
-| Service handlers and state | [core/service/src/engine/](../core/service/src/engine/), split into `centralized/` and `threshold/` |
+| Service handlers and state | [core/service/src/engine/](../core/service/src/engine/); protocol handlers in `service/` |
 | MPC protocols | [threshold-execution](../core/threshold-execution/), [threshold-algebra](../core/threshold-algebra/) |
 | Peer transport | [core/threshold-networking/](../core/threshold-networking/) |
 | Storage and keychains | [core/service/src/vault/](../core/service/src/vault/) |
@@ -32,7 +32,7 @@ Workspace membership and dependencies: [Cargo.toml](../Cargo.toml). Test policy:
 
 ## Test fixtures
 
-Threshold fixtures supply the default epoch and PRSS setup per party. `TestMaterialSpec::threshold_basic` includes them; `ThresholdTestEnvBuilder::with_prss()` adds them to signing-only fixtures. Servers never create epochs at boot; request fresh epochs through `new_mpc_epoch`.
+Threshold fixtures supply the default epoch and PRSS setup per party. `TestMaterialSpec::basic` includes them; `ThresholdTestEnvBuilder::with_prss()` adds them to signing-only fixtures. Servers never create epochs at boot; request fresh epochs through `new_mpc_epoch`.
 
 ## gRPC surface
 
@@ -42,7 +42,7 @@ Source of truth: [kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto)
 - Known IDs normally return `AlreadyExists`. Async decryption can redo failed attempts; sync decryption attaches to existing work/results and can redo failures.
 - Metastores are in memory. Connector persistence coordinates retries across core restarts; do not assume durable server-side deduplication.
 - Noise-flooded user decryption derives masks locally from epoch PRSS and ciphertext session IDs; it needs no network session. Public and bit-decomposition user decryption do.
-- Centralized nodes have no epoch registry; epoch-scoped operations accept only the default epoch. Omitted epoch IDs default to it.
+- Omitted epoch IDs default to the default epoch.
 - Startup selects the greatest epoch's metadata per key/CRS ID; epoch ordering is big-endian integer ordering.
 - Keygen/CRS persist only after generation succeeds. Abort updates request state without purging storage. Insecure keygen still requires a preprocessing ID.
 - Keysets contain separate OPRF and, when configured, transciphering secret shares. Legacy upgrades leave them absent; `UseExisting` generates missing shares. Resharing preserves absence and requires parties to agree on optional shares.
@@ -92,7 +92,7 @@ Peer repair: [public_material_sync.rs](../core/service/src/engine/public_materia
 - Reject mode-inappropriate private material, unknown epochs for key/CRS metadata, missing contexts for epochs, and context IDs inconsistent with storage handles.
 - Signing layout permits key, seed, or both at the fixed ID; serving still requires the ECDSA key. Unknown files/folders and extra public material log errors without blocking boot.
 - Threshold nodes repair failed public verification from peers in the material's epoch context, using the greatest epoch's private metadata per ID. Accept only matching raw-byte digests; verify again after repair. Unrecoverable required material fails boot.
-- No peer repair for legacy digestless objects, decompression keys without private counterparts, or node-specific material. Centralized nodes have no peer repair.
+- No peer repair for legacy digestless objects, decompression keys without private counterparts, or node-specific material.
 - Backup repair copies missing private entries to the vault; it does not reverify existing backups. An uninitialized custodian keychain skips backup with a warning.
 - Flat legacy `PrssSetup` fails threshold boot. Flat `PrssSetupCombined` remains valid through the 0.15 migration; 0.16 removes it and verifies deletion by relisting.
 

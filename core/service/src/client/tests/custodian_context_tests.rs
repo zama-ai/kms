@@ -1,0 +1,172 @@
+use crate::client::client_wasm::Client;
+use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
+use crate::testing::setup::TestEnv;
+use crate::util::key_setup::test_tools::backup_exists;
+use crate::util::key_setup::test_tools::read_custodian_backup_files;
+use crate::{
+    cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
+};
+use kms_grpc::kms::v1::{Empty, NewCustodianContextRequest};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::{RequestId, kms::v1::FheParameter};
+use std::collections::HashMap;
+use tokio::task::JoinSet;
+use tonic::transport::Channel;
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(7, 3)]
+#[case(3, 1)]
+async fn test_new_custodian_context(#[case] custodians: usize, #[case] threshold: u32) {
+    new_custodian_context(4, FheParameter::Test, custodians, threshold).await;
+}
+
+async fn new_custodian_context(
+    amount_parties: usize,
+    parameter: FheParameter,
+    amount_custodians: usize,
+    threshold: u32,
+) {
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let req_new_cus: RequestId =
+        derive_request_id(&format!("test_new_custodian_context_{amount_parties}")).unwrap();
+    let req_new_cus2: RequestId =
+        derive_request_id(&format!("test_new_custodian_context_2_{amount_parties}")).unwrap();
+    let dkg_param: WrappedDKGParams = parameter.into();
+
+    let (material_dir, kms_servers, kms_clients, mut internal_client) = {
+        let env = TestEnv::builder()
+            .with_party_count(amount_parties)
+            .with_custodian_keychain()
+            .with_prss()
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = Some(material_dir.path());
+
+    run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    // Check that the files are backed up
+    assert!(backup_exists(test_path, backup_storage_prefixes).await);
+    let first_sig_keys = read_custodian_backup_files(
+        test_path,
+        &req_new_cus,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    // Validate that each backup is different since it is supposed to be secret shared
+    for cur_idx in 1..first_sig_keys.len() {
+        assert!(first_sig_keys[cur_idx] != first_sig_keys[0]);
+    }
+    // Generate a new custodian context
+    run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus2,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let second_sig_keys = read_custodian_backup_files(
+        test_path,
+        &req_new_cus2,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    // Validate that each backup is different since it is supposed to be secret shared
+    for cur_idx in 1..second_sig_keys.len() {
+        assert!(second_sig_keys[cur_idx] != second_sig_keys[0]);
+    }
+    // Check that the backup is changed
+    for cur_idx in 0..second_sig_keys.len() {
+        assert!(second_sig_keys[cur_idx] != first_sig_keys[cur_idx]);
+    }
+
+    // Check that we can shut down and start again without updates changing
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+    drop(kms_clients);
+    drop(internal_client);
+    let (_kms_servers, _kms_clients) = TestEnv::builder()
+        .with_party_count(amount_parties)
+        .with_custodian_keychain()
+        .with_prss()
+        .from_path(material_dir.path())
+        .await
+        .unwrap();
+    let reboot_sig_keys = read_custodian_backup_files(
+        test_path,
+        &req_new_cus2,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    for cur_idx in 0..reboot_sig_keys.len() {
+        // Check that the backups are the same as the ones loaded before the reboot
+        assert!(reboot_sig_keys[cur_idx] == second_sig_keys[cur_idx]);
+    }
+}
+
+pub(crate) async fn run_new_cus_context(
+    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &mut Client,
+    req_new_cus: &RequestId,
+    amount_custodians: usize,
+    threshold: u32,
+) -> Vec<String> {
+    let (new_cus_req, mnemonics) = internal_client
+        .new_custodian_context_request(
+            req_new_cus,
+            &DEFAULT_MPC_CONTEXT,
+            amount_custodians,
+            threshold,
+        )
+        .unwrap();
+
+    let responses = launch_new_cus(&new_cus_req, kms_clients).await;
+    for response in responses {
+        assert!(response.is_ok());
+    }
+    mnemonics
+}
+
+async fn launch_new_cus(
+    req: &NewCustodianContextRequest,
+    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
+    let amount_parties = kms_clients.len();
+    let mut tasks_gen = JoinSet::new();
+    for i in 1..=amount_parties as u32 {
+        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+        let req_clone = req.clone();
+        tasks_gen.spawn(async move {
+            cur_client
+                .new_custodian_context(tonic::Request::new(req_clone))
+                .await
+        });
+    }
+    let mut responses_gen = Vec::new();
+    while let Some(inner) = tasks_gen.join_next().await {
+        let resp = inner.unwrap();
+        responses_gen.push(resp);
+    }
+    assert_eq!(responses_gen.len(), amount_parties);
+    responses_gen
+}

@@ -27,16 +27,16 @@ pub async fn purge(
     priv_storage_prefixes: &[Option<String>],
 ) {
     for storage_prefix in public_storage_prefixes.iter() {
-        let mut threshold_pub =
+        let mut pub_storage =
             FileStorage::new(pub_path, StorageType::PUB, storage_prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut threshold_pub, id)
+        delete_all_at_request_id(&mut pub_storage, id)
             .await
             .unwrap();
     }
     for storage_prefix in priv_storage_prefixes.iter() {
-        let mut threshold_priv =
+        let mut priv_storage =
             FileStorage::new(priv_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut threshold_priv, id)
+        delete_all_at_request_id(&mut priv_storage, id)
             .await
             .unwrap();
 
@@ -44,10 +44,10 @@ pub async fn purge(
         use PrivDataType::*;
         for data_type in [FhePrivateKey, FheKeyInfo, CrsInfo] {
             let data_type_str = data_type.to_string();
-            if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
+            if let Ok(epoch_ids) = priv_storage.all_epoch_ids_for_data(&data_type_str).await {
                 for epoch_id in epoch_ids {
                     let _ = delete_at_request_and_epoch_id(
-                        &mut threshold_priv,
+                        &mut priv_storage,
                         id,
                         &epoch_id,
                         &data_type_str,
@@ -191,4 +191,41 @@ async fn read_custodian_backup_files_impl(
         }
     }
     files
+}
+
+/// Computes a CRS by a single-party trusted setup and signs its metadata with `sk`.
+///
+/// Tests only: production CRSs come from the MPC ceremony, or for the insecure endpoint from a
+/// trusted setup on one party that is then transferred to the others.
+#[cfg(test)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn trusted_setup_crs_with_info<R: rand::Rng + rand::CryptoRng>(
+    sk: &crate::cryptography::signing::identity::NodeSigningIdentity,
+    signing_schemes: &[crate::cryptography::signing::SigningSchemeType],
+    params: &threshold_execution::tfhe_internals::parameters::DKGParams,
+    max_num_bits: Option<u32>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+    req_id: &RequestId,
+    mut rng: R,
+) -> anyhow::Result<(tfhe::zk::CompactPkeCrs, crate::engine::base::CrsGenMetadata)> {
+    let sid = req_id.derive_session_id()?;
+    let pke_params = params.compact_pk_enc_params();
+    let internal_pp = threshold_execution::zk::ceremony::public_parameters_by_trusted_setup(
+        &pke_params,
+        max_num_bits.map(|x| x as usize),
+        sid,
+        &mut rng,
+    )?;
+    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
+    let crs_info = crate::engine::base::compute_info_crs(
+        sk,
+        signing_schemes,
+        &crate::engine::base::DSEP_PUBDATA_CRS,
+        req_id,
+        &pp,
+        eip712_domain,
+        extra_data,
+    )?;
+    Ok((pp, crs_info))
 }

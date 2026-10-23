@@ -49,8 +49,6 @@ The KMS is in turn composed of the following components, which we illustrate in 
 
 ![KMS system](./docs/getting-started/overview.png)
 
-We observe that while the standard deployment of the KMS system is in a threshold setting, it can also be deployed in a centralized manner, where it will consist of a single logical Connector, Core and Keychain DA.
-
 
 ## Installation
 
@@ -104,8 +102,6 @@ Note: The yml files above do NOT use custodian-based backup! If this is needed, 
 ```sh
 KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
 ```
-
-It is possible to run the centralized version with `make build-compose-centralized` followed by `make start-compose-centralized`.
 
 Then navigate to the `core-client` directory.
 This is the client that interacts with the KMS service to perform various key management tasks. For example to securely generate a CRS for the zero knowledge proofs the command would be:

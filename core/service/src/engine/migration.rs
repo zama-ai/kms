@@ -1,8 +1,8 @@
 use crate::conf::MigrationConfig;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
 use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{
@@ -12,7 +12,7 @@ use crate::vault::storage::{
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -72,61 +72,48 @@ pub enum PrssCombinedEpochMigrationOutcome {
     since = "0.13.10",
     note = "The migration to 0.13.x is no longer needed and migrate_to_0_13_10 should be used instead"
 )]
-pub async fn migrate_to_0_13_x<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
+pub async fn migrate_to_0_13_x<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    migrate_fhe_keys_v0_12_to_v0_13(priv_storage, kms_type).await?;
-    if let KMSType::Threshold = kms_type {
-        migrate_legacy_prss(priv_storage).await.map(|_| ())?;
-    }
+    migrate_fhe_keys_v0_12_to_v0_13(priv_storage).await?;
+    migrate_legacy_prss(priv_storage).await.map(|_| ())?;
     Ok(())
 }
 
 /// Migrate from 0.12.x or 0.13.x to 0.13.10
 ///
 /// This involves removing already migrated FHE key material in the legacy storage location.
-pub async fn migrate_to_0_13_10<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
+pub async fn migrate_to_0_13_10<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
     // Ensure old migration is done
     #[expect(deprecated)]
-    migrate_to_0_13_x(priv_storage, kms_type).await?;
-    if let KMSType::Threshold = kms_type {
-        // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
-        // That is, if a conversion to the PRSSCombined format has already been done, but under the legacy default epoch id
-        migrate_combined_prss_to_0_13_10(priv_storage)
-            .await
-            .map(|_| ())?;
-    }
+    migrate_to_0_13_x(priv_storage).await?;
+    // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
+    // That is, if a conversion to the PRSSCombined format has already been done, but under the legacy default epoch id
+    migrate_combined_prss_to_0_13_10(priv_storage)
+        .await
+        .map(|_| ())?;
     migrate_context_before_0_13_10(priv_storage)
         .await
         .map(|_| ())?;
-    migrate_fhe_keys_0_13_x_to_0_13_10(priv_storage, kms_type).await?;
+    migrate_fhe_keys_0_13_x_to_0_13_10(priv_storage).await?;
     // Remove moved keys (keys with legacy ID still remains)
-    migrate_fhe_keys_after_0_13_x(priv_storage, kms_type).await?;
+    migrate_fhe_keys_after_0_13_x(priv_storage).await?;
     Ok(())
 }
 
 /// Migrate to 0.13.20
-pub async fn migrate_to_0_13_20<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
+pub async fn migrate_to_0_13_20<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
     // Ensure old migration is done
-    migrate_to_0_13_10(priv_storage, kms_type).await?;
+    migrate_to_0_13_10(priv_storage).await?;
     // Remove old keys with legacy epoch id.
-    remove_old_keys_for_0_13_20(priv_storage, kms_type).await?;
+    remove_old_keys_for_0_13_20(priv_storage).await?;
     Ok(())
 }
 
@@ -134,7 +121,6 @@ where
 pub async fn migrate_to_0_15_x<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
-    kms_type: KMSType,
     migration_config: Option<&MigrationConfig>,
 ) -> anyhow::Result<()>
 where
@@ -142,8 +128,8 @@ where
     PrivS: StorageExt + Sync + Send,
 {
     // Complete migrations from releases before v0.15 first.
-    migrate_to_0_13_20(priv_storage, kms_type).await?;
-    migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await?;
+    migrate_to_0_13_20(priv_storage).await?;
+    migrate_prss_to_epoch(priv_storage, migration_config).await?;
     migrate_public_verification_material(priv_storage, pub_storage).await?;
     // Remove legacy CRS entries only after the other migrations succeed.
     migrate_crs_to_0_15_x(priv_storage).await
@@ -212,14 +198,11 @@ where
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
-pub async fn migrate_to_0_16_x<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
+pub async fn migrate_to_0_16_x<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    remove_old_prss_data(priv_storage, kms_type).await?;
+    remove_old_prss_data(priv_storage).await?;
     Ok(())
 }
 
@@ -262,16 +245,11 @@ where
 
 async fn migrate_prss_to_epoch<PrivS>(
     priv_storage: &mut PrivS,
-    kms_type: KMSType,
     migration_config: Option<&MigrationConfig>,
 ) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    if kms_type == KMSType::Centralized {
-        tracing::info!("No migration needed for centralized KMS");
-        return Ok(());
-    }
     let inner_migration_conf = match migration_config {
         Some(inner_migration_conf) => inner_migration_conf,
         None => {
@@ -290,10 +268,10 @@ where
             }
         }
     };
-    threshold_prss_to_epoch(priv_storage, inner_migration_conf).await
+    prss_to_epoch(priv_storage, inner_migration_conf).await
 }
 
-async fn threshold_prss_to_epoch<PrivS>(
+async fn prss_to_epoch<PrivS>(
     priv_storage: &mut PrivS,
     migration_config: &MigrationConfig,
 ) -> anyhow::Result<()>
@@ -453,13 +431,7 @@ fn parse_migration_map(
 /// Removes flat legacy PRSS entries and returns an error if any remain.
 async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
     priv_storage: &mut PrivS,
-    kms_type: KMSType,
 ) -> anyhow::Result<()> {
-    if kms_type == KMSType::Centralized {
-        tracing::info!("No PRSS data to remove for centralized KMS");
-        return Ok(());
-    }
-
     #[expect(deprecated)]
     let data_type = PrivDataType::PrssSetupCombined.to_string();
     let data_ids = priv_storage.all_data_ids(&data_type).await?;
@@ -480,29 +452,20 @@ async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
 /// This function should be removed in 0.13.20.
 ///
 /// In more detail, legacy format (v0.12.x) stores keys at: `<prefix>/<data_type>/<key_id>`.
-/// This function checks for FhePrivateKey (centralized) or FheKeyInfo (threshold) data
-/// stored in the legacy format and migrates them to the new epoch-aware format using
+/// This function checks for FheKeyInfo data stored in the legacy format and migrates them to the new epoch-aware format using
 /// `DEFAULT_EPOCH_ID` as the default epoch ID.
 ///
 /// # Arguments
 /// * `priv_storage` - Private storage instance supporting both legacy and epoch-aware operations
-/// * `kms_type` - The KMS type (Centralized or Threshold) which determines which data type to migrate
 ///
 /// # Returns
 /// * `Ok(migrated_count)` - Number of keys successfully migrated
 /// * `Err(...)` - If any migration operation fails
-async fn migrate_fhe_keys_v0_12_to_v0_13<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<usize>
+async fn migrate_fhe_keys_v0_12_to_v0_13<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<usize>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    let data_type = match kms_type {
-        KMSType::Centralized => PrivDataType::FhePrivateKey,
-        KMSType::Threshold => PrivDataType::FheKeyInfo,
-    };
-    let data_type_str = data_type.to_string();
+    let data_type_str = PrivDataType::FheKeyInfo.to_string();
 
     // Get the default epoch ID for migrated keys
     let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
@@ -568,14 +531,11 @@ where
 /// and SHAKE-256 digest as its legacy entry. The preceding migration copies these bytes without
 /// transforming them.
 /// Returns an error if a replacement is missing or differs, and retains that legacy entry.
-async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
+async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
 {
-    let data_type = match kms_type {
-        KMSType::Centralized => PrivDataType::FhePrivateKey,
-        KMSType::Threshold => PrivDataType::FheKeyInfo,
-    };
+    let data_type = PrivDataType::FheKeyInfo;
     let data_type_str = data_type.to_string();
     // Get the default epoch ID for migrated keys
     let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
@@ -855,16 +815,12 @@ where
 
 async fn migrate_fhe_keys_0_13_x_to_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
-    kms_type: KMSType,
 ) -> anyhow::Result<usize>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    // Note that these are the only epoched types, besides the epoch (PRSS) itself
-    let data_type_str = match kms_type {
-        KMSType::Centralized => PrivDataType::FhePrivateKey.to_string(),
-        KMSType::Threshold => PrivDataType::FheKeyInfo.to_string(),
-    };
+    // In 0.13.x this is the only epoched type, besides the epoch (PRSS) itself
+    let data_type_str = PrivDataType::FheKeyInfo.to_string();
     let legacy_key_ids = priv_storage
         .all_data_ids_at_epoch(&LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
         .await?;
@@ -931,17 +887,11 @@ where
 /// same length and SHAKE-256 digest. The preceding migration copies these bytes without
 /// transforming them.
 /// Returns an error if a replacement is missing or differs, and retains that legacy entry.
-async fn remove_old_keys_for_0_13_20<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
+async fn remove_old_keys_for_0_13_20<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    let data_type = match kms_type {
-        KMSType::Centralized => PrivDataType::FhePrivateKey,
-        KMSType::Threshold => PrivDataType::FheKeyInfo,
-    };
+    let data_type = PrivDataType::FheKeyInfo;
     let data_type_str = data_type.to_string();
     // Get the default epoch ID for migrated keys
     let new_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
@@ -1006,7 +956,7 @@ mod tests {
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
-        delete_non_legacy_verf_material, ensure_central_server_signing_keys_exist,
+        delete_non_legacy_verf_material, ensure_server_signing_key_exists,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_identity, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;
@@ -1024,9 +974,7 @@ mod tests {
     use threshold_types::rng::AesRng;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
-    pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_migrate_legacy_fhe_keys<S: StorageExt + Sync + Send>(storage: &mut S) {
         // Store some legacy data (directly under data_type without epoch)
         // Note: key IDs must not collide with the epoch id to avoid path conflicts
         let key_id_1 = RequestId::from_str(
@@ -1056,9 +1004,7 @@ mod tests {
         assert!(storage.data_exists(&key_id_2, &data_type).await.unwrap());
 
         // Run migration
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
 
         assert_eq!(migrated_count, 2);
 
@@ -1094,59 +1040,7 @@ mod tests {
         assert_eq!(migrated_data_2, legacy_data_2);
 
         // Run migration again and verify it skips already migrated keys
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
-        assert_eq!(migrated_count, 0);
-    }
-
-    /// Test migration of centralized FHE keys (FhePrivateKey)
-    pub async fn test_migrate_legacy_fhe_keys_centralized<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-
-        let legacy_data = vec![42, 43, 44, 45];
-
-        storage
-            .store_bytes(&legacy_data, &key_id, &data_type)
-            .await
-            .unwrap();
-
-        // Run migration
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Centralized)
-            .await
-            .unwrap();
-
-        assert_eq!(migrated_count, 1);
-
-        // Verify legacy data still exists
-        assert!(storage.data_exists(&key_id, &data_type).await.unwrap());
-
-        // Verify data exists at the new epoch location
-        let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
-        assert!(
-            storage
-                .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
-                .await
-                .unwrap()
-        );
-
-        // Verify the data content is preserved
-        let migrated_data = storage
-            .load_bytes_at_epoch(&key_id, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap();
-        assert_eq!(migrated_data, legacy_data);
-
-        // Run migration again and verify it skips already migrated keys
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Centralized)
-            .await
-            .unwrap();
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
         assert_eq!(migrated_count, 0);
     }
 
@@ -1177,9 +1071,7 @@ mod tests {
             .unwrap();
 
         // Run migration
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
 
         // Should skip the key since it already exists at the epoch
         assert_eq!(migrated_count, 0);
@@ -1200,9 +1092,7 @@ mod tests {
         storage: &mut S,
     ) {
         // No legacy data stored
-        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
 
         assert_eq!(migrated_count, 0);
     }
@@ -1225,15 +1115,11 @@ mod tests {
             .unwrap();
 
         // First migration
-        let migrated_count_1 = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated_count_1 = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
         assert_eq!(migrated_count_1, 1);
 
         // Second migration should do nothing (data already migrated, legacy deleted)
-        let migrated_count_2 = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated_count_2 = migrate_fhe_keys_v0_12_to_v0_13(storage).await.unwrap();
         assert_eq!(migrated_count_2, 0);
 
         // Data should still be at the epoch location
@@ -1247,15 +1133,9 @@ mod tests {
 
     // RAM storage tests
     #[tokio::test]
-    async fn test_migrate_threshold_ram() {
+    async fn test_migrate_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_migrate_centralized_ram() {
-        let mut storage = RamStorage::new();
-        test_migrate_legacy_fhe_keys_centralized(&mut storage).await;
+        test_migrate_legacy_fhe_keys(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1278,17 +1158,10 @@ mod tests {
 
     // File storage tests
     #[tokio::test]
-    async fn test_migrate_threshold_file() {
+    async fn test_migrate_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_migrate_centralized_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_legacy_fhe_keys_centralized(&mut storage).await;
+        test_migrate_legacy_fhe_keys(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1386,9 +1259,7 @@ mod tests {
     // ── Tests for migrate_fhe_keys_after_0_13_x ──
 
     /// Test that legacy keys with epoch counterparts are deleted (threshold)
-    pub async fn test_migrate_fhe_keys_after_0_13_x_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_migrate_fhe_keys_after_0_13_x<S: StorageExt + Sync + Send>(storage: &mut S) {
         let key_id_1 = RequestId::from_str(
             "0x00000000000000000000000000000000000000000000000000000000000000aa",
         )
@@ -1424,9 +1295,7 @@ mod tests {
             .unwrap();
 
         // Run the cleanup migration
-        migrate_fhe_keys_after_0_13_x(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_fhe_keys_after_0_13_x(storage).await.unwrap();
 
         // Legacy data should be deleted
         assert!(!storage.data_exists(&key_id_1, &data_type).await.unwrap());
@@ -1445,48 +1314,11 @@ mod tests {
         assert_eq!(loaded_2, legacy_data_2);
     }
 
-    /// Test that legacy keys with epoch counterparts are deleted (centralized)
-    pub async fn test_migrate_fhe_keys_after_0_13_x_centralized<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-        let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
-
-        let data = vec![42, 43, 44, 45];
-
-        storage
-            .store_bytes(&data, &key_id, &data_type)
-            .await
-            .unwrap();
-        storage
-            .store_bytes_at_epoch(&data, &key_id, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap();
-
-        migrate_fhe_keys_after_0_13_x(storage, KMSType::Centralized)
-            .await
-            .unwrap();
-
-        assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
-        assert!(
-            storage
-                .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
-                .await
-                .unwrap()
-        );
-    }
-
     /// Test with no legacy keys at all
     pub async fn test_migrate_fhe_keys_after_0_13_x_no_legacy<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
-        migrate_fhe_keys_after_0_13_x(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_fhe_keys_after_0_13_x(storage).await.unwrap();
     }
 
     /// Test idempotency of the cleanup migration
@@ -1510,15 +1342,11 @@ mod tests {
             .unwrap();
 
         // First run deletes legacy
-        migrate_fhe_keys_after_0_13_x(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_fhe_keys_after_0_13_x(storage).await.unwrap();
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
 
         // Second run is a no-op (no legacy keys left)
-        migrate_fhe_keys_after_0_13_x(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_fhe_keys_after_0_13_x(storage).await.unwrap();
 
         // Epoch data still intact
         let loaded = storage
@@ -1530,15 +1358,9 @@ mod tests {
 
     // RAM storage tests — migrate_fhe_keys_after_0_13_x
     #[tokio::test]
-    async fn test_after_0_13_x_threshold_ram() {
+    async fn test_after_0_13_x_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_after_0_13_x_centralized_ram() {
-        let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_after_0_13_x_centralized(&mut storage).await;
+        test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1559,7 +1381,7 @@ mod tests {
             .await
             .unwrap();
 
-        let error = migrate_fhe_keys_after_0_13_x(&mut storage, KMSType::Threshold)
+        let error = migrate_fhe_keys_after_0_13_x(&mut storage)
             .await
             .unwrap_err();
 
@@ -1575,17 +1397,10 @@ mod tests {
 
     // File storage tests — migrate_fhe_keys_after_0_13_x
     #[tokio::test]
-    async fn test_after_0_13_x_threshold_file() {
+    async fn test_after_0_13_x_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_after_0_13_x_centralized_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_after_0_13_x_centralized(&mut storage).await;
+        test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
     }
 
     #[tokio::test]
@@ -1998,7 +1813,7 @@ mod tests {
             .unwrap();
     }
 
-    pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold<S: StorageExt + Sync + Send>(
+    pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
         let key_id_1 = RequestId::from_str(
@@ -2017,9 +1832,7 @@ mod tests {
         setup_key_at_legacy_epoch(storage, &key_id_1, &data_1, &data_type).await;
         setup_key_at_legacy_epoch(storage, &key_id_2, &data_2, &data_type).await;
 
-        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage).await.unwrap();
         assert_eq!(migrated, 2);
 
         // Keys should now exist at DEFAULT_EPOCH_ID
@@ -2050,38 +1863,10 @@ mod tests {
         assert_eq!(loaded_2, data_2);
     }
 
-    pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized<
-        S: StorageExt + Sync + Send,
-    >(
-        storage: &mut S,
-    ) {
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-        let data = vec![99, 88, 77];
-
-        setup_key_at_legacy_epoch(storage, &key_id, &data, &data_type).await;
-
-        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Centralized)
-            .await
-            .unwrap();
-        assert_eq!(migrated, 1);
-
-        let loaded = storage
-            .load_bytes_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap();
-        assert_eq!(loaded, data);
-    }
-
     pub async fn test_migrate_fhe_keys_0_13_x_to_0_13_10_no_legacy<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
-        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage).await.unwrap();
         assert_eq!(migrated, 0);
     }
 
@@ -2109,9 +1894,7 @@ mod tests {
             .await
             .unwrap();
 
-        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let migrated = migrate_fhe_keys_0_13_x_to_0_13_10(storage).await.unwrap();
         assert_eq!(migrated, 0);
 
         // Target data should be unchanged
@@ -2135,15 +1918,11 @@ mod tests {
         setup_key_at_legacy_epoch(storage, &key_id, &data, &data_type).await;
 
         // First migration
-        let count_1 = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let count_1 = migrate_fhe_keys_0_13_x_to_0_13_10(storage).await.unwrap();
         assert_eq!(count_1, 1);
 
         // Second migration should skip (already at target)
-        let count_2 = migrate_fhe_keys_0_13_x_to_0_13_10(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        let count_2 = migrate_fhe_keys_0_13_x_to_0_13_10(storage).await.unwrap();
         assert_eq!(count_2, 0);
 
         // Data should be intact at new epoch
@@ -2156,15 +1935,9 @@ mod tests {
 
     // RAM storage tests — migrate_fhe_keys_0_13_x_to_0_13_10
     #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_threshold_ram() {
+    async fn test_0_13_x_to_0_13_10_ram() {
         let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_centralized_ram() {
-        let mut storage = RamStorage::new();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized(&mut storage).await;
+        test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2187,17 +1960,10 @@ mod tests {
 
     // File storage tests — migrate_fhe_keys_0_13_x_to_0_13_10
     #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_threshold_file() {
+    async fn test_0_13_x_to_0_13_10_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_0_13_x_to_0_13_10_centralized_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized(&mut storage).await;
+        test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2224,9 +1990,7 @@ mod tests {
     // ── Tests for remove_old_keys_for_0_13_20 ──
 
     /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (threshold)
-    pub async fn test_remove_old_keys_for_0_13_20_threshold<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    pub async fn test_remove_old_keys_for_0_13_20<S: StorageExt + Sync + Send>(storage: &mut S) {
         let key_id_1 = RequestId::from_str(
             "0x00000000000000000000000000000000000000000000000000000000000000aa",
         )
@@ -2260,9 +2024,7 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        remove_old_keys_for_0_13_20(storage).await.unwrap();
 
         // Legacy epoch keys should be deleted
         assert!(
@@ -2293,54 +2055,11 @@ mod tests {
         );
     }
 
-    /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (centralized)
-    pub async fn test_remove_old_keys_for_0_13_20_centralized<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-        let data = vec![42, 43, 44];
-
-        // Store at legacy epoch and DEFAULT_EPOCH_ID
-        storage
-            .store_bytes_at_epoch(&data, &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap();
-        storage
-            .store_bytes_at_epoch(&data, &key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap();
-
-        remove_old_keys_for_0_13_20(storage, KMSType::Centralized)
-            .await
-            .unwrap();
-
-        // Legacy epoch key should be deleted
-        assert!(
-            !storage
-                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-                .await
-                .unwrap()
-        );
-        // DEFAULT_EPOCH_ID data should still exist
-        assert!(
-            storage
-                .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-                .await
-                .unwrap()
-        );
-    }
-
     /// Test with no legacy epoch keys — nothing to remove
     pub async fn test_remove_old_keys_for_0_13_20_no_legacy<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
-        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        remove_old_keys_for_0_13_20(storage).await.unwrap();
     }
 
     /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
@@ -2362,9 +2081,7 @@ mod tests {
             .await
             .unwrap();
 
-        let error = remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
-            .await
-            .unwrap_err();
+        let error = remove_old_keys_for_0_13_20(storage).await.unwrap_err();
 
         assert!(error.to_string().contains("is missing"));
         // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
@@ -2379,15 +2096,9 @@ mod tests {
 
     // RAM storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
-    async fn test_remove_old_keys_threshold_ram() {
+    async fn test_remove_old_keys_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_keys_centralized_ram() {
-        let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
+        test_remove_old_keys_for_0_13_20(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2404,17 +2115,10 @@ mod tests {
 
     // File storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
-    async fn test_remove_old_keys_threshold_file() {
+    async fn test_remove_old_keys_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_keys_centralized_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
+        test_remove_old_keys_for_0_13_20(&mut storage).await;
     }
 
     #[tokio::test]
@@ -2434,7 +2138,7 @@ mod tests {
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_13_x_threshold() {
+    async fn test_migrate_to_0_13_x() {
         let mut storage = RamStorage::new();
         let threshold = 1u8;
         let num_parties = 4;
@@ -2455,37 +2159,7 @@ mod tests {
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
         #[expect(deprecated)]
-        migrate_to_0_13_x(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
-
-        // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
-        assert!(
-            storage
-                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_migrate_to_0_13_x_centralized() {
-        let mut storage = RamStorage::new();
-
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-        storage
-            .store_bytes(&[4, 5, 6], &key_id, &data_type)
-            .await
-            .unwrap();
-
-        #[expect(deprecated)]
-        migrate_to_0_13_x(&mut storage, KMSType::Centralized)
-            .await
-            .unwrap();
+        migrate_to_0_13_x(&mut storage).await.unwrap();
 
         // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
         assert!(
@@ -2501,19 +2175,13 @@ mod tests {
         let mut storage = RamStorage::new();
         // Should succeed with no data to migrate
         #[expect(deprecated)]
-        migrate_to_0_13_x(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
-        #[expect(deprecated)]
-        migrate_to_0_13_x(&mut storage, KMSType::Centralized)
-            .await
-            .unwrap();
+        migrate_to_0_13_x(&mut storage).await.unwrap();
     }
 
     // ── Tests for migrate_to_0_13_10 (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_13_10_threshold() {
+    async fn test_migrate_to_0_13_10() {
         let mut storage = RamStorage::new();
         let threshold = 1u8;
         let num_parties = 4;
@@ -2541,9 +2209,7 @@ mod tests {
         // Legacy PRSS under LEGACY_DEFAULT_EPOCH_ID
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
 
-        migrate_to_0_13_10(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_to_0_13_10(&mut storage).await.unwrap();
 
         // Legacy base-path key should be cleaned up
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
@@ -2558,51 +2224,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_13_10_centralized() {
-        let mut storage = RamStorage::new();
-
-        let key_id = RequestId::from_str(
-            "0x0000000000000000000000000000000000000000000000000000000000000042",
-        )
-        .unwrap();
-        let data_type = PrivDataType::FhePrivateKey.to_string();
-        let key_data = vec![4, 5, 6];
-
-        // State after v0.12→v0.13: key at base + DEFAULT_EPOCH_ID
-        storage
-            .store_bytes(&key_data, &key_id, &data_type)
-            .await
-            .unwrap();
-        storage
-            .store_bytes_at_epoch(&key_data, &key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap();
-
-        migrate_to_0_13_10(&mut storage, KMSType::Centralized)
-            .await
-            .unwrap();
-
-        // Legacy base-path key should be cleaned up
-        assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
-
-        // Epoch data still present
-        assert!(
-            storage
-                .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
     async fn test_migrate_to_0_13_10_empty_storage() {
         let mut storage = RamStorage::new();
-        migrate_to_0_13_10(&mut storage, KMSType::Threshold)
+        migrate_to_0_13_10(&mut storage).await.unwrap();
+    }
+
+    /// The key migrations leave `FhePrivateKey` entries where they are, so that the boot-time
+    /// checks reject them as foreign material.
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_leaves_fhe_private_key_entries_in_place() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        let data_type = PrivDataType::FhePrivateKey.to_string();
+        let flat_id = derive_request_id("stray_flat_fhe_private_key").unwrap();
+        let epoched_id = derive_request_id("stray_epoched_fhe_private_key").unwrap();
+        priv_storage
+            .store_bytes(&[1, 2, 3], &flat_id, &data_type)
             .await
             .unwrap();
-        migrate_to_0_13_10(&mut storage, KMSType::Centralized)
+        priv_storage
+            .store_bytes_at_epoch(
+                &[4, 5, 6],
+                &epoched_id,
+                &LEGACY_DEFAULT_EPOCH_ID,
+                &data_type,
+            )
             .await
             .unwrap();
+
+        migrate_to_0_15_x(&mut pub_storage, &mut priv_storage, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            priv_storage.load_bytes(&flat_id, &data_type).await.unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            priv_storage
+                .load_bytes_at_epoch(&epoched_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap(),
+            vec![4, 5, 6]
+        );
+        assert!(
+            priv_storage
+                .all_data_ids_at_epoch(&LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+                .into_iter()
+                .eq([epoched_id]),
+            "the flat entry must not move to the legacy epoch"
+        );
+        assert!(
+            priv_storage
+                .all_data_ids_at_epoch(&DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "no entry must move to the default epoch"
+        );
     }
 
     // ── Helpers for the 0.15.x (PRSS → epoch) migration tests ──
@@ -2762,10 +2443,10 @@ mod tests {
         );
     }
 
-    // ── Tests for threshold_prss_to_epoch ──
+    // ── Tests for prss_to_epoch ──
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_sunshine() {
+    async fn test_prss_to_epoch_sunshine() {
         let mut storage = RamStorage::new();
         let num_parties = 4u8;
         let threshold = 1u8;
@@ -2773,7 +2454,7 @@ mod tests {
         // Combined PRSS present at the default epoch, as produced by the earlier migrations.
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
 
-        threshold_prss_to_epoch(&mut storage, &default_migration_config())
+        prss_to_epoch(&mut storage, &default_migration_config())
             .await
             .unwrap();
 
@@ -2791,15 +2472,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_missing_prss_errors() {
+    async fn test_prss_to_epoch_missing_prss_errors() {
         let mut storage = RamStorage::new();
         // No combined PRSS stored, so reading it back for the mapped epoch must fail.
-        let result = threshold_prss_to_epoch(&mut storage, &default_migration_config()).await;
+        let result = prss_to_epoch(&mut storage, &default_migration_config()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_stored_epoch_missing_from_config_errors() {
+    async fn test_prss_to_epoch_stored_epoch_missing_from_config_errors() {
         let mut storage = RamStorage::new();
         // Two epochs have PRSS on disk, but the config only lists the default one (DEFAULT_EPOCH_ID).
         // The unlisted epoch must be rejected before any write, so it can never be silently dropped
@@ -2807,7 +2488,7 @@ mod tests {
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
         store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
 
-        let err = threshold_prss_to_epoch(&mut storage, &default_migration_config())
+        let err = prss_to_epoch(&mut storage, &default_migration_config())
             .await
             .unwrap_err()
             .to_string();
@@ -2828,7 +2509,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_configured_epoch_missing_on_disk_errors() {
+    async fn test_prss_to_epoch_configured_epoch_missing_on_disk_errors() {
         let mut storage = RamStorage::new();
         // Only the default epoch has PRSS on disk, but the config also lists an extra epoch under
         // the default context. The phantom epoch must be rejected up front rather than crashing
@@ -2843,7 +2524,7 @@ mod tests {
             ],
         )]);
 
-        let err = threshold_prss_to_epoch(&mut storage, &config)
+        let err = prss_to_epoch(&mut storage, &config)
             .await
             .unwrap_err()
             .to_string();
@@ -2867,7 +2548,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threshold_prss_to_epoch_skips_already_migrated_epoch() {
+    async fn test_prss_to_epoch_skips_already_migrated_epoch() {
         let mut storage = RamStorage::new();
 
         // Two epochs under the default context both still have their legacy combined PRSS on disk
@@ -2901,9 +2582,7 @@ mod tests {
             ],
         )]);
 
-        threshold_prss_to_epoch(&mut storage, &config)
-            .await
-            .unwrap();
+        prss_to_epoch(&mut storage, &config).await.unwrap();
 
         // The already-migrated epoch is left untouched: still the sentinel 9-party EpochData, not
         // the 4-party PRSS that lingers alongside it on disk.
@@ -2933,27 +2612,6 @@ mod tests {
     // ── Tests for migrate_prss_to_epoch ──
 
     #[tokio::test]
-    async fn test_migrate_prss_to_epoch_centralized_noop() {
-        let mut storage = RamStorage::new();
-        // Even with a config present, centralized KMS performs no migration.
-        migrate_prss_to_epoch(
-            &mut storage,
-            KMSType::Centralized,
-            Some(&default_migration_config()),
-        )
-        .await
-        .unwrap();
-
-        assert!(
-            storage
-                .all_data_ids(&PrivDataType::EpochData.to_string())
-                .await
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
     async fn test_migrate_prss_to_epoch_already_migrated_skips() {
         let mut storage = RamStorage::new();
         let num_parties = 4u8;
@@ -2973,9 +2631,7 @@ mod tests {
         .await
         .unwrap();
 
-        migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None)
-            .await
-            .unwrap();
+        migrate_prss_to_epoch(&mut storage, None).await.unwrap();
 
         // Still exactly one EpochData entry, unchanged.
         let ids = storage
@@ -2989,9 +2645,7 @@ mod tests {
     async fn test_migrate_prss_to_epoch_no_config_no_old_data_skips() {
         let mut storage = RamStorage::new();
         // Fresh threshold system: no EpochData, no old PRSS, no config → graceful skip.
-        migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None)
-            .await
-            .unwrap();
+        migrate_prss_to_epoch(&mut storage, None).await.unwrap();
 
         assert!(
             storage
@@ -3008,7 +2662,7 @@ mod tests {
         // Old combined PRSS present but no migration config supplied → must fail loudly.
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
 
-        let result = migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None).await;
+        let result = migrate_prss_to_epoch(&mut storage, None).await;
         assert!(result.is_err());
     }
 
@@ -3020,13 +2674,9 @@ mod tests {
 
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
 
-        migrate_prss_to_epoch(
-            &mut storage,
-            KMSType::Threshold,
-            Some(&default_migration_config()),
-        )
-        .await
-        .unwrap();
+        migrate_prss_to_epoch(&mut storage, Some(&default_migration_config()))
+            .await
+            .unwrap();
 
         let epoch: EpochData = read_versioned_at_request_id(
             &storage,
@@ -3042,16 +2692,7 @@ mod tests {
     // ── Tests for remove_old_prss_data ──
 
     #[tokio::test]
-    async fn test_remove_old_prss_data_centralized_noop() {
-        let mut storage = RamStorage::new();
-        // Centralized never has combined PRSS data; call is a no-op and must not error.
-        remove_old_prss_data(&mut storage, KMSType::Centralized)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_prss_data_threshold_removes_all() {
+    async fn test_remove_old_prss_data_removes_all() {
         let mut storage = RamStorage::new();
 
         // Two combined PRSS entries under different epoch IDs.
@@ -3065,9 +2706,7 @@ mod tests {
             .unwrap();
         assert_eq!(before.len(), 2);
 
-        remove_old_prss_data(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        remove_old_prss_data(&mut storage).await.unwrap();
 
         #[expect(deprecated)]
         let after = storage
@@ -3078,12 +2717,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_prss_data_threshold_no_data() {
+    async fn test_remove_old_prss_data_no_data() {
         let mut storage = RamStorage::new();
         // Nothing stored → still succeeds.
-        remove_old_prss_data(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        remove_old_prss_data(&mut storage).await.unwrap();
     }
 
     // ── Tests for migrate_to_0_15_x (orchestrator) ──
@@ -3107,7 +2744,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_threshold_sunshine() {
+    async fn test_migrate_to_0_15_x_sunshine() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         let num_parties = 4u8;
@@ -3118,15 +2755,12 @@ mod tests {
         // survives and migrate_prss_to_epoch converts it into EpochData.
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
             .await;
-        // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        // Derive the signing key of a single party.
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
 
         migrate_to_0_15_x(
             &mut pub_storage,
             &mut priv_storage,
-            KMSType::Threshold,
             Some(&default_migration_config()),
         )
         .await
@@ -3148,14 +2782,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_threshold_idempotent() {
+    async fn test_migrate_to_0_15_x_idempotent() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
-        // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        // Derive the signing key of a single party.
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
 
         let config = default_migration_config();
 
@@ -3163,14 +2795,9 @@ mod tests {
         // Furthermore, validation keys should already have been made and hence key migration
         // also short-circuits without error.
         for _ in 0..2 {
-            migrate_to_0_15_x(
-                &mut pub_storage,
-                &mut priv_storage,
-                KMSType::Threshold,
-                Some(&config),
-            )
-            .await
-            .unwrap();
+            migrate_to_0_15_x(&mut pub_storage, &mut priv_storage, Some(&config))
+                .await
+                .unwrap();
 
             // Check epoch ids
             let ids = priv_storage
@@ -3180,26 +2807,6 @@ mod tests {
             assert_eq!(ids.len(), 1);
             assert_non_legacy_verf_material_present(&pub_storage, true).await;
         }
-    }
-
-    #[tokio::test]
-    async fn test_migrate_to_0_15_x_centralized_with_signing_key() {
-        let mut pub_storage = RamStorage::new();
-        let mut priv_storage = RamStorage::new();
-        // Derive signing key
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
-
-        migrate_to_0_15_x(
-            &mut pub_storage,
-            &mut priv_storage,
-            KMSType::Centralized,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_non_legacy_verf_material_present(&pub_storage, true).await;
     }
 
     /// A node upgraded from a release that predates the root signing seed keeps its
@@ -3221,14 +2828,9 @@ mod tests {
         .await
         .unwrap();
 
-        migrate_to_0_15_x(
-            &mut pub_storage,
-            &mut priv_storage,
-            KMSType::Centralized,
-            None,
-        )
-        .await
-        .unwrap();
+        migrate_to_0_15_x(&mut pub_storage, &mut priv_storage, None)
+            .await
+            .unwrap();
 
         assert_non_legacy_verf_material_present(&pub_storage, false).await;
         assert!(
@@ -3241,18 +2843,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_centralized_empty() {
+    async fn test_migrate_to_0_15_x_empty() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
-        migrate_to_0_15_x(
-            &mut pub_storage,
-            &mut priv_storage,
-            KMSType::Centralized,
-            None,
-        )
-        .await
-        .unwrap();
+        migrate_to_0_15_x(&mut pub_storage, &mut priv_storage, None)
+            .await
+            .unwrap();
 
         assert_non_legacy_verf_material_present(&pub_storage, false).await;
     }
@@ -3260,13 +2857,11 @@ mod tests {
     // ── Tests for migrate_to_0_16_x (orchestrator) ──
 
     #[tokio::test]
-    async fn test_migrate_to_0_16_x_threshold_removes_combined_prss() {
+    async fn test_migrate_to_0_16_x_removes_combined_prss() {
         let mut storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
 
-        migrate_to_0_16_x(&mut storage, KMSType::Threshold)
-            .await
-            .unwrap();
+        migrate_to_0_16_x(&mut storage).await.unwrap();
 
         #[expect(deprecated)]
         let remaining = storage
@@ -3276,12 +2871,21 @@ mod tests {
         assert!(remaining.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_migrate_to_0_16_x_centralized_noop() {
-        let mut storage = RamStorage::new();
-        migrate_to_0_16_x(&mut storage, KMSType::Centralized)
-            .await
-            .unwrap();
+    /// Runs [ensure_server_signing_key_exists] deterministically for party 1.
+    async fn ensure_signing_key_exists(
+        pub_storage: &mut RamStorage,
+        priv_storage: &mut RamStorage,
+    ) {
+        ensure_server_signing_key_exists(
+            pub_storage,
+            priv_storage,
+            true,
+            std::num::NonZeroUsize::MIN,
+            "p1".to_string(),
+            false,
+        )
+        .await
+        .unwrap();
     }
 
     /// Helper method:
@@ -3290,9 +2894,7 @@ mod tests {
     async fn pre_multi_scheme_node() -> (RamStorage, RamStorage) {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        ensure_signing_key_exists(&mut pub_storage, &mut priv_storage).await;
         delete_non_legacy_verf_material(&mut pub_storage)
             .await
             .unwrap();
@@ -3418,23 +3020,10 @@ mod tests {
         use crate::vault::storage::s3::create_s3_storage;
 
         #[tokio::test]
-        async fn test_migrate_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_migrate_threshold_s3),
-            )
-            .await;
-            test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
-        }
-
-        #[tokio::test]
-        async fn test_migrate_centralized_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_migrate_centralized_s3),
-            )
-            .await;
-            test_migrate_legacy_fhe_keys_centralized(&mut storage).await;
+        async fn test_migrate_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_migrate_s3)).await;
+            test_migrate_legacy_fhe_keys(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3468,23 +3057,10 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_after_0_13_x_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_after_0_13_x_threshold_s3),
-            )
-            .await;
-            test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
-        }
-
-        #[tokio::test]
-        async fn test_after_0_13_x_centralized_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_after_0_13_x_centralized_s3),
-            )
-            .await;
-            test_migrate_fhe_keys_after_0_13_x_centralized(&mut storage).await;
+        async fn test_after_0_13_x_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_after_0_13_x_s3)).await;
+            test_migrate_fhe_keys_after_0_13_x(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3508,23 +3084,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_0_13_x_to_0_13_10_threshold_s3() {
+        async fn test_0_13_x_to_0_13_10_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_0_13_x_to_0_13_10_threshold_s3),
+                std::stringify!(test_0_13_x_to_0_13_10_s3),
             )
             .await;
-            test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
-        }
-
-        #[tokio::test]
-        async fn test_0_13_x_to_0_13_10_centralized_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_0_13_x_to_0_13_10_centralized_s3),
-            )
-            .await;
-            test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized(&mut storage).await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage).await;
         }
 
         #[tokio::test]
@@ -3558,23 +3124,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_remove_old_keys_threshold_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_threshold_s3),
-            )
-            .await;
-            test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
-        }
-
-        #[tokio::test]
-        async fn test_remove_old_keys_centralized_s3() {
-            let mut storage = create_s3_storage(
-                StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_centralized_s3),
-            )
-            .await;
-            test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
+        async fn test_remove_old_keys_s3() {
+            let mut storage =
+                create_s3_storage(StorageType::PRIV, std::stringify!(test_remove_old_keys_s3))
+                    .await;
+            test_remove_old_keys_for_0_13_20(&mut storage).await;
         }
 
         #[tokio::test]

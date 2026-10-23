@@ -32,7 +32,7 @@ Usage: $0 --target [kind-local|kind-ci|aws-ci|aws-perf] [OPTIONS]
 
 Options:
   --namespace <name>       K8s namespace (default: kms-test)
-  --deployment-type <type> threshold|centralized|thresholdWithEnclave... (default: threshold)
+  --deployment-type <type> threshold|thresholdWithEnclave (default: threshold)
   --tag <tag>              Image tag (default: latest-dev)
   --core-tag <tag>         KMS core image tag (overrides --tag)
   --client-tag <tag>       KMS client image tag (overrides --tag)
@@ -94,10 +94,20 @@ parse_args() {
         esac
     done
 
-    # Adjust NUM_PARTIES based on deployment type
-    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-        NUM_PARTIES=1
-    fi
+    validate_deployment_type
+}
+
+#=============================================================================
+# Validate Deployment Type
+#=============================================================================
+validate_deployment_type() {
+    case "${DEPLOYMENT_TYPE}" in
+        threshold|thresholdWithEnclave) ;;
+        *)
+            log_error "Unknown deployment type '${DEPLOYMENT_TYPE}': expected threshold or thresholdWithEnclave"
+            exit 1
+            ;;
+    esac
 }
 
 #=============================================================================

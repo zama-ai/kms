@@ -27,7 +27,7 @@ use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 
 /// Poll storage until it contains the given (`request_id`, `epoch_id`, `data_type`) tuple. Give up after 30s.
-// TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_threshold_crs_backup`
+// TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_crs_backup`
 // would try to inspect state before backup actually had time to happen.
 pub(crate) async fn wait_for_storage<S>(
     storage: &S,
@@ -326,24 +326,6 @@ pub(crate) async fn send_dec_reqs(
         });
     }
     (join_set, request_id)
-}
-
-pub(crate) async fn get_pub_dec_resp(
-    request_id: &RequestId,
-    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> JoinSet<Result<tonic::Response<kms_grpc::kms::v1::PublicDecryptionResponse>, tonic::Status>> {
-    // make parallel requests by calling [get_public_decryption_result] in a thread
-    let mut join_set = JoinSet::new();
-    for i in 1..=kms_clients.len() as u32 {
-        let mut cur_client = kms_clients.get(&i).unwrap().clone();
-        let req_id_clone = *request_id;
-        join_set.spawn(async move {
-            cur_client
-                .get_public_decryption_result(tonic::Request::new(req_id_clone.into()))
-                .await
-        });
-    }
-    join_set
 }
 
 pub(crate) fn assert_plaintext(expected: &TestingPlaintext, plaintext: &TypedPlaintext) {

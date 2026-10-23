@@ -23,11 +23,12 @@
 {{ default $kmsCoreAddressDefault .Values.kmsCore.addressOverride }}
 {{- end -}}
 
-{{- define "kmsCoreMode" -}}
-{{- if .Values.kmsCore.thresholdMode.enabled -}}
-threshold
-{{- else -}}
-centralized
+{{/* Rejects an explicit `kmsCore.thresholdMode.enabled: false`. The
+     `enabled` key stays accepted with the value `true` so existing values
+     files keep working. */}}
+{{- define "kmsValidateThresholdMode" -}}
+{{- if eq (toString .Values.kmsCore.thresholdMode.enabled) "false" -}}
+{{- fail "kmsCore.thresholdMode.enabled=false is not supported: the chart deploys threshold mode only. Set kmsCore.thresholdMode.enabled to true or remove the key." -}}
 {{- end -}}
 {{- end -}}
 
@@ -39,7 +40,7 @@ centralized
 {{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.queueCount -}}
 {{- if and $configured (gt (int $configured) 0) -}}
 {{- int $configured -}}
-{{- else if .Values.kmsCore.thresholdMode.enabled -}}
+{{- else -}}
 {{- $partyCount := int .Values.kmsPeers.count -}}
 {{- if .Values.kmsCore.thresholdMode.peersList -}}
 {{- $partyCount = len .Values.kmsCore.thresholdMode.peersList -}}
@@ -55,7 +56,6 @@ centralized
 {{- else if le $hotFlows 128 -}}128
 {{- else -}}256
 {{- end -}}
-{{- else -}}8
 {{- end -}}
 {{- end -}}
 

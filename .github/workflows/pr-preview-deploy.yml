@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       deployment_type:
-        description: 'Deployment type (threshold, centralized, thresholdWithEnclave, centralizedWithEnclave)'
+        description: 'Deployment type (threshold, thresholdWithEnclave)'
         required: true
         type: string
       pr_number:
@@ -80,18 +80,15 @@ jobs:
       - name: Set Deployment Parameters
         run: |
           echo "Deployment type: ${DEPLOYMENT_TYPE}"
-          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            { echo "NB_KMS_PARTIES=4"; \
-              echo "THRESHOLD_VALUE=1"; \
-              echo "NUM_MAJORITY=2"; \
-              echo "NUM_RECONSTRUCT=3"
-            } >> "$GITHUB_ENV"
-          elif [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-            { echo "NB_KMS_PARTIES=1"; \
-              echo "NUM_MAJORITY=1"; \
-              echo "NUM_RECONSTRUCT=1"
-            } >> "$GITHUB_ENV"
+          if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "::error::Unsupported deployment type '${DEPLOYMENT_TYPE}': use threshold or thresholdWithEnclave"
+            exit 1
           fi
+          { echo "NB_KMS_PARTIES=4"; \
+            echo "THRESHOLD_VALUE=1"; \
+            echo "NUM_MAJORITY=2"; \
+            echo "NUM_RECONSTRUCT=3"
+          } >> "$GITHUB_ENV"
           echo "Configured: ${DEPLOYMENT_TYPE} with NB_KMS_PARTIES parties"
 
       - name: Checkout Project KMS
@@ -111,7 +108,7 @@ jobs:
           password: ${{ secrets.HARBOR_READ_TOKEN }}
 
       - name: Handle pre-built images and PCR values
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' }}
         env:
           JQ_VERSION: 1.8.1
           INPUT_PCR0: ${{ inputs.enclave_pcr0 }}
@@ -224,28 +221,19 @@ jobs:
       - name: Generate PR Comment Body
         if: success()
         run: |
-          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            TEST_NAME="kubernetes_test_threshold"
-            CONFIG_FILE="client_local_kind_threshold.toml"
-            # Using a temporary file to construct multiline string for port-forward
-            cat <<EOF > port_forward_cmd.txt
+          TEST_NAME="kubernetes_test_threshold"
+          CONFIG_FILE="client_local_kind_threshold.toml"
+          # Using a temporary file to construct multiline string for port-forward
+          cat <<EOF > port_forward_cmd.txt
           kubectl port-forward svc/kms-core-1-core-1 -n ${NAMESPACE} 50100:50100 & \\
           kubectl port-forward svc/kms-core-2-core-2 -n ${NAMESPACE} 50200:50100 & \\
           kubectl port-forward svc/kms-core-3-core-3 -n ${NAMESPACE} 50300:50100 & \\
           kubectl port-forward svc/kms-core-4-core-4 -n ${NAMESPACE} 50400:50100 &
           EOF
-            PORT_FORWARD_CMD=$(cat port_forward_cmd.txt)
-            # Use regex to replace addresses: kms-core-X -> localhost:50X00 (e.g. party 1 -> 50100, party 2 -> 50200)
-            COPY_COMMAND="kubectl cp $NAMESPACE/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_kind_threshold.toml && \\
-              sed -i '' -E 's|address = \"(http://)?kms-core-([0-9]+)-[^:]+:50100\"|address = \"http://localhost:50\200\"|' ./core-client/config/client_local_kind_threshold.toml"
-          else
-            TEST_NAME="kubernetes_test_centralized"
-            CONFIG_FILE="client_local_kind_centralized.toml"
-            # Use regex to replace address: kms-core-core -> localhost:50100
-            COPY_COMMAND="kubectl cp $NAMESPACE/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_kind_centralized.toml && \\
-              sed -i '' -E 's|address = \"(http://)?kms-core-core:50100\"|address = \"http://localhost:50100\"|' ./core-client/config/client_local_kind_centralized.toml"
-            PORT_FORWARD_CMD="kubectl port-forward svc/kms-core-core -n $NAMESPACE 50100:50100"
-          fi
+          PORT_FORWARD_CMD=$(cat port_forward_cmd.txt)
+          # Use regex to replace addresses: kms-core-X -> localhost:50X00 (e.g. party 1 -> 50100, party 2 -> 50200)
+          COPY_COMMAND="kubectl cp $NAMESPACE/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_kind_threshold.toml && \\
+            sed -i '' -E 's|address = \"(http://)?kms-core-([0-9]+)-[^:]+:50100\"|address = \"http://localhost:50\200\"|' ./core-client/config/client_local_kind_threshold.toml"
 
           # Generate the final comment body
           cat <<EOF > pr_comment.md

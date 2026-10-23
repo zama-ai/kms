@@ -6,7 +6,7 @@ Detailed information about usage, along with sequence diagrams, can be found [he
 ## Implementation
 
 The KMS is implemented as a gRPC service using the [tonic](https://github.com/hyperium/tonic) crate.
-Communication between full nodes and the KMS service is defined by [protobuf](/proto/kms.proto) messages.
+Communication between full nodes and the KMS service is defined by [protobuf](../grpc/proto/kms.v1.proto) messages.
 The rest of the communication is defined by existing standards and uses JSON-RPC.
 
 Optionally, the gRPC service can be run in an Amazon Nitro enclave and store sensitive key material encrypted on S3.

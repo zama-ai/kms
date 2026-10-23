@@ -86,7 +86,7 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of Share.
     // Covered via ShareTest.
     "Role",
-    // Field of ThresholdFheKeys.public_material.
+    // Field of FheKeys.public_material.
     // Covered via ThresholdFheKeysTest.
     "PublicKeyMaterial",
     // Element type inside the Share<ResiduePoly<...>> collections used by
@@ -112,6 +112,20 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Covered via PrivateKeySetTest.
     "CompressionPrivateKeySharesEnum",
 ];
+
+/// Types renamed in Rust after their fixtures were generated, as (current Rust name, name in
+/// the `.ron` metadata). The frozen fixtures and generator crates keep the old name.
+const RENAMED: &[(&str, &str)] = &[
+    // Renamed when centralized mode was removed; `Named::NAME` is still "ThresholdFheKeys".
+    ("FheKeys", "ThresholdFheKeys"),
+];
+
+fn fixture_name(underlying: &str) -> &str {
+    RENAMED
+        .iter()
+        .find(|(rust_name, _)| *rust_name == underlying)
+        .map_or(underlying, |(_, fixture)| fixture)
+}
 
 fn cargo_metadata() -> Metadata {
     MetadataCommand::new()
@@ -321,7 +335,7 @@ fn versioned_enums_are_covered_by_ron_metadata() {
         if ALLOW_UNCOVERED.contains(&underlying.as_str()) {
             continue;
         }
-        if !covered.contains(&underlying.to_lowercase()) {
+        if !covered.contains(&fixture_name(&underlying).to_lowercase()) {
             missing.push((underlying, d.file.clone()));
         }
     }

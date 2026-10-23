@@ -1,7 +1,7 @@
 # Config for a threshold deployment to be used when handling custodian backups.
 # That is, this configuration is to be used with the CLI when doing custodian management.
 
-# The type of the KMS deployment ("centralized" or "threshold")
+# The type of the KMS. Optional; "threshold" is the only accepted value.
 kms_type = "threshold"
 
 # The minimum number of matching responses required to have an honest majority
@@ -17,7 +17,6 @@ num_reconstruct = 1
 # Decryption mode used in user decryption reconstruction.
 # Options are NoiseFloodSmall and BitDecSmall.
 # Must match the deployed core/service setting!
-# Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
 # The parameters used in the deployment.

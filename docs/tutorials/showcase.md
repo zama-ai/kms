@@ -2,7 +2,7 @@
 
 ## Interaction with deployed KMS cores
 To try out interaction with a deployed set of KMS cores, you can use the [`core-client`](../../core-client/README.md) to do so.
-In this tutorial we'll walk you through the required steps to locally deploy a threshold KMS with 4 MPC cores, generate a set of FHE keys and run a user decryption on the KMS.
+In this tutorial we'll walk you through the required steps to locally deploy a KMS with 4 MPC cores, generate a set of FHE keys and run a user decryption on the KMS.
 This tutorial shows you a subset of the options of the `core-client`. For more details please refer to its [README](../../core-client/README.md).
 
 ### Requirements
@@ -12,10 +12,10 @@ This tutorial shows you a subset of the options of the `core-client`. For more d
   - While some repositories are still private, you need to setup access. For this, either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token must have at least the "read:packages" permission.
   Afterwards, do `docker login ghcr.io` and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to a short period of time.
 
-### Running the threshold cores locally
-The threshold KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
+### Running the KMS cores locally
+The KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
 To run these cores locally, you can use the docker-compose file at the root of this repository: [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
-Build the threshold KMS components with `make build-compose-threshold`, then start them with `make start-compose-threshold` at the root of the repository. The Compose services use development images that are not published to `ghcr.io`, and the build can take several minutes.
+Build the KMS components with `make build-compose-threshold`, then start them with `make start-compose-threshold` at the root of the repository. The Compose services use development images that are not published to `ghcr.io`, and the build can take several minutes.
 The KMS cores are running when no more logs show up (and if there are no errors). Typically the last log you see is
 ```
 dev-kms-core-init-1   | Exiting core service init...

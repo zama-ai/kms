@@ -10,6 +10,6 @@ pub type TestResult<T = ()> = Result<T>;
 /// This will be moved here in a future refactor
 pub use crate::client::test_tools::ServerHandle;
 
-/// Re-export ThresholdTestConfig from client::test_tools
+/// Re-export TestConfig from client::test_tools
 /// This is the actual config used by setup functions
-pub use crate::client::test_tools::ThresholdTestConfig;
+pub use crate::client::test_tools::TestConfig;

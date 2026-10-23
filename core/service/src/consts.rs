@@ -85,36 +85,24 @@ cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         pub const TMP_PATH_PREFIX: &str = "temp";
 
-        pub static TEST_CENTRAL_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_CENTRAL_KEY_ID").unwrap());
-        pub static TEST_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap());
-        pub static TEST_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_13P").unwrap());
-        pub static TEST_CENTRAL_CRS_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_CENTRAL_CRS_ID").unwrap());
-        pub static TEST_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap());
-        pub static TEST_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_13P").unwrap());
-        pub static OTHER_CENTRAL_TEST_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("OTHER_TEST_ID").unwrap());
-        pub static DEFAULT_CENTRAL_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_KEY_ID").unwrap());
-        pub static DEFAULT_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap());
-        pub static DEFAULT_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap());
-        pub static DEFAULT_CENTRAL_CRS_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_CRS_ID").unwrap());
-        pub static DEFAULT_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap());
-        pub static DEFAULT_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap());
+        pub static TEST_KEY_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_KEY_ID_4P").unwrap());
+        pub static TEST_KEY_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_KEY_ID_13P").unwrap());
+        pub static TEST_CRS_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_CRS_ID_4P").unwrap());
+        pub static TEST_CRS_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_CRS_ID_13P").unwrap());
+        pub static DEFAULT_KEY_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_KEY_ID_4P").unwrap());
+        pub static DEFAULT_KEY_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_KEY_ID_13P").unwrap());
+        pub static DEFAULT_CRS_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_CRS_ID_4P").unwrap());
+        pub static DEFAULT_CRS_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_CRS_ID_13P").unwrap());
         pub static DEFAULT_DEC_ID: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("DEFAULT_DEC_ID").unwrap());
-        pub static OTHER_CENTRAL_DEFAULT_ID: LazyLock<RequestId> =
-            LazyLock::new(|| derive_request_id("OTHER_DEFAULT_ID").unwrap());
         pub static PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
             LazyLock::new(|| (1..=13).map(|i| Some(format!("PUB-p{}", i))).collect());
         pub static PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
@@ -126,27 +114,25 @@ cfg_if::cfg_if! {
 
 #[cfg(feature = "non-wasm")]
 cfg_if::cfg_if! {
-    // Bare DEFAULT_THRESHOLD_KEY_ID aliases the per-party-count constant based on the
+    // Bare DEFAULT_KEY_ID aliases the per-party-count constant based on the
     // active test feature: 4 parties for fast tests, 13 parties for slow_tests. Used by
     // nightly_tests.rs.
     if #[cfg(all(not(feature = "slow_tests"), any(test, feature = "testing")))] {
-        pub static DEFAULT_THRESHOLD_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| *DEFAULT_THRESHOLD_KEY_ID_4P);
+        pub static DEFAULT_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_KEY_ID_4P);
     } else if #[cfg(all(feature = "slow_tests", any(test, feature = "testing")))] {
-        pub static DEFAULT_THRESHOLD_KEY_ID: LazyLock<RequestId> =
-            LazyLock::new(|| *DEFAULT_THRESHOLD_KEY_ID_13P);
+        pub static DEFAULT_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_KEY_ID_13P);
     }
 }
 
 cfg_if::cfg_if! {
     if #[cfg(test)] {
-        // These ones should be removed or moved to more relevant positions in client or central kms.
+        // These ones should be removed or moved to more relevant positions in the client.
         // The generated files use the suffix `.{plaintext_bits}.json` (see the wasm transcript
-        // generation in the user decryption tests), e.g. `temp/test-central-wasm-transcript.8.json`.
-        pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript";
-        pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript";
-        pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript";
-        pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript";
+        // generation in the user decryption tests), e.g. `temp/test-wasm-transcript.8.json`.
+        pub const TEST_WASM_TRANSCRIPT_PATH: &str = "temp/test-wasm-transcript";
+        pub const DEFAULT_WASM_TRANSCRIPT_PATH: &str = "temp/default-wasm-transcript";
 
 
         pub const TEST_SEC_PAR: u64 = 40;

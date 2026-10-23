@@ -6,11 +6,11 @@ use crate::consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID};
 use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
+use crate::engine::base::{CrsGenMetadata, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::rng_source::RngSource;
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
@@ -27,9 +27,7 @@ use crate::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PrivateSigKey, PublicSigKey},
     },
-    engine::{
-        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, validation::RequestIdParsingErr,
-    },
+    engine::{base::BaseKmsStruct, service::FheKeys, validation::RequestIdParsingErr},
     vault::{
         Vault, VaultDataType,
         keychain::KeychainProxy,
@@ -44,7 +42,6 @@ use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
-use kms_grpc::rpc_types::KMSType;
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
@@ -731,7 +728,6 @@ where
         // from the preprocessor service which has access to the metastore
         let response = query_key_material_availability(
             &*priv_guard,
-            self.base_kms.kms_type(),
             Vec::new(), // Will be populated by the endpoint from preprocessor
         )
         .await?;
@@ -840,14 +836,13 @@ pub async fn recovery_mode_verf_key<S: StorageReader>(
 /// boots in recovery mode, where only custodian backup recovery is possible, under the key
 /// [`recovery_mode_verf_key`] picks from `public_storage` or `backup_vault`.
 pub async fn boot_base_kms<PrivS: StorageReader, PubS: StorageReader>(
-    kms_type: KMSType,
     private_storage: &PrivS,
     public_storage: &PubS,
     backup_vault: Option<&Vault>,
     rng_source: Arc<RngSource>,
 ) -> anyhow::Result<BaseKmsStruct> {
     match get_core_signing_identity(private_storage).await {
-        Ok(identity) => Ok(BaseKmsStruct::new(kms_type, identity, rng_source)),
+        Ok(identity) => Ok(BaseKmsStruct::new(identity, rng_source)),
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -856,9 +851,7 @@ pub async fn boot_base_kms<PrivS: StorageReader, PubS: StorageReader>(
                 make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_key = recovery_mode_verf_key(public_storage, backup_vault).await?;
-            Ok(BaseKmsStruct::new_no_signing_key(
-                kms_type, verf_key, rng_source,
-            ))
+            Ok(BaseKmsStruct::new_no_signing_key(verf_key, rng_source))
         }
     }
 }
@@ -1210,21 +1203,50 @@ where
 /// data and contexts come first, so that keysets never sit under an epoch the node does not know
 /// (startup refuses such a store). The signing key comes last, so that a partially restored node
 /// stays in recovery mode, where the restore can be repeated. The root signing seed precedes it,
-/// so that the node never boots with a signing key but no seed. The custodian context anchor is
-/// never backed up, so it is not restored either.
+/// so that the node never boots with a signing key but no seed. The types in [`UNRESTORED`] are
+/// not restored.
 #[expect(deprecated)]
-const RESTORE_ORDER: [PrivDataType; 9] = [
+const RESTORE_ORDER: [PrivDataType; 8] = [
     PrivDataType::ContextInfo,
     PrivDataType::EpochData,
     // Deprecated data retained by the 0.15 migration until the 0.16 migration removes it.
     PrivDataType::PrssSetupCombined,
     PrivDataType::PrssSetup,
     PrivDataType::FheKeyInfo,
-    PrivDataType::FhePrivateKey,
     PrivDataType::CrsInfo,
     PrivDataType::SigningSeed,
     PrivDataType::SigningKey,
 ];
+
+/// The private data types that [`restore_data`] does not write back. [`restore_data`] skips any
+/// entry of these types in the vault with a warning, and restores the other types.
+const UNRESTORED: [PrivDataType; 2] = [
+    // Never backed up: a custodian rotation re-encrypts the vault before the node rewrites the
+    // anchor, so a copy would name the context the node is leaving. Recovery anchors the context
+    // it restores instead.
+    PrivDataType::CustodianContextAnchor,
+    // A legacy key format that no current node writes. Startup verification rejects it as foreign
+    // material, so restoring it would leave the node unable to boot. Skipping it lets the node
+    // restore its threshold data.
+    PrivDataType::FhePrivateKey,
+];
+
+/// Logs a warning for the entries of `data_type` in the backup vault, which restore skips.
+async fn warn_unsupported_backup_entries(
+    backup_vault: &Vault,
+    data_type: PrivDataType,
+) -> anyhow::Result<()> {
+    let ids = backup_vault
+        .all_data_ids_from_all_epochs(&data_type.to_string())
+        .await?;
+    if !ids.is_empty() {
+        tracing::warn!(
+            "Skipping {} backup entries of unsupported private data type {data_type}: {ids:?}",
+            ids.len()
+        );
+    }
+    Ok(())
+}
 
 async fn restore_data<PrivS>(
     backup_vault: &MutexGuard<'_, Vault>,
@@ -1233,19 +1255,14 @@ async fn restore_data<PrivS>(
 where
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    for data_type in UNRESTORED {
+        warn_unsupported_backup_entries(backup_vault, data_type).await?;
+    }
     for cur_type in RESTORE_ORDER {
         match cur_type {
             // These types might have epoch-specific data
             PrivDataType::FheKeyInfo => {
-                restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
-            }
-            PrivDataType::FhePrivateKey => {
-                restore_data_type_for_all_epochs::<PrivS, KmsFheKeyHandles>(
+                restore_data_type_for_all_epochs::<PrivS, FheKeys>(
                     priv_storage,
                     backup_vault,
                     cur_type,
@@ -1286,8 +1303,8 @@ where
             PrivDataType::EpochData => {
                 restore_data_type::<PrivS, EpochData>(priv_storage, backup_vault, cur_type).await?;
             }
-            // Never backed up, see `inner_update_backup_vault`.
-            PrivDataType::CustodianContextAnchor => {}
+            // Not in `RESTORE_ORDER`, see `UNRESTORED`.
+            PrivDataType::CustodianContextAnchor | PrivDataType::FhePrivateKey => {}
         }
     }
     Ok(())
@@ -1613,8 +1630,8 @@ mod tests {
     use strum::IntoEnumIterator;
     use threshold_types::rng::AesRng;
 
-    /// Every backed-up private data type is restored exactly once, epoch data before the keysets
-    /// that depend on it, and the signing key last.
+    /// Every private data type is either restored exactly once or listed in `UNRESTORED`, epoch
+    /// data comes before the keysets that depend on it, and the signing key comes last.
     #[test]
     fn restore_order_covers_every_private_data_type_once() {
         let ordered: HashSet<PrivDataType> = RESTORE_ORDER.into_iter().collect();
@@ -1623,10 +1640,22 @@ mod tests {
             RESTORE_ORDER.len(),
             "RESTORE_ORDER holds a duplicate"
         );
-        let backed_up: HashSet<PrivDataType> = PrivDataType::iter()
-            .filter(|data_type| *data_type != PrivDataType::CustodianContextAnchor)
+        let unrestored: HashSet<PrivDataType> = UNRESTORED.into_iter().collect();
+        assert_eq!(
+            unrestored,
+            HashSet::from([
+                PrivDataType::CustodianContextAnchor,
+                PrivDataType::FhePrivateKey
+            ])
+        );
+        assert!(
+            ordered.is_disjoint(&unrestored),
+            "a type is both restored and unrestored"
+        );
+        let restored: HashSet<PrivDataType> = PrivDataType::iter()
+            .filter(|data_type| !unrestored.contains(data_type))
             .collect();
-        assert_eq!(ordered, backed_up);
+        assert_eq!(ordered, restored);
 
         let position = |data_type: PrivDataType| {
             RESTORE_ORDER
@@ -1808,15 +1837,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let base_kms = boot_base_kms(
-            KMSType::Centralized,
-            &private_storage,
-            &lost,
-            Some(&vault),
-            test_rng_source(),
-        )
-        .await
-        .unwrap();
+        let base_kms = boot_base_kms(&private_storage, &lost, Some(&vault), test_rng_source())
+            .await
+            .unwrap();
         let identity = base_kms
             .signing_identity()
             .expect("a node holding its signing key must not enter recovery mode");
@@ -1836,7 +1859,6 @@ mod tests {
         .await
         .unwrap();
         let base_kms = boot_base_kms(
-            KMSType::Threshold,
             &no_identity,
             &public_storage,
             Some(&vault),
@@ -1848,29 +1870,17 @@ mod tests {
         assert_eq!(*base_kms.verf_key(), published);
 
         // Once public storage is lost too, the key comes from the recovery material in the vault.
-        let base_kms = boot_base_kms(
-            KMSType::Threshold,
-            &no_identity,
-            &lost,
-            Some(&vault),
-            test_rng_source(),
-        )
-        .await
-        .unwrap();
+        let base_kms = boot_base_kms(&no_identity, &lost, Some(&vault), test_rng_source())
+            .await
+            .unwrap();
         assert!(base_kms.signing_identity().is_err());
         assert_eq!(*base_kms.verf_key(), backed_up.verf_key());
 
         // With neither public storage nor a backup vault, there is nothing to boot under.
         assert!(
-            boot_base_kms(
-                KMSType::Threshold,
-                &no_identity,
-                &lost,
-                None,
-                test_rng_source(),
-            )
-            .await
-            .is_err()
+            boot_base_kms(&no_identity, &lost, None, test_rng_source(),)
+                .await
+                .is_err()
         );
     }
 
@@ -2003,11 +2013,7 @@ mod tests {
         }
         let identity = NodeSigningIdentity::new(sig_key, seed);
         let operator = BackupOperator::new(
-            BaseKmsStruct::new(
-                kms_grpc::rpc_types::KMSType::Centralized,
-                identity.clone(),
-                test_rng_source(),
-            ),
+            BaseKmsStruct::new(identity.clone(), test_rng_source()),
             CryptoMaterialStorage::from(
                 RamStorage::new(),
                 priv_storage,
@@ -2645,5 +2651,85 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored.i, 77);
+    }
+
+    /// A vault that holds an `FhePrivateKey` entry next to a context and the signing material
+    /// restores everything else and leaves that entry out of private storage.
+    #[tokio::test]
+    async fn restore_skips_fhe_private_key_entries() {
+        let mut rng = AesRng::seed_from_u64(4712);
+        let mut backup_vault = make_unencrypted_vault();
+        let seed = RootSigningSeed::random(&mut rng);
+        let (_vk, sig_key) = gen_sig_keys(&mut rng);
+        let fhe_key_id = derive_request_id("fhe_private_key").unwrap();
+        let epoch_id = EpochId::from_bytes([4u8; 32]);
+        let context_id = ContextId::from_bytes([5u8; 32]);
+        let context = ContextInfo {
+            mpc_nodes: crate::engine::context::four_party_nodes(vec![]),
+            context_id,
+            software_version: crate::engine::context::SoftwareVersion::current().unwrap(),
+            threshold: 1,
+            pcr_values: vec![],
+        };
+
+        crate::vault::storage::store_context_at_id(&mut backup_vault, &context_id, &context)
+            .await
+            .unwrap();
+        store_versioned_at_request_id(
+            &mut backup_vault,
+            &SIGNING_KEY_ID,
+            &seed,
+            &PrivDataType::SigningSeed.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut backup_vault,
+            &SIGNING_KEY_ID,
+            &sig_key,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        backup_vault
+            .store_data_at_epoch(
+                &TestType { i: 9 },
+                &fhe_key_id,
+                &epoch_id,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let backup_vault = Mutex::new(backup_vault);
+        let priv_storage = Mutex::new(RamStorage::new());
+        restore_data(&backup_vault.lock().await, &mut priv_storage.lock().await)
+            .await
+            .unwrap();
+
+        let priv_storage = priv_storage.into_inner();
+        assert_eq!(
+            crate::vault::storage::read_context_at_id(&priv_storage, &context_id)
+                .await
+                .unwrap(),
+            context
+        );
+        let restored_seed: RootSigningSeed = priv_storage
+            .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningSeed.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored_seed, seed);
+        let _restored_key: PrivateSigKey = priv_storage
+            .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap();
+        assert!(
+            priv_storage
+                .all_data_ids_from_all_epochs(&PrivDataType::FhePrivateKey.to_string())
+                .await
+                .unwrap()
+                .is_empty(),
+            "restore wrote an FhePrivateKey entry"
+        );
     }
 }

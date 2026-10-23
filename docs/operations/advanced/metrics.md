@@ -218,7 +218,7 @@ _Other Operations_:
 
 High-cardinality values such as `key_id` or `request_id` are not accepted as labels by any metric family — the duration histogram only records the fixed label keys above and ignores unknown keys with a warning. See the developer metrics guide for the low-cardinality guard and best practices.
 
-**Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to _all_ metrics for the process. This is the supported way to distinguish deployments: the kind CI overlay sets `deployment_profile=kind-ci`, so CI series stay separable from production in a shared Prometheus/Grafana. (The threshold and centralized kind matrices run in separate namespaces, `kms-test-threshold`/`kms-test-centralized`, so they are already distinguishable by the `namespace` label — not by a `deployment_type` const-label.)
+**Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to _all_ metrics for the process. This is the supported way to distinguish deployments: the kind CI overlay sets `deployment_profile=kind-ci`, so CI series stay separable from production in a shared Prometheus/Grafana. (The kind matrix runs in the `kms-test-threshold` namespace, so it is already distinguishable by the `namespace` label — not by a `deployment_type` const-label.)
 
 - Malformed entries, empty keys, empty values, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
 - In Helm: set `kmsCore.metricsLabels` (e.g. `deployment_profile=kind-ci`); the chart renders it into the `KMS_METRICS_LABELS` env on the kms-server container.
@@ -261,7 +261,7 @@ The KMS health check system provides additional operational metrics through the 
 
 #### Health Status Levels
 
-- **Optimal**: All nodes online and reachable (threshold mode)
+- **Optimal**: All nodes online and reachable
 - **Healthy**: Sufficient 2/3 majority but not all nodes online
 - **Degraded**: Above minimum threshold but below 2/3 majority
 - **Unhealthy**: Insufficient nodes for operations
@@ -272,7 +272,7 @@ The KMS health check system provides additional operational metrics through the 
 
 - **FHE Keys**: Fully homomorphic encryption keys
 - **CRS Keys**: Common reference string keys
-- **Preprocessing Material**: PRSS preprocessing data (threshold mode only)
+- **Preprocessing Material**: PRSS preprocessing data
 
 ## Monitoring Integration
 
@@ -334,7 +334,7 @@ KMS metrics support comprehensive alerting for operational monitoring. Key alert
 - **Performance Alerts**: Monitor latency percentiles from `kms_operation_duration_ms`
 - **Resource Alerts**: CPU and memory usage from `kms_cpu_load` and `kms_memory_usage`
 - **Network Health**: Peer connectivity and network traffic patterns
-- **Threshold Mode**: Multi-party network health and PRSS initialization status
+- **MPC Network**: Multi-party network health and PRSS initialization status
 
 ### Alerting References
 

@@ -39,7 +39,7 @@ This guide helps you deploy **your party's KMS node** as part of a **13-party th
 
 **Application Setup**:
 - Use KMS Helm charts (`charts/kms-core/`) for application deployment
-- Configure threshold mode with your party ID and peer settings
+- Configure your party ID, the threshold value and the peer settings
 - See [Configuration Guide](configuration.md) for Helm values reference
 
 **Result**: Your KMS party node is deployed and healthy. Other parties will deploy their own nodes independently.

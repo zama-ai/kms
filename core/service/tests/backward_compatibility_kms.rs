@@ -12,7 +12,7 @@ use backward_compatibility::{
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
     KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
-    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
+    MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
     RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
@@ -56,9 +56,8 @@ use kms_lib::{
         },
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
-            StoredTypedSignature, UnifiedPublicSigKey, VerfKeySet, compute_eip712_signature,
-            gen_sig_keys,
+            PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType, StoredTypedSignature,
+            UnifiedPublicSigKey, VerfKeySet, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             CompositeEnvelope, CompositeSigncryptionPayload, Signcrypt, SigncryptionPayload,
@@ -68,16 +67,12 @@ use kms_lib::{
     engine::{
         base::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
-            KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-            PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
-            UserDecSignedPayload,
+            KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, PrepKeygenSignedPayload,
+            PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
-        threshold::service::{
-            EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
-        },
+        service::{EpochData, FheKeys, PublicKeyMaterial, session::PRSSSetupCombined},
     },
-    util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };
 use rand::RngCore;
@@ -91,9 +86,7 @@ use std::{
 use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe_versionable::Upgrade;
-use threshold_execution::{
-    small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
-};
+use threshold_execution::small_execution::prss::PRSSSetup;
 use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::rng::AesRng;
 use threshold_types::role::Role;
@@ -1295,73 +1288,6 @@ fn test_internal_custodian_recovery_output(
     }
 }
 
-fn test_kms_fhe_key_handles(
-    dir: &Path,
-    test: &KmsFheKeyHandlesTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: KmsFheKeyHandles = load_and_unversionize(dir, test, format)?;
-
-    // Retrieve the key parameters from the original KMS handle
-    let (original_integer_key, _, _, _, _, _, _, _, _) =
-        original_versionized.client_key.clone().into_raw_parts();
-    let original_key_params = original_integer_key.parameters();
-
-    let client_key: tfhe::ClientKey =
-        load_and_unversionize_auxiliary(dir, test, &test.client_key_filename, format)?;
-
-    let private_sig_key: PrivateSigKey =
-        load_and_unversionize_auxiliary(dir, test, &test.sig_key_filename, format)?;
-
-    let server_key: tfhe::ServerKey =
-        load_and_unversionize_auxiliary(dir, test, &test.server_key_filename, format)?;
-
-    let public_key: FhePublicKey =
-        load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
-
-    let fhe_pub_key_set = FhePubKeySet {
-        public_key,
-        server_key,
-    };
-
-    let decompression_key: Option<DecompressionKey> =
-        load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
-
-    let key_id = RequestId::zeros();
-    let preproc_id = RequestId::zeros();
-    let new_versionized = KmsFheKeyHandles::new(
-        &NodeSigningIdentity::ecdsa_only(private_sig_key),
-        &[SigningSchemeType::Ecdsa256k1],
-        client_key,
-        &key_id,
-        &preproc_id,
-        &fhe_pub_key_set,
-        decompression_key,
-        &dummy_domain(),
-        vec![],
-    )
-    .unwrap();
-
-    // Retrieve the key parameters from the new KMS handle
-    let (new_integer_key, _, _, _, _, _, _, _, _) =
-        new_versionized.client_key.clone().into_raw_parts();
-    let new_key_params = new_integer_key.parameters();
-
-    // Compare the key parameters and the public key info. We cannot directly compare KmsFheKeyHandles
-    // by adding the `PartialEq` trait because TFHE-rs' ClientKey are not able to be directly
-    // compared. Instead, we compare the parameters, as done in TFHE-rs' tests
-    if new_key_params != original_key_params {
-        Err(test.failure(
-            format!(
-                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{original_key_params:?}\nGot:\n{new_key_params:?}"
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
 fn test_threshold_fhe_keys(
     dir: &Path,
     test: &ThresholdFheKeysTest,
@@ -1386,9 +1312,9 @@ fn test_threshold_fhe_keys(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
-    let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
+    let original_versionized: FheKeys = load_and_unversionize(dir, test, format)?;
 
-    let new_versionized = ThresholdFheKeys::new(
+    let new_versionized = FheKeys::new(
         Arc::new(private_keys),
         PublicKeyMaterial::new_uncompressed(
             Arc::new(integer_server_key),
@@ -1402,7 +1328,7 @@ fn test_threshold_fhe_keys(
     let new_key_params = new_versionized.private_keys.parameters;
     let original_key_params = original_versionized.private_keys.parameters;
 
-    // Compare the key parameters and the public key info. We cannot directly compare ThresholdFheKeys
+    // Compare the key parameters and the public key info. We cannot directly compare FheKeys
     // by adding the `PartialEq` trait because TFHE-rs' Decompression keys are not able to be directly
     // compared. Instead, we compare the parameters, as done in TFHE-rs' tests
     if new_key_params != original_key_params {
@@ -1848,9 +1774,9 @@ impl TestedModule for KMS {
             Self::Metadata::TypedPlaintext(test) => {
                 test_typed_plaintext(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::KmsFheKeyHandles(test) => {
-                test_kms_fhe_key_handles(test_dir.as_ref(), test, format).into()
-            }
+            Self::Metadata::KmsFheKeyHandles(_) => TestResult::Skipped(testcase.skip(
+                "KmsFheKeyHandles is not a supported private storage type; nodes that hold it fail boot",
+            )),
             Self::Metadata::ThresholdFheKeys(test) => {
                 test_threshold_fhe_keys(test_dir.as_ref(), test, format).into()
             }

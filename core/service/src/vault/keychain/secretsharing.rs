@@ -157,11 +157,9 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                         anyhow::anyhow!("Could not decrypt backed up secret shared crs info {e}")
                     })
             }
-            PrivDataType::FhePrivateKey => unwrapped_dec_key
-                .decrypt(&backup_ct.ciphertext)
-                .map_err(|e| {
-                    anyhow::anyhow!("Could not decrypt backed up secret shared private fhe key {e}")
-                }),
+            PrivDataType::FhePrivateKey => {
+                anyhow::bail!("Unsupported private data type {}", backup_ct.priv_data_type)
+            }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => unwrapped_dec_key
                 .decrypt(&backup_ct.ciphertext)

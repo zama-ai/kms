@@ -13,8 +13,10 @@ pub mod kms {
 #[cfg(feature = "non-wasm")]
 pub mod kms_service {
     pub mod v1 {
-        // Fires on proto-derived doc comments in prost-generated code.
-        #![expect(clippy::doc_lazy_continuation)]
+        // Fires on proto-derived doc comments in prost-generated code. Without `insecure` the
+        // build script compiles `kms-service.v1.proto`, whose doc comments trigger it; with
+        // `insecure` it compiles `kms-service-insecure.v1.proto`, whose doc comments do not.
+        #![cfg_attr(not(feature = "insecure"), expect(clippy::doc_lazy_continuation))]
         my_include_proto!("kms_service.v1");
     }
 }

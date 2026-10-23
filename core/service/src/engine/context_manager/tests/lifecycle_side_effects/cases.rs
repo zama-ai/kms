@@ -13,17 +13,12 @@ const INVALID_CA_CERTIFICATE: &[u8] =
 
 /// A failed context store leaves persistent and in-memory state unchanged.
 #[rstest::rstest]
-#[case::centralized_before(KMSType::Centralized, FaultPhase::BeforeMutation)]
-#[case::centralized_after(KMSType::Centralized, FaultPhase::AfterMutation)]
-#[case::threshold_before(KMSType::Threshold, FaultPhase::BeforeMutation)]
-#[case::threshold_after(KMSType::Threshold, FaultPhase::AfterMutation)]
+#[case::before(FaultPhase::BeforeMutation)]
+#[case::after(FaultPhase::AfterMutation)]
 #[tokio::test]
-async fn failed_context_creation_restores_state(
-    #[case] kms_type: KMSType,
-    #[case] fault_phase: FaultPhase,
-) {
+async fn failed_context_creation_restores_state(#[case] fault_phase: FaultPhase) {
     let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
     fixture.fail_target_store(fault_phase).await;
 
     let error = manager.new_mpc_context(&fixture.target).await.unwrap_err();
@@ -63,13 +58,10 @@ async fn failed_context_creation_restores_state(
 }
 
 /// A failed rollback keeps a context registered until it can be destroyed.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn failed_creation_cleanup_keeps_the_stored_context_retryable(#[case] kms_type: KMSType) {
+async fn failed_creation_cleanup_keeps_the_stored_context_retryable() {
     let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
     fixture.fail_target_store(FaultPhase::AfterMutation).await;
     fixture.fail_target_delete(FaultPhase::BeforeMutation).await;
 
@@ -141,13 +133,10 @@ async fn failed_creation_cleanup_keeps_the_stored_context_retryable(#[case] kms_
 }
 
 /// A delete failure before mutation keeps the context available across restart and retry.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
+async fn failed_context_destruction_is_retryable() {
     let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
     fixture.fail_target_delete(FaultPhase::BeforeMutation).await;
 
     let error = manager
@@ -177,7 +166,7 @@ async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
     );
 
     fixture.clear_faults().await;
-    let restarted_manager = fixture.manager(kms_type).await;
+    let restarted_manager = fixture.manager().await;
     restarted_manager
         .destroy_mpc_context(*fixture.target.context_id())
         .await
@@ -212,13 +201,10 @@ async fn failed_context_destruction_is_retryable(#[case] kms_type: KMSType) {
 }
 
 /// A delete error after mutation counts as success when the context is confirmed absent.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn context_destruction_accepts_a_confirmed_delete(#[case] kms_type: KMSType) {
+async fn context_destruction_accepts_a_confirmed_delete() {
     let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
     fixture.fail_target_delete(FaultPhase::AfterMutation).await;
 
     manager
@@ -251,11 +237,7 @@ async fn context_destruction_accepts_a_confirmed_delete(#[case] kms_type: KMSTyp
 #[tokio::test]
 async fn rejected_context_store_keeps_an_existing_context() {
     let fixture = ContextFixture::new(InitialTargetContextState::Stored).await;
-    let base_kms = BaseKmsStruct::new(
-        KMSType::Threshold,
-        fixture.signing_key.clone(),
-        test_rng_source(),
-    );
+    let base_kms = BaseKmsStruct::new(fixture.signing_key.clone(), test_rng_source());
     let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
     session_maker
         .add_context_info(None, &fixture.target)
@@ -286,11 +268,7 @@ async fn rejected_context_store_keeps_an_existing_context() {
 #[tokio::test]
 async fn failed_session_update_rolls_back_the_stored_context() {
     let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let base_kms = BaseKmsStruct::new(
-        KMSType::Threshold,
-        fixture.signing_key.clone(),
-        test_rng_source(),
-    );
+    let base_kms = BaseKmsStruct::new(fixture.signing_key.clone(), test_rng_source());
     let session_maker = attested_session_maker(base_kms.new_rngs());
     let mut invalid_context = fixture.target.clone();
     invalid_context.mpc_nodes[0].ca_cert = Some(INVALID_CA_CERTIFICATE.to_vec());
@@ -328,13 +306,10 @@ async fn failed_session_update_rolls_back_the_stored_context() {
 }
 
 /// A duplicate creation leaves the stored context and its surrounding state unchanged.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn duplicate_context_creation_keeps_the_stored_context(#[case] kms_type: KMSType) {
+async fn duplicate_context_creation_keeps_the_stored_context() {
     let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
 
     manager.new_mpc_context(&fixture.target).await.unwrap();
     let error = manager.new_mpc_context(&fixture.target).await.unwrap_err();
@@ -383,17 +358,12 @@ impl ContextUpdate {
 
 /// Context creation and destruction wait for any active lifecycle update to complete.
 #[rstest::rstest]
-#[case::centralized_create(KMSType::Centralized, ContextUpdate::Create)]
-#[case::centralized_destroy(KMSType::Centralized, ContextUpdate::Destroy)]
-#[case::threshold_create(KMSType::Threshold, ContextUpdate::Create)]
-#[case::threshold_destroy(KMSType::Threshold, ContextUpdate::Destroy)]
+#[case::create(ContextUpdate::Create)]
+#[case::destroy(ContextUpdate::Destroy)]
 #[tokio::test]
-async fn context_updates_wait_for_the_lifecycle_lock(
-    #[case] kms_type: KMSType,
-    #[case] update_kind: ContextUpdate,
-) {
+async fn context_updates_wait_for_the_lifecycle_lock(#[case] update_kind: ContextUpdate) {
     let fixture = ContextFixture::new(update_kind.target_state()).await;
-    let manager = fixture.manager(kms_type).await;
+    let manager = fixture.manager().await;
     let update_guard = manager.lock_updates().await;
     let update = async {
         match update_kind {
@@ -438,11 +408,8 @@ async fn context_updates_wait_for_the_lifecycle_lock(
 }
 
 /// A backup failure reports an error but keeps the durable context registered in memory.
-#[rstest::rstest]
-#[case::centralized(KMSType::Centralized)]
-#[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KMSType) {
+async fn backup_failure_keeps_the_stored_context_registered() {
     let (verification_key, signing_key, storage) = setup_crypto_storage(true).await;
     let context = context_info(
         ContextId::from_bytes([43; 32]),
@@ -474,34 +441,21 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KM
             .unwrap();
     }
 
-    let base_kms = BaseKmsStruct::new(kms_type, signing_key, test_rng_source());
-    match kms_type {
-        KMSType::Centralized => {
-            let manager = CentralizedContextManager::new(
-                base_kms,
-                storage.clone(),
-                MetaStore::new(100, 10),
-                Arc::new(TaskTracker::new()),
-            );
-            assert_backup_failure(&manager, &storage, &context).await;
-        }
-        KMSType::Threshold => {
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
-            let manager = ThresholdContextManager::new(
-                base_kms,
-                storage.clone(),
-                MetaStore::new(100, 10),
-                session_maker,
-                false,
-                Arc::new(TaskTracker::new()),
-            );
-            assert_backup_failure(&manager, &storage, &context).await;
-        }
-    }
+    let base_kms = BaseKmsStruct::new(signing_key, test_rng_source());
+    let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
+    let manager = ContextManager::new(
+        base_kms,
+        storage.clone(),
+        MetaStore::new(100, 10),
+        session_maker,
+        false,
+        Arc::new(TaskTracker::new()),
+    );
+    assert_backup_failure(&manager, &storage, &context).await;
 }
 
-async fn assert_backup_failure<M: ContextManager>(
-    manager: &M,
+async fn assert_backup_failure(
+    manager: &ContextManager<RamStorage, RamStorage>,
     storage: &CryptoMaterialStorage<RamStorage, RamStorage>,
     context: &ContextInfo,
 ) {

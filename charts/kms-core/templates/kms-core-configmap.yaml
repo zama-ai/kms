@@ -1,14 +1,15 @@
+{{- include "kmsValidateThresholdMode" . }}
 {{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
-{{- if and .Values.kmsCore.thresholdMode.enabled (not .Values.kmsCore.thresholdMode.omitPeers) }}
+{{- if not .Values.kmsCore.thresholdMode.omitPeers }}
 {{- $partyCount := int .Values.kmsPeers.count }}
 {{- if .Values.kmsCore.thresholdMode.peersList }}
 {{- $partyCount = len .Values.kmsCore.thresholdMode.peersList }}
 {{- end }}
 {{- $expectedPartyCount := add (mul 3 (int .Values.kmsCore.thresholdMode.thresholdValue)) 1 }}
 {{- if ne (int $partyCount) (int $expectedPartyCount) }}
-{{- fail (printf "threshold mode requires 3*t+1 parties: thresholdValue=%d requires %d parties, got %d" (int .Values.kmsCore.thresholdMode.thresholdValue) (int $expectedPartyCount) (int $partyCount)) }}
+{{- fail (printf "a KMS network requires 3*t+1 parties: thresholdValue=%d requires %d parties, got %d" (int .Values.kmsCore.thresholdMode.thresholdValue) (int $expectedPartyCount) (int $partyCount)) }}
 {{- end }}
 {{- end }}
 apiVersion: v1
@@ -76,7 +77,6 @@ data:
     {{- end }}
   kms-gen-keys.toml: |
     [keygen]
-    {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
       {{- include "kmsCheckPeerName" . }}
@@ -88,7 +88,6 @@ data:
       {{- else }}
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
       {{- end }}
-    {{- end }}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     [enclave_bootstrap]
     web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
@@ -105,7 +104,6 @@ data:
     web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
     {{- end }}
 
-    {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     listen_address = "0.0.0.0"
     listen_port = {{ int .Values.kmsCore.ports.peer }}
@@ -193,8 +191,6 @@ data:
         {{- end }}
       {{- end }}
       {{- end }}
-
-    {{ end }}
 
     [telemetry]
     tracing_service_name = {{ include "kmsCoreName" . | quote }}

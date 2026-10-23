@@ -3,15 +3,8 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
-use super::{
-    CENTRALIZED_MATERIAL_SUBDIR, material_subdir, threshold_crs_id_name, threshold_key_id_name,
-    threshold_material_subdir,
-};
-use crate::consts::{
-    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_EPOCH_ID, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
-};
+use super::{crs_id_name, key_id_name, material_subdir, party_material_subdir};
+use crate::consts::{DEFAULT_EPOCH_ID, KEY_PATH_PREFIX, SIGNING_KEY_ID, TMP_PATH_PREFIX};
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::all_verf_material_slots;
 use crate::vault::storage::StorageType;
@@ -147,11 +140,7 @@ impl TestMaterialManager {
             )
         })?;
         let profile_path = source_path.join(material_subdir(spec.material_type));
-        Ok(if spec.is_threshold() {
-            profile_path.join(threshold_material_subdir(spec.party_count()))
-        } else {
-            profile_path.join(CENTRALIZED_MATERIAL_SUBDIR)
-        })
+        Ok(profile_path.join(party_material_subdir(spec.party_count)))
     }
 
     /// Create the required directory structure
@@ -167,22 +156,11 @@ impl TestMaterialManager {
         fs::create_dir_all(base_path.join(TMP_PATH_PREFIX)).await?;
         fs::create_dir_all(base_path.join(KEY_PATH_PREFIX)).await?;
 
-        // Create storage directories based on test type
-        if spec.is_threshold() {
-            // Create directories for each party
-            for i in 1..=spec.party_count() {
-                let role = Role::indexed_from_one(i);
-                let pub_path = compute_storage_path(Some(base_path), StorageType::PUB, Some(role));
-                let priv_path =
-                    compute_storage_path(Some(base_path), StorageType::PRIV, Some(role));
-
-                fs::create_dir_all(&pub_path).await?;
-                fs::create_dir_all(&priv_path).await?;
-            }
-        } else {
-            // Create centralized directories
-            let pub_path = compute_storage_path(Some(base_path), StorageType::PUB, None);
-            let priv_path = compute_storage_path(Some(base_path), StorageType::PRIV, None);
+        // Create storage directories for each party
+        for i in 1..=spec.party_count {
+            let role = Role::indexed_from_one(i);
+            let pub_path = compute_storage_path(Some(base_path), StorageType::PUB, Some(role));
+            let priv_path = compute_storage_path(Some(base_path), StorageType::PRIV, Some(role));
 
             fs::create_dir_all(&pub_path).await?;
             fs::create_dir_all(&priv_path).await?;
@@ -261,15 +239,8 @@ impl TestMaterialManager {
         dest_base: &Path,
         spec: &TestMaterialSpec,
     ) -> Result<()> {
-        let roles: Vec<Option<Role>> = if spec.is_threshold() {
-            (1..=spec.party_count())
-                .map(|i| Some(Role::indexed_from_one(i)))
-                .collect()
-        } else {
-            vec![None]
-        };
-
-        for role in roles {
+        for i in 1..=spec.party_count {
+            let role = Some(Role::indexed_from_one(i));
             let source_pub = compute_storage_path(source_base, StorageType::PUB, role);
             let source_priv = compute_storage_path(source_base, StorageType::PRIV, role);
             let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, role);
@@ -313,76 +284,44 @@ impl TestMaterialManager {
         let compressed_xof_key_set_type = PubDataType::CompressedXofKeySet.to_string();
         let public_key_type = PubDataType::PublicKey.to_string();
         let decompression_key_type = PubDataType::DecompressionKey.to_string();
-        let fhe_private_key_type = PrivDataType::FhePrivateKey.to_string();
         let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
 
-        if spec.is_threshold() {
-            for i in 1..=spec.party_count() {
-                let role = Role::indexed_from_one(i);
-                let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
-                let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-                let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
-                let dest_priv =
-                    compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-                for key_id in &key_ids.fhe_keys {
-                    self.copy_key_files(
-                        &source_pub,
-                        &dest_pub,
-                        &compressed_xof_key_set_type,
-                        key_id,
-                    )
-                    .await?;
-                    self.copy_key_files(&source_pub, &dest_pub, &public_key_type, key_id)
-                        .await?;
-                    // Threshold servers store key shares under FheKeyInfo.
-                    self.copy_epoch_key_files(&source_priv, &dest_priv, &fhe_key_info_type, key_id)
-                        .await?;
-
-                    if spec.requires_key_type(KeyType::DecompressionKeys) {
-                        self.copy_key_files(
-                            &source_pub,
-                            &dest_pub,
-                            &decompression_key_type,
-                            key_id,
-                        )
-                        .await?;
-                    }
-                }
-            }
-        } else {
-            let source_pub = compute_storage_path(source_base, StorageType::PUB, None);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
-            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
+        for i in 1..=spec.party_count {
+            let role = Role::indexed_from_one(i);
+            let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
+            let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
+            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
+            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
             for key_id in &key_ids.fhe_keys {
                 self.copy_key_files(&source_pub, &dest_pub, &compressed_xof_key_set_type, key_id)
                     .await?;
                 self.copy_key_files(&source_pub, &dest_pub, &public_key_type, key_id)
                     .await?;
-                self.copy_epoch_key_files(&source_priv, &dest_priv, &fhe_private_key_type, key_id)
+                // Threshold servers store key shares under FheKeyInfo.
+                self.copy_epoch_key_files(&source_priv, &dest_priv, &fhe_key_info_type, key_id)
                     .await?;
+
+                if spec.requires_key_type(KeyType::DecompressionKeys) {
+                    self.copy_key_files(&source_pub, &dest_pub, &decompression_key_type, key_id)
+                        .await?;
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Copy the default epoch of every threshold party. A centralized spec holds no epochs, so
-    /// nothing is copied for it.
+    /// Copy the default epoch of every threshold party.
     async fn copy_default_epoch(
         &self,
         source_base: Option<&Path>,
         dest_base: &Path,
         spec: &TestMaterialSpec,
     ) -> Result<()> {
-        if !spec.is_threshold() {
-            return Ok(());
-        }
         let epoch_data_type = PrivDataType::EpochData.to_string();
         let epoch_id = DEFAULT_EPOCH_ID.to_string();
-        for i in 1..=spec.party_count() {
+        for i in 1..=spec.party_count {
             let role = Role::indexed_from_one(i);
             let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
@@ -403,27 +342,12 @@ impl TestMaterialManager {
         let crs_key_type = PubDataType::CRS.to_string();
         let crs_info_type = PrivDataType::CrsInfo.to_string();
 
-        if spec.is_threshold() {
-            for i in 1..=spec.party_count() {
-                let role = Role::indexed_from_one(i);
-                let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
-                let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-                let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
-                let dest_priv =
-                    compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-                for crs_id in &key_ids.crs_keys {
-                    self.copy_key_files(&source_pub, &dest_pub, &crs_key_type, crs_id)
-                        .await?;
-                    self.copy_epoch_key_files(&source_priv, &dest_priv, &crs_info_type, crs_id)
-                        .await?;
-                }
-            }
-        } else {
-            let source_pub = compute_storage_path(source_base, StorageType::PUB, None);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
-            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
+        for i in 1..=spec.party_count {
+            let role = Role::indexed_from_one(i);
+            let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
+            let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
+            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
+            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
             for crs_id in &key_ids.crs_keys {
                 self.copy_key_files(&source_pub, &dest_pub, &crs_key_type, crs_id)
@@ -549,49 +473,17 @@ impl TestMaterialManager {
 
     /// Get key IDs based on specification
     fn get_key_ids_for_spec(&self, spec: &TestMaterialSpec) -> KeyIds {
-        match spec.material_type {
-            MaterialType::Testing => KeyIds {
-                fhe_keys: match spec.party_count() {
-                    1 => vec![
-                        TEST_CENTRAL_KEY_ID.to_string(),
-                        OTHER_CENTRAL_TEST_ID.to_string(),
-                    ],
-                    n => vec![
-                        derive_request_id(&threshold_key_id_name(MaterialType::Testing, n))
-                            .expect("threshold testing key fixture ID must derive")
-                            .to_string(),
-                    ],
-                },
-                crs_keys: match spec.party_count() {
-                    1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
-                    n => vec![
-                        derive_request_id(&threshold_crs_id_name(MaterialType::Testing, n))
-                            .expect("threshold testing CRS fixture ID must derive")
-                            .to_string(),
-                    ],
-                },
-            },
-            MaterialType::Default => KeyIds {
-                fhe_keys: match spec.party_count() {
-                    1 => vec![
-                        DEFAULT_CENTRAL_KEY_ID.to_string(),
-                        OTHER_CENTRAL_DEFAULT_ID.to_string(),
-                    ],
-                    n => vec![
-                        derive_request_id(&threshold_key_id_name(MaterialType::Default, n))
-                            .expect("threshold default key fixture ID must derive")
-                            .to_string(),
-                    ],
-                },
-                crs_keys: match spec.party_count() {
-                    1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
-                    n => vec![
-                        derive_request_id(&threshold_crs_id_name(MaterialType::Default, n))
-                            .expect("threshold default CRS fixture ID must derive")
-                            .to_string(),
-                    ],
-                },
-            },
+        KeyIds {
+            fhe_keys: vec![
+                derive_request_id(&key_id_name(spec.material_type, spec.party_count))
+                    .expect("threshold key fixture ID must derive")
+                    .to_string(),
+            ],
+            crs_keys: vec![
+                derive_request_id(&crs_id_name(spec.material_type, spec.party_count))
+                    .expect("threshold CRS fixture ID must derive")
+                    .to_string(),
+            ],
         }
     }
 }
@@ -605,63 +497,16 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::{DEFAULT_EPOCH_ID, TEST_THRESHOLD_KEY_ID_4P};
+    use crate::consts::{DEFAULT_EPOCH_ID, TEST_KEY_ID_4P};
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
-    async fn test_setup_centralized_material() {
+    async fn test_setup_material() {
         let manager = create_test_material_manager();
-        let spec = TestMaterialSpec::centralized_basic();
+        let spec = TestMaterialSpec::basic(4);
 
         let temp_dir = manager
-            .setup_test_material_temp(&spec, "test_centralized")
-            .await
-            .unwrap();
-
-        // Verify directory structure was created
-        let base_path = temp_dir.path();
-        assert!(base_path.join(TMP_PATH_PREFIX).exists());
-        assert!(base_path.join(KEY_PATH_PREFIX).exists());
-
-        let pub_path = compute_storage_path(Some(base_path), StorageType::PUB, None);
-        let priv_path = compute_storage_path(Some(base_path), StorageType::PRIV, None);
-        assert!(pub_path.exists());
-        assert!(priv_path.exists());
-
-        let epoch_id = DEFAULT_EPOCH_ID.to_string();
-        for key_id in [
-            TEST_CENTRAL_KEY_ID.to_string(),
-            OTHER_CENTRAL_TEST_ID.to_string(),
-        ] {
-            assert!(
-                pub_path
-                    .join(PubDataType::CompressedXofKeySet.to_string())
-                    .join(&key_id)
-                    .exists()
-            );
-            assert!(
-                pub_path
-                    .join(PubDataType::PublicKey.to_string())
-                    .join(&key_id)
-                    .exists()
-            );
-            assert!(
-                priv_path
-                    .join(PrivDataType::FhePrivateKey.to_string())
-                    .join(&epoch_id)
-                    .join(&key_id)
-                    .exists()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_setup_threshold_material() {
-        let manager = create_test_material_manager();
-        let spec = TestMaterialSpec::threshold_basic(4);
-
-        let temp_dir = manager
-            .setup_test_material_temp(&spec, "test_threshold")
+            .setup_test_material_temp(&spec, "test_setup_material")
             .await
             .unwrap();
 
@@ -674,7 +519,7 @@ mod tests {
             assert!(pub_path.exists());
             assert!(priv_path.exists());
 
-            let key_id = TEST_THRESHOLD_KEY_ID_4P.to_string();
+            let key_id = TEST_KEY_ID_4P.to_string();
             let epoch_id = DEFAULT_EPOCH_ID.to_string();
             assert!(
                 pub_path
@@ -704,7 +549,7 @@ mod tests {
             );
         }
 
-        let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))
+        let key_id = derive_request_id(&key_id_name(MaterialType::Testing, 4))
             .unwrap()
             .to_string();
         assert!(
@@ -720,7 +565,7 @@ mod tests {
     #[tokio::test]
     async fn signing_only_material_has_no_default_epoch() {
         let manager = create_test_material_manager();
-        let spec = TestMaterialSpec::threshold_signing_only(4);
+        let spec = TestMaterialSpec::signing_only(4);
 
         let temp_dir = manager
             .setup_test_material_temp(&spec, "test_signing_only")

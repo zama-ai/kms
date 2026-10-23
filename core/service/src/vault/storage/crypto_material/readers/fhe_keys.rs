@@ -1,10 +1,10 @@
-//! Implementation of CryptoMaterialReader for KmsFheKeyHandles
+//! Implementation of CryptoMaterialReader for FheKeys
 //!
 //! This module provides the implementation of the CryptoMaterialReader trait
-//! for the KmsFheKeyHandles type, enabling it to be read from storage.
+//! for the FheKeys type, enabling it to be read from storage.
 
 use crate::anyhow_error_and_warn_log;
-use crate::engine::base::KmsFheKeyHandles;
+use crate::engine::service::FheKeys;
 use crate::vault::storage::crypto_material::traits::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageReaderExt, read_versioned_at_request_and_epoch_id};
 use kms_grpc::RequestId;
@@ -12,7 +12,7 @@ use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PrivDataType;
 
 #[tonic::async_trait]
-impl PrivateCryptoMaterialReader for KmsFheKeyHandles {
+impl PrivateCryptoMaterialReader for FheKeys {
     async fn read_from_storage_at_epoch<S>(
         storage: &S,
         request_id: &RequestId,
@@ -25,12 +25,12 @@ impl PrivateCryptoMaterialReader for KmsFheKeyHandles {
             storage,
             request_id,
             epoch_id,
-            &PrivDataType::FhePrivateKey.to_string(),
+            &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
         .map_err(|e| {
             anyhow_error_and_warn_log(format!(
-                "Failed to read KmsFheKeyHandles from storage for request ID {request_id}: {e}"
+                "Failed to read FheKeys from storage for request ID {request_id}: {e}"
             ))
         })
     }

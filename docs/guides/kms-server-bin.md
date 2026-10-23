@@ -2,7 +2,7 @@
 
 ## KMS Key Generation
 
-`kms-gen-keys` generates the server signing keys (and, in threshold mode, the per-party self-signed CA certificates used for mTLS).
+`kms-gen-keys` generates the server signing keys and the per-party self-signed CA certificates used for mTLS.
 
 To generate the signing material before the KMS server is started, pass a TOML config file:
 
@@ -10,7 +10,7 @@ To generate the signing material before the KMS server is started, pass a TOML c
 cargo run --bin kms-gen-keys -- --config-file /path/to/kms-gen-keys.toml
 ```
 
-The config must include a `[keygen]` section and the storage settings used to write the generated material:
+The config must include a `[keygen]` section, a `[threshold]` section and the storage settings used to write the generated material:
 
 ```toml
 [keygen]
@@ -26,19 +26,16 @@ path = "./keys"
 path = "./keys"
 ```
 
-For threshold configs, `threshold.my_id` selects the party. The TLS certificate
+The `threshold.my_id` field selects the party. The TLS certificate
 subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
-
-Omit the `[threshold]` section to generate centralized signing material. The
-centralized mode does not generate a CA certificate.
 
 ### `[threshold]` options
 
 The `[threshold]` section accepts only the fields below. The tool rejects any
 other field.
-The tool needs a TLS subject on every threshold run, also when a CA certificate
+The tool needs a TLS subject on every run, also when a CA certificate
 exists. Still, the tool only generates a CA certificate when public storage has 
 no `CACert` object, so a run on an existing party does not change its certificate,
 in which case any values can be used for the `[threshold]` parameters.
@@ -68,7 +65,7 @@ port = 50001
 
 ### Local test config
 
-To test the tool locally, in threshold mode, the configuration file `../../core/service/config/local_keygen.toml` 
+To test the tool locally, the configuration file `../../core/service/config/local_keygen.toml`
 can be used:
 
 ```bash
@@ -226,9 +223,9 @@ registered.
 A further rotation follows the same route: a further context switch, with a fresh
 seed per node.
 
-## Threshold KMS TLS Certificates
+## TLS Certificates
 
-If you want to run a threshold KMS, you also need TLS certificates and keys that secure the communication between the MPC cores.
+The KMS also needs TLS certificates and keys that secure the communication between the MPC cores.
 These can be generated with the following commands:
 
 ```bash
@@ -237,17 +234,9 @@ cargo run --bin kms-gen-tls-certs -- --ca-prefix p --ca-count 4
 
 ## Running the KMS
 
-### Locally running a centralized KMS Core
+### Locally running the KMS cores
 
-Running a centralized KMS Core with the default configuration:
-
-```bash
-cargo run --bin kms-server -- --config-file config/default_centralized.toml
-```
-
-### Locally running a threshold KMS Core
-
-Running a threshold KMS Core with the default configuration requires running the following commands, each in a separate terminal:
+To run the KMS cores with the default configuration, run the following commands, each in a separate terminal:
 
 ```bash
 cargo run --bin kms-server -- --config-file config/default_1.toml
@@ -258,19 +247,19 @@ cargo run --bin kms-server -- --config-file config/default_4.toml
 
 ## kms-init
 
-The threshold nodes need to be initialized _once_ when they start for the first time, before they can run public or user decryptions.
-This can be achieved by running the following stand-alone command, with the correct threshold node addresses as parameters:
+The KMS nodes need to be initialized _once_ when they start for the first time, before they can run public or user decryptions.
+This can be achieved by running the following stand-alone command, with the correct node addresses as parameters:
 
 ```bash
 cargo run --bin kms-init -- -a http://127.0.0.1:50100 http://127.0.0.1:50200 http://127.0.0.1:50300 http://127.0.0.1:50400
 ```
 
-Note that this must only be done _once_ per set of threshold nodes. Calling `init` multiple times will result in an error.
-Once the init material is successfully generated, it is stored to disk into the party's private storage, currently under `PRIV-pX/PrssSetup/000..001`, where `pX` denotes the party id, e.g. `p1`, etc.
+Note that this must only be done _once_ per set of nodes. Calling `init` multiple times will result in an error.
+`kms-init` creates the default epoch (`0800..0001`) in the default MPC context. Each party stores the epoch's PRSS state in its private storage, under `PRIV-pX/EpochData/0800..0001`, where `pX` denotes the party id, e.g. `p1`, etc.
 
-When a threshold node restarts, it will automatically use init material it finds on disk. This allows failing nodes to re-join an existing set of nodes, without running `init` again.
+When a node restarts, it will automatically use init material it finds on disk. This allows failing nodes to re-join an existing set of nodes, without running `init` again.
 
-When a different set of nodes (or a different number of nodes) should run the threshold protocols, `init` must be done again. Currently the only way is to manually delete the init material from disk in `PRIV-pX/PrssSetup/`.
+When a different set of nodes (or a different number of nodes) should run the threshold protocols, create a new MPC context and a new epoch for it with the `kms-core-client` commands described in [MPC Context Management](./core_client.md#mpc-context-management) and [New Epoch (Resharing)](./core_client.md#new-epoch-resharing).
 
 ## Docker and kms-core-client
 
@@ -288,7 +277,7 @@ On the server, set the top-level `mock_enclave` key in the TOML config:
 mock_enclave = true
 ```
 
-See `core/service/config/compose_*.toml` for working examples used by the docker-compose threshold setup.
+See `core/service/config/compose_*.toml` for working examples used by the docker-compose setup.
 
 On the key-generation side, set the same field in the config used with
 `--config-file`:

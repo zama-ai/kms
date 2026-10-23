@@ -6,7 +6,7 @@
 //!
 //! - **`material`**: Test material management (`TestMaterialManager`, `TestMaterialSpec`)
 //! - **`meta_store`**: Small interface used by metastore benchmarks
-//! - **`setup`**: Test environment setup (centralized & threshold)
+//! - **`setup`**: Test environment setup (threshold)
 //! - **`helpers`**: Common test utilities and helper functions
 //! - **`types`**: Test-specific types and configurations
 //! - **`prelude`**: Convenient re-exports for test files
@@ -16,7 +16,7 @@
 //! The testing infrastructure is organized around two main concepts:
 //!
 //! 1. **Test Material**: Pre-generated cryptographic keys managed by `TestMaterialManager`
-//! 2. **Test Environments**: Isolated KMS server setups for centralized and threshold modes
+//! 2. **Test Environments**: Isolated threshold KMS server setups
 //!
 //! ## Test Material
 //!
@@ -25,11 +25,8 @@
 //!
 //! ## Test Environments
 //!
-//! Test environments provide fully configured KMS servers with clients:
-//! - `CentralizedTestEnv`: Single-party KMS setup
-//! - `ThresholdTestEnv`: Multi-party threshold KMS setup
-//!
-//! Both environments use RAII for automatic cleanup.
+//! `TestEnv` provides fully configured multi-party threshold KMS servers with clients.
+//! It uses RAII for automatic cleanup.
 pub mod helpers;
 pub mod material;
 // Metastore benchmark helper
@@ -44,14 +41,7 @@ pub mod prelude {
     pub use super::material::{KeyType, MaterialType, TestMaterialManager, TestMaterialSpec};
 
     // Setup utilities
-    pub use super::setup::{
-        centralized::{
-            CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
-        },
-        threshold::{
-            TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
-        },
-    };
+    pub use super::setup::environment::{TestConfig, TestEnv, TestEnvBuilder, TestMaterialGuard};
 
     // Helper functions
     pub use super::helpers::{create_test_material_manager, domain_to_msg};

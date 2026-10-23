@@ -55,16 +55,14 @@ KMS uses TOML configuration files with different sections for various components
 
 The repository ships sample configurations in `core/service/config/`:
 
-- `default_centralized.toml` — centralized mode with local file storage
 - `default_1.toml` … `default_4.toml` — threshold parties 1–4 with local file storage
-- `compose_centralized.toml`, `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
-- `default_centralized_enclave.toml` — centralized mode inside an AWS Nitro Enclave
+- `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
 
 **Development Environment**:
 - Local file storage for simplicity
 - Minimal security requirements
 - Local metrics and tracing endpoints
-- **Reference**: `core/service/config/default_centralized.toml` or `default_1.toml` … `default_4.toml`
+- **Reference**: `core/service/config/default_1.toml` … `default_4.toml`
 
 **Staging / Production Environments**:
 - Encrypted S3 storage with KMS keys
@@ -127,7 +125,7 @@ kms-health-check --format json live --endpoint localhost:<GRPC_PORT>
 1. **Syntax Validation**: Use `kms-health-check config` to validate configuration syntax
 2. **Connectivity Testing**: Use `kms-health-check live` to verify service connectivity
 3. **Key Material Verification**: Health check tool automatically verifies key availability and storage
-4. **Peer Connectivity**: For threshold mode, verifies connectivity to all configured peers
+4. **Peer Connectivity**: Verifies connectivity to all configured peers
 
 > **Complete Tool Documentation**: See [kms-health-check README](../../tools/kms-health-check/README.md) for full capabilities including timeout configuration, Docker integration, and CI/CD usage.
 
@@ -171,7 +169,6 @@ openssl enc -aes-256-gcm -d -in config.toml.enc -out /tmp/config.toml -k "$ENCRY
 **Configuration Templates**:
 - Use environment-specific templates for different deployment stages
 - Implement variable substitution for dynamic values
-- Maintain separate templates for centralized vs threshold modes
 - Use configuration management tools (Helm, Kustomize, etc.)
 
 **Environment Variables**:

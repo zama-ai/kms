@@ -9,11 +9,7 @@ use crate::{
         ram::RamStorage, read_all_data_from_all_epochs_versioned, store_versioned_at_request_id,
     },
 };
-use kms_grpc::{
-    RequestId,
-    identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType},
-};
+use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use std::collections::HashMap;
 
 /// A missing PRSS migration config stops startup before legacy CRS metadata is removed.
@@ -38,7 +34,7 @@ async fn failed_prss_migration_keeps_legacy_crs_metadata() {
         .await
         .unwrap();
 
-    let error = migrate_to_0_15_x(&mut public, &mut private, KMSType::Threshold, None)
+    let error = migrate_to_0_15_x(&mut public, &mut private, None)
         .await
         .unwrap_err();
 
@@ -79,15 +75,11 @@ where
         .await
         .unwrap();
 
-    // The CRS migration is independent of the KMS mode. Centralized mode avoids unrelated PRSS setup.
-    migrate_to_0_15_x(
-        &mut public_storage,
-        &mut private_storage,
-        KMSType::Centralized,
-        None,
-    )
-    .await
-    .unwrap();
+    // The CRS migration is independent of the KMS mode. Without legacy PRSS data, the PRSS
+    // migration is a no-op, so the test needs no PRSS setup.
+    migrate_to_0_15_x(&mut public_storage, &mut private_storage, None)
+        .await
+        .unwrap();
 
     assert!(
         !private_storage
@@ -102,14 +94,9 @@ where
     assert_eq!(stored, [((crs_id, *DEFAULT_EPOCH_ID), metadata)].into());
 
     // A second run sees no legacy entry and leaves the migrated value untouched.
-    migrate_to_0_15_x(
-        &mut public_storage,
-        &mut private_storage,
-        KMSType::Centralized,
-        None,
-    )
-    .await
-    .unwrap();
+    migrate_to_0_15_x(&mut public_storage, &mut private_storage, None)
+        .await
+        .unwrap();
     let stored_after_second_run: HashMap<(RequestId, EpochId), CrsGenMetadata> =
         read_all_data_from_all_epochs_versioned(&private_storage, &data_type)
             .await

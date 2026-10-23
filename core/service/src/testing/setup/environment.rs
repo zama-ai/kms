@@ -1,0 +1,463 @@
+//! Threshold KMS test environment setup
+//!
+//! This module provides a builder pattern for setting up isolated threshold KMS
+//! test environments with automatic cleanup.
+use crate::client::test_tools::setup_servers_isolated;
+use crate::conf::{Keychain, SecretSharingKeychain};
+use crate::consts::{
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+};
+use crate::testing::helpers::create_test_material_manager;
+use crate::testing::material::{KeyType, TestMaterialManager, TestMaterialSpec};
+use crate::testing::types::ServerHandle;
+pub use crate::testing::types::TestConfig;
+use crate::util::key_setup::{
+    SigningKeyConfig, ensure_client_keys_exist, ensure_server_signing_keys_exist, max_threshold,
+};
+use crate::vault::Vault;
+use crate::vault::keychain::make_keychain_proxy;
+use crate::vault::storage::{StorageProxy, StorageType, file::FileStorage};
+use anyhow::Result;
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use std::collections::HashMap;
+use std::path::Path;
+use tempfile::TempDir;
+use tonic::transport::Channel;
+
+/// Threshold KMS test environment
+///
+/// Provides an isolated multi-party KMS setup with automatic cleanup.
+/// The environment is automatically cleaned up when dropped.
+pub struct TestEnv {
+    /// Per-test isolated material directory (auto-deleted on drop)
+    pub material_dir: TempDir,
+    /// Running KMS server handles (keyed by party ID)
+    pub servers: HashMap<u32, ServerHandle>,
+    /// gRPC clients for communicating with servers (keyed by party ID)
+    pub clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
+}
+
+/// Lifetime guard returned by [`TestEnv::into_parts`].
+///
+/// Owns the tempdir handle. Must be held until the test body finishes — dropping it deletes the tempdir the servers
+/// were reading from.
+pub struct TestMaterialGuard {
+    _material_dir: TempDir,
+}
+
+impl TestEnv {
+    /// Create a new builder for threshold test environment
+    pub fn builder() -> TestEnvBuilder {
+        TestEnvBuilder::default()
+    }
+
+    /// Iterate over all clients (more readable than `.clients.values()`)
+    pub fn all_clients(&self) -> impl Iterator<Item = &CoreServiceEndpointClient<Channel>> {
+        self.clients.values()
+    }
+
+    /// Iterate over all servers (more readable than `.servers.values()`)
+    pub fn all_servers(&self) -> impl Iterator<Item = &ServerHandle> {
+        self.servers.values()
+    }
+
+    /// Iterate over all servers with their party IDs
+    pub fn all_servers_with_id(&self) -> impl Iterator<Item = (u32, &ServerHandle)> {
+        self.servers.iter().map(|(id, server)| (*id, server))
+    }
+
+    /// Consume and iterate over all servers (for shutdown)
+    pub fn into_servers(self) -> impl Iterator<Item = ServerHandle> {
+        self.servers.into_values()
+    }
+
+    /// Consume and iterate over all servers with their party IDs (for shutdown)
+    pub fn into_servers_with_id(self) -> impl Iterator<Item = (u32, ServerHandle)> {
+        self.servers.into_iter()
+    }
+
+    /// Destructure the [`TestEnv`] into parts.
+    ///
+    /// Returns `(clients, servers, material_path, guards)`. Tests that also need an `internal_client` should build it
+    /// via [`create_internal_client`](Self::create_internal_client) before calling `into_parts`.
+    pub fn into_parts(
+        self,
+    ) -> (
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        HashMap<u32, ServerHandle>,
+        std::path::PathBuf,
+        TestMaterialGuard,
+    ) {
+        let material_path = self.material_dir.path().to_path_buf();
+        let guards = TestMaterialGuard {
+            _material_dir: self.material_dir,
+        };
+        (self.clients, self.servers, material_path, guards)
+    }
+
+    /// Get client for a specific party ID
+    pub fn client(&self, party_id: u32) -> Option<&CoreServiceEndpointClient<Channel>> {
+        self.clients.get(&party_id)
+    }
+
+    /// Get server for a specific party ID
+    pub fn server(&self, party_id: u32) -> Option<&ServerHandle> {
+        self.servers.get(&party_id)
+    }
+
+    /// Get all clients except the specified party (useful for crash simulation)
+    /// Returns a HashMap for compatibility with existing code
+    pub fn clients_except(
+        &self,
+        excluded_party: u32,
+    ) -> HashMap<u32, CoreServiceEndpointClient<Channel>> {
+        self.clients
+            .iter()
+            .filter(|(party_id, _)| **party_id != excluded_party)
+            .map(|(party_id, client)| (*party_id, client.clone()))
+            .collect()
+    }
+
+    /// Iterate over all clients except the specified party (more convenient for loops)
+    pub fn all_clients_except(
+        &self,
+        excluded_party: u32,
+    ) -> impl Iterator<Item = CoreServiceEndpointClient<Channel>> + '_ {
+        self.clients
+            .iter()
+            .filter(move |(party_id, _)| **party_id != excluded_party)
+            .map(|(_, client)| client.clone())
+    }
+
+    /// Get all clients except the specified parties (useful for multi-party crash simulation)
+    pub fn clients_except_parties(
+        &self,
+        excluded_parties: &[u32],
+    ) -> HashMap<u32, CoreServiceEndpointClient<Channel>> {
+        self.clients
+            .iter()
+            .filter(|(party_id, _)| !excluded_parties.contains(party_id))
+            .map(|(party_id, client)| (*party_id, client.clone()))
+            .collect()
+    }
+
+    /// Create an internal client for making requests to the threshold KMS
+    ///
+    /// This helper eliminates boilerplate for tests that need to create gRPC requests.
+    /// The client is configured with the test material from this environment.
+    ///
+    /// # Arguments
+    /// * `params` - FHE parameters (use `&TEST_PARAM` for testing)
+    /// * `decryption_mode` - Optional decryption mode override
+    ///
+    /// # Example
+    /// ```ignore
+    /// let env = TestEnv::builder()
+    ///     .with_test_name("my_test")
+    ///     .build()
+    ///     .await?;
+    ///
+    /// let client = env.create_internal_client(&TEST_PARAM, None).await?;
+    /// let req = client.crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), &domain)?;
+    /// ```
+    pub async fn create_internal_client(
+        &self,
+        params: &threshold_execution::tfhe_internals::parameters::DKGParams,
+        decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
+    ) -> Result<crate::client::client_wasm::Client> {
+        use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let material_path = self.material_dir.path();
+        let party_count = self.clients.len();
+
+        // Build public storage map for all parties
+        let mut pub_storage_map = HashMap::new();
+        for (i, prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count]
+            .iter()
+            .enumerate()
+        {
+            let pub_storage =
+                FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?;
+            pub_storage_map.insert((i + 1) as u32, pub_storage);
+        }
+
+        // Create client storage
+        let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
+
+        // Create and return the internal client
+        crate::client::client_wasm::Client::new_client(
+            client_storage,
+            pub_storage_map,
+            params,
+            decryption_mode,
+        )
+        .await
+    }
+}
+
+/// Builder for threshold test environments
+pub struct TestEnvBuilder {
+    test_name: Option<String>,
+    party_count: usize,
+    threshold: Option<u8>,
+    material_spec: Option<TestMaterialSpec>,
+    material_manager: Option<TestMaterialManager>,
+    with_default_epoch: bool,
+    with_backup_vault: bool,
+    with_custodian_keychain: bool,
+    decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
+}
+
+impl Default for TestEnvBuilder {
+    fn default() -> Self {
+        Self {
+            test_name: None,
+            party_count: 4,
+            threshold: None,
+            material_spec: None,
+            material_manager: None,
+            with_default_epoch: false,
+            with_backup_vault: false,
+            with_custodian_keychain: false,
+            decryption_mode: None,
+        }
+    }
+}
+
+impl TestEnvBuilder {
+    /// Set the test name (used for logging and temp directory naming)
+    pub fn with_test_name(mut self, name: impl Into<String>) -> Self {
+        self.test_name = Some(name.into());
+        self
+    }
+
+    /// Set the number of parties (default: 4)
+    pub fn with_party_count(mut self, count: usize) -> Self {
+        self.party_count = count;
+        self
+    }
+
+    /// Set the threshold value (default: computed as (party_count - 1) / 3)
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+
+    /// Set custom material specification
+    pub fn with_material_spec(mut self, spec: TestMaterialSpec) -> Self {
+        self.material_spec = Some(spec);
+        self
+    }
+
+    /// Set custom material manager
+    pub fn with_material_manager(mut self, manager: TestMaterialManager) -> Self {
+        self.material_manager = Some(manager);
+        self
+    }
+
+    /// Include the fixture's default epoch, so the servers boot with a PRSS setup and can run
+    /// MPC protocols. A spec with FHE key shares includes the epoch already.
+    pub fn with_prss(mut self) -> Self {
+        self.with_default_epoch = true;
+        self
+    }
+
+    /// Enable backup vault for all parties
+    pub fn with_backup_vault(mut self) -> Self {
+        self.with_backup_vault = true;
+        self
+    }
+
+    /// Enable custodian keychain for all parties (requires backup vault)
+    pub fn with_custodian_keychain(mut self) -> Self {
+        self.with_backup_vault = true; // Custodian requires backup vault
+        self.with_custodian_keychain = true;
+        self
+    }
+
+    /// Set decryption mode
+    pub fn with_decryption_mode(
+        mut self,
+        mode: threshold_execution::endpoints::decryption::DecryptionMode,
+    ) -> Self {
+        self.decryption_mode = Some(mode);
+        self
+    }
+
+    /// Build the test environment
+    pub async fn build(self) -> Result<TestEnv> {
+        let test_name = self.test_name.unwrap_or_else(|| "kms_test".to_string());
+        let manager = self
+            .material_manager
+            .unwrap_or_else(create_test_material_manager);
+        let mut spec = self
+            .material_spec
+            .unwrap_or_else(|| TestMaterialSpec::basic(self.party_count));
+        if self.with_default_epoch {
+            spec.required_keys.insert(KeyType::DefaultEpoch);
+        }
+
+        // Compute threshold if not provided
+        let threshold = self
+            .threshold
+            .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
+        // The fixture epoch carries the threshold of the fixture key shares, so a test cannot
+        // combine it with another threshold.
+        if spec.requires_key_type(KeyType::DefaultEpoch)
+            && usize::from(threshold) != max_threshold(self.party_count)
+        {
+            anyhow::bail!(
+                "the fixture default epoch for {} parties uses threshold {}, but the test asked for {threshold}",
+                self.party_count,
+                max_threshold(self.party_count)
+            );
+        }
+
+        let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
+
+        // Create storage for each party
+        let mut pub_storages = Vec::new();
+        let mut priv_storages = Vec::new();
+        let pub_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        for (pub_prefix, priv_prefix) in pub_prefixes.iter().zip(priv_prefixes) {
+            pub_storages.push(FileStorage::new(
+                Some(material_dir.path()),
+                StorageType::PUB,
+                pub_prefix.as_deref(),
+            )?);
+            priv_storages.push(FileStorage::new(
+                Some(material_dir.path()),
+                StorageType::PRIV,
+                priv_prefix.as_deref(),
+            )?);
+        }
+
+        // Ensure signing keys exist (generates VerfAddress if missing)
+        ensure_server_signing_keys_exist(
+            &mut pub_storages,
+            &mut priv_storages,
+            true, // deterministic
+            SigningKeyConfig::AllParties(
+                (1..=self.party_count)
+                    .map(|i| format!("party-{i}"))
+                    .collect(),
+            ),
+            false, // don't skip if exists
+        )
+        .await?;
+
+        // Ensure client signing/verification keys exist
+        ensure_client_keys_exist(Some(material_dir.path()), true).await;
+
+        let vaults = if self.with_backup_vault {
+            build_vaults(
+                material_dir.path(),
+                self.party_count,
+                self.with_custodian_keychain,
+            )
+            .await?
+        } else {
+            (0..self.party_count).map(|_| None).collect()
+        };
+
+        let config = TestConfig {
+            decryption_mode: self.decryption_mode,
+            test_material_path: Some(material_dir.path()),
+        };
+
+        let (servers, clients) =
+            setup_servers_isolated(threshold, pub_storages, priv_storages, vaults, config).await;
+
+        Ok(TestEnv {
+            material_dir,
+            servers,
+            clients,
+        })
+    }
+
+    /// Spin up a fresh threshold KMS on an existing material directory. Use
+    /// to verify that state persists across server restarts. `path` must outlive
+    /// the returned pair.
+    pub async fn from_path(
+        self,
+        path: &Path,
+    ) -> Result<(
+        HashMap<u32, ServerHandle>,
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    )> {
+        let pub_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        let mut pub_storages = Vec::with_capacity(self.party_count);
+        let mut priv_storages = Vec::with_capacity(self.party_count);
+        for (pub_prefix, priv_prefix) in pub_prefixes.iter().zip(priv_prefixes) {
+            pub_storages.push(FileStorage::new(
+                Some(path),
+                StorageType::PUB,
+                pub_prefix.as_deref(),
+            )?);
+            priv_storages.push(FileStorage::new(
+                Some(path),
+                StorageType::PRIV,
+                priv_prefix.as_deref(),
+            )?);
+        }
+
+        let vaults = if self.with_backup_vault {
+            build_vaults(path, self.party_count, self.with_custodian_keychain).await?
+        } else {
+            (0..self.party_count).map(|_| None).collect()
+        };
+
+        let threshold = self
+            .threshold
+            .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
+        let config = TestConfig {
+            decryption_mode: self.decryption_mode,
+            test_material_path: Some(path),
+        };
+
+        Ok(setup_servers_isolated(threshold, pub_storages, priv_storages, vaults, config).await)
+    }
+}
+
+async fn build_vaults(
+    material_path: &Path,
+    party_count: usize,
+    with_custodian_keychain: bool,
+) -> Result<Vec<Option<Vault>>> {
+    let backup_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
+    let mut vaults = Vec::with_capacity(party_count);
+    for backup_prefix in backup_prefixes.iter() {
+        let backup_dir = material_path.join(backup_prefix.as_deref().unwrap());
+        std::fs::create_dir_all(&backup_dir)?;
+
+        let backup_proxy = StorageProxy::from(FileStorage::new(
+            Some(material_path),
+            StorageType::BACKUP,
+            backup_prefix.as_deref(),
+        )?);
+
+        let keychain = if with_custodian_keychain {
+            Some(
+                make_keychain_proxy(
+                    &Keychain::SecretSharing(SecretSharingKeychain {}),
+                    None,
+                    None,
+                    false,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        vaults.push(Some(Vault {
+            storage: backup_proxy,
+            keychain,
+        }));
+    }
+    Ok(vaults)
+}

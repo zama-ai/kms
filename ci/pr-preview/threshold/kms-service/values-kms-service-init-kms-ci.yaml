@@ -15,8 +15,6 @@ kmsCore:
     cleanupIntervalSecs: 2
     rayonNumThreads: 40
     tokioWorkerThreads: 24
-    initializationScript:
-      enabled: true
     # peersList is generated dynamically by deploy.sh and should not be set here
 
 

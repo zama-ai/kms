@@ -33,7 +33,7 @@
 ## Review
 
 - Review the task's diff; exclude changes merged from `main`.
-- Check analogous paths for matching changes: `purge_crs_data` ↔ `purge_key_data`, `*_threshold` ↔ `*_centralized`, S3 ↔ filesystem storage.
+- Check analogous paths for matching changes: `purge_crs_data` ↔ `purge_key_data`, S3 ↔ filesystem storage.
 - Check for deadlocks, livelocks, TOCTOU, and other concurrency issues, especially around the locks and lifecycle leases in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - Remove code that the change made dead.
 - Use one name per concept across the touched files.

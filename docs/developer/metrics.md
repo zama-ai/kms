@@ -108,8 +108,6 @@ pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
-// Special tag used for the central party
-pub const CENTRAL_TAG: &str = "central";
 ```
 
 ### Counters
@@ -306,10 +304,10 @@ Conventions:
   `namespace="kms-ci"`. It does **not** apply the `ci_` metric-name prefix: the cluster
   Prometheus remote-write keep list only matches `kms_.+`, so prefixed names would never
   reach Grafana Cloud. Query the existing KMS dashboard with `namespace="kms-ci"`.)
-- The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
-  `kms-test-centralized`, from the CI `DEPLOYMENT_TYPE`), so their metrics are already told apart by
-  Prometheus' `namespace` label — there is no `deployment_type` const-label. You could add one via
-  `metricsLabels`, but keep any added labels **low-cardinality**.
+- The kind matrix deploys to a namespace named after the CI `DEPLOYMENT_TYPE` (`kms-test-threshold`),
+  so its metrics are already told apart by Prometheus' `namespace` label — there is no
+  `deployment_type` const-label. You could add one via `metricsLabels`, but keep any added labels
+  **low-cardinality**.
 
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`

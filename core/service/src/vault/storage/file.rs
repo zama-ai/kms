@@ -422,7 +422,7 @@ pub mod tests {
 
     #[ignore]
     #[tokio::test]
-    async fn threshold_dev_storage() {
+    async fn dev_storage() {
         let path1 = tempfile::tempdir().unwrap();
         let path2 = tempfile::tempdir().unwrap();
         let mut storage1 = FileStorage { path: path1.keep() };
@@ -476,20 +476,20 @@ pub mod tests {
 
     #[ignore]
     #[tokio::test]
-    async fn threshold_file_storage_with_path() {
+    async fn party_prefix_file_storage_with_path() {
         file_storage_with_path(true).await
     }
 
     #[ignore]
     #[tokio::test]
-    async fn centralized_file_storage_with_path() {
+    async fn default_prefix_file_storage_with_path() {
         file_storage_with_path(false).await
     }
 
-    async fn file_storage_with_path(threshold: bool) {
+    async fn file_storage_with_path(with_party_prefix: bool) {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path();
-        let mut storage = if threshold {
+        let mut storage = if with_party_prefix {
             FileStorage::new(
                 Some(path),
                 StorageType::PUB,
@@ -508,7 +508,7 @@ pub mod tests {
             .unwrap();
 
         // manually check that the file actually exists
-        let data_path = if threshold {
+        let data_path = if with_party_prefix {
             path.join(format!("{}-p1", StorageType::PUB))
                 .join(PubDataType::CRS.to_string())
                 .join(data_id.to_string())
@@ -526,10 +526,10 @@ pub mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn storage_helper_methods(#[values(true, false)] threshold: bool) {
+    async fn storage_helper_methods(#[values(true, false)] with_party_prefix: bool) {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path();
-        let mut pub_storage = if threshold {
+        let mut pub_storage = if with_party_prefix {
             FileStorage::new(
                 Some(path),
                 StorageType::PUB,
@@ -539,7 +539,7 @@ pub mod tests {
         } else {
             FileStorage::new(Some(path), StorageType::PUB, None).unwrap()
         };
-        let mut priv_storage = if threshold {
+        let mut priv_storage = if with_party_prefix {
             FileStorage::new(
                 Some(path),
                 StorageType::PRIV,

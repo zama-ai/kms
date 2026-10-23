@@ -131,6 +131,7 @@ parse_rolling_upgrade_args() {
     if [[ -z "${ALL_UPGRADED_PARTIES}" ]]; then
         ALL_UPGRADED_PARTIES="${PARTIES_TO_UPGRADE}"
     fi
+    validate_deployment_type
 }
 
 #=============================================================================

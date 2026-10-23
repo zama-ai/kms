@@ -12,8 +12,6 @@ use crate::cryptography::signing::composite::sign_result_entries;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::typed_signature::StoredTypedSignature;
 use crate::engine::rng_source::RngSource;
-use crate::engine::traits::PrivateKeyMaterialMetadata;
-use crate::util::key_setup::FhePrivateKey;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
@@ -26,7 +24,6 @@ use kms_grpc::kms::v1::{
     TypedSignature, UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::CrsGenMetadataV0;
-use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
@@ -85,146 +82,6 @@ pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-#[expect(clippy::large_enum_variant)]
-pub enum KmsFheKeyHandlesVersions {
-    V0(KmsFheKeyHandlesV0),
-    V1(KmsFheKeyHandles),
-}
-
-impl Upgrade<KmsFheKeyHandles> for KmsFheKeyHandlesV0 {
-    type Error = std::convert::Infallible;
-    fn upgrade(self) -> Result<KmsFheKeyHandles, Self::Error> {
-        Ok(KmsFheKeyHandles {
-            client_key: self.client_key,
-            decompression_key: self.decompression_key,
-            public_key_info: KeyGenMetadata::LegacyV0(self.public_key_info),
-        })
-    }
-}
-
-/// Centralized KMS private key material storage
-///
-/// This structure securely holds sensitive key material used by the KMS,
-/// including the client key, optional decompression key, and public key metadata.
-#[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(KmsFheKeyHandlesVersions)]
-pub struct KmsFheKeyHandles {
-    /// Client's private key for FHE operations
-    pub client_key: FhePrivateKey,
-
-    /// Optional key for ciphertext decompression
-    pub decompression_key: Option<DecompressionKey>,
-
-    /// Maps public key types to their corresponding signed handles and metadata
-    pub public_key_info: KeyGenMetadata,
-}
-
-impl PrivateKeyMaterialMetadata for KmsFheKeyHandles {
-    fn get_metadata(&self) -> &KeyGenMetadata {
-        &self.public_key_info
-    }
-}
-
-impl Named for KmsFheKeyHandles {
-    /// Returns the type name for versioning and serialization
-    const NAME: &'static str = "KmsFheKeyHandles";
-}
-
-impl KmsFheKeyHandles {
-    /// Computes key handles for public key materials with signatures.
-    ///
-    /// # Important
-    /// - Only use with freshly generated keys
-    /// - Not suitable for existing keys due to versioning constraints
-    /// - Version upgrades will invalidate signatures
-    ///
-    /// # Security Note
-    /// Signatures are computed over versionized keys to ensure consistency.
-    #[expect(clippy::too_many_arguments)]
-    pub fn new(
-        sig_key: &NodeSigningIdentity,
-        schemes: &[SigningSchemeType],
-        client_key: FhePrivateKey,
-        key_id: &RequestId,
-        preproc_id: &RequestId,
-        keyset: &FhePubKeySet,
-        decompression_key: Option<DecompressionKey>,
-        eip712_domain: &alloy_sol_types::Eip712Domain,
-        extra_data: Vec<u8>,
-    ) -> anyhow::Result<Self> {
-        let public_key_info = compute_info_uncompressed_keygen(
-            sig_key,
-            schemes,
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            preproc_id,
-            key_id,
-            keyset,
-            eip712_domain,
-            extra_data,
-        )?;
-
-        Ok(KmsFheKeyHandles {
-            client_key,
-            decompression_key,
-            public_key_info,
-        })
-    }
-
-    /// Computes key handles for compressed public key materials with signatures.
-    ///
-    /// This is similar to [`Self::new`] but for compressed keys using
-    /// [`CompressedXofKeySet`] instead of [`FhePubKeySet`].
-    ///
-    /// # Important
-    /// - Only use with freshly generated compressed keys
-    /// - Not suitable for existing keys due to versioning constraints
-    /// - Version upgrades will invalidate signatures
-    #[expect(clippy::too_many_arguments)]
-    pub fn new_compressed(
-        sig_key: &NodeSigningIdentity,
-        schemes: &[SigningSchemeType],
-        client_key: FhePrivateKey,
-        key_id: &RequestId,
-        preproc_id: &RequestId,
-        compressed_keyset: &CompressedXofKeySet,
-        compact_public_key: &tfhe::CompactPublicKey,
-        decompression_key: Option<DecompressionKey>,
-        eip712_domain: &alloy_sol_types::Eip712Domain,
-        extra_data: Vec<u8>,
-    ) -> anyhow::Result<Self> {
-        let public_key_info = compute_info_compressed_keygen(
-            sig_key,
-            schemes,
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            preproc_id,
-            key_id,
-            compressed_keyset,
-            compact_public_key,
-            eip712_domain,
-            extra_data,
-        )?;
-
-        Ok(KmsFheKeyHandles {
-            client_key,
-            decompression_key,
-            public_key_info,
-        })
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Version)]
-pub struct KmsFheKeyHandlesV0 {
-    /// Client's private key for FHE operations
-    pub client_key: FhePrivateKey,
-
-    /// Optional key for ciphertext decompression
-    pub decompression_key: Option<DecompressionKey>,
-
-    /// Maps public key types to their corresponding signed handles and metadata
-    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-}
 
 /// Derives a deterministic request ID from an input string.
 ///
@@ -1103,7 +960,6 @@ where
 }
 
 pub struct BaseKmsStruct {
-    kms_type: KMSType,
     signing_identity: Option<Arc<NodeSigningIdentity>>,
     verf_key: Arc<PublicSigKey>,
     rng_source: Arc<RngSource>,
@@ -1112,13 +968,11 @@ pub struct BaseKmsStruct {
 impl BaseKmsStruct {
     /// Constructs a service with an explicitly supplied seed source.
     pub fn new(
-        kms_type: KMSType,
         signing_identity: impl Into<NodeSigningIdentity>,
         rng_source: Arc<RngSource>,
     ) -> Self {
         let signing_identity = signing_identity.into();
         BaseKmsStruct {
-            kms_type,
             verf_key: Arc::new(signing_identity.verf_key()),
             signing_identity: Some(Arc::new(signing_identity)),
             rng_source,
@@ -1126,24 +980,15 @@ impl BaseKmsStruct {
     }
 
     /// Constructs a recovery service with an explicitly supplied seed source.
-    pub fn new_no_signing_key(
-        kms_type: KMSType,
-        verf_key: PublicSigKey,
-        rng_source: Arc<RngSource>,
-    ) -> Self {
+    pub fn new_no_signing_key(verf_key: PublicSigKey, rng_source: Arc<RngSource>) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
         BaseKmsStruct {
-            kms_type,
             signing_identity: None,
             verf_key: Arc::new(verf_key),
             rng_source,
         }
-    }
-
-    pub fn kms_type(&self) -> KMSType {
-        self.kms_type
     }
 
     /// The identity this KMS signs with, or an error in recovery mode, where it
@@ -1163,7 +1008,6 @@ impl BaseKmsStruct {
     // This method is cloning `BaseKmsStruct` but we prefer not to impl `Clone` to avoid accidental misuse.
     pub fn new_instance(&self) -> Self {
         Self {
-            kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
             signing_identity: self.signing_identity.as_ref().map(Arc::clone),
             rng_source: Arc::clone(&self.rng_source),
@@ -1822,17 +1666,14 @@ pub(crate) mod tests {
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
         dummy_domain,
-        engine::{
-            base::{
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_info_uncompressed_keygen,
-                compute_preprocessing_signatures, compute_public_decryption_message,
-                hash_versioned,
-            },
-            centralized::central_kms::{
-                gen_centralized_crs, generate_client_fhe_key, generate_uncompressed_fhe_keys,
-            },
+        engine::base::{
+            DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_info_uncompressed_keygen,
+            compute_preprocessing_signatures, compute_public_decryption_message, hash_versioned,
         },
-        util::key_setup::FhePublicKey,
+        util::key_setup::{
+            FhePublicKey, local_material::generate_client_fhe_key,
+            test_tools::trusted_setup_crs_with_info,
+        },
     };
     use alloy_sol_types::SolStruct;
     use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
@@ -1851,9 +1692,8 @@ pub(crate) mod tests {
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
     use tfhe_versionable::{Unversionize, Upgrade, VersionizeOwned};
-    use threshold_execution::{
-        keyset_config::StandardKeySetConfig,
-        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
+    use threshold_execution::tfhe_internals::{
+        public_keysets::FhePubKeySet, utils::expanded_encrypt,
     };
     use threshold_types::rng::AesRng;
 
@@ -2405,22 +2245,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_wrong_type() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let msg = 32u32;
         tfhe::set_server_key(pubkeyset.server_key);
@@ -2455,22 +2284,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_wrong_ct_format() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let msg = 32u32;
         tfhe::set_server_key(pubkeyset.server_key);
@@ -2532,22 +2350,11 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_ciphertext_missing_decompression_key() {
         // we just use small ciphertexts for these tests
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &NodeSigningIdentity::ecdsa_only(sig_sk),
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            TEST_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &dummy_domain(),
-            vec![],
-        )
-        .unwrap();
+        let client_key = generate_client_fhe_key(TEST_PARAM, tfhe::Tag::default(), None);
+        let pubkeyset = FhePubKeySet {
+            public_key: FhePublicKey::new(&client_key),
+            server_key: client_key.generate_server_key(),
+        };
 
         let (
             _raw_server_key,
@@ -2797,7 +2604,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x10u8, 0x20, 0x30];
 
-        let (crs, meta_data) = gen_centralized_crs(
+        let (crs, meta_data) = trusted_setup_crs_with_info(
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[SigningSchemeType::Ecdsa256k1],
             &params,
@@ -2918,7 +2725,7 @@ pub(crate) mod tests {
         {
             // shold fail if we use the wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
-            let (crs, meta_data) = gen_centralized_crs(
+            let (crs, meta_data) = trusted_setup_crs_with_info(
                 &NodeSigningIdentity::ecdsa_only(bad_sk.clone()), // using bad_sk
                 &[SigningSchemeType::Ecdsa256k1],
                 &params,

@@ -64,7 +64,7 @@ docker run --network host \
   kms-core-client:latest \
   kms-health-check live --endpoint localhost:50100
 
-# Validate KMS server configuration file (e.g., compose_1.toml, compose_centralized.toml)
+# Validate KMS server configuration file (e.g., compose_1.toml)
 # This validates if the KMS server config is correct
 docker run -v ./core/service/config:/config \
   kms-core-client:latest \

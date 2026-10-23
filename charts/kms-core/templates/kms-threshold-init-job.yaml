@@ -1,4 +1,4 @@
-{{- if and .Values.kmsInit.enabled .Values.kmsCore.thresholdMode.enabled -}}
+{{- if .Values.kmsInit.enabled -}}
 {{- if .Values.kmsCore.thresholdMode.omitPeers }}
 {{- fail "kmsInit.enabled cannot be used with kmsCore.thresholdMode.omitPeers: kms-init targets the default context, which the server does not create without peers" }}
 {{- end }}
@@ -39,12 +39,13 @@ spec:
                   do
                   grpc_health_probe -addr="${peerAddress}"
                   healthStatus=$?
+                  {{- /* Checking grpc-health-probe response codes, see https://github.com/grpc-ecosystem/grpc-health-probe?tab=readme-ov-file#exit-codes*/}}
                   if [ ${healthStatus} -eq 0 ]; then
                     echo "kms-core #${peerAddress} is already initialized"
                     kmsInitCount=$((kmsInitCount + 1))
                     break
                   fi
-                  if [ ${healthStatus} -eq {{ .Values.kmsPeers.count }} ]; then
+                  if [ ${healthStatus} -eq 4 ]; then
                     echo "kms-core #${peerAddress} is reachable but not yet initialized"
                     break
                   fi;
@@ -65,7 +66,7 @@ spec:
                     kmsInitCount=$((kmsInitCount + 1))
                     break
                   fi
-                  if [ ${healthStatus} -eq {{ .Values.kmsPeers.count }} ]; then
+                  if [ ${healthStatus} -eq 4 ]; then
                     echo "kms-core #${peerID} is reachable but not yet initialized"
                     break
                   fi;

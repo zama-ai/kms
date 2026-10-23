@@ -13,15 +13,6 @@ start-compose-threshold:
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml down --volumes --remove-orphans
 
-build-compose-centralized: build-compose-kms-binaries
-	KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
-
-start-compose-centralized:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up -d --wait
-
-stop-compose-centralized:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
-
 start-compose-threshold-telemetry:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml up -d --wait
 

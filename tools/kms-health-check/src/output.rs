@@ -123,7 +123,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         }
     }
 
-    // Peer status for threshold for each of the contexts
+    // Peer status for each of the contexts
     if let Some(contexts) = &result.context_info {
         for context in contexts {
             writeln!(
@@ -138,15 +138,13 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
             let self_info = &context.self_node_info;
             writeln!(output, "\n  [NODE INFO]:")?;
             writeln!(output, "    Type: {}", self_info.node_type)?;
-            if self_info.node_type == "threshold" {
-                writeln!(output, "    Party ID: {}", self_info.my_party_id)?;
-                writeln!(
-                    output,
-                    "    Threshold: {} required",
-                    self_info.threshold_required
-                )?;
-                writeln!(output, "    Nodes Reachable: {}", self_info.nodes_reachable)?;
-            }
+            writeln!(output, "    Party ID: {}", self_info.my_party_id)?;
+            writeln!(
+                output,
+                "    Threshold: {} required",
+                self_info.threshold_required
+            )?;
+            writeln!(output, "    Nodes Reachable: {}", self_info.nodes_reachable)?;
 
             writeln!(output, "\n  [PEER STATUS]:")?;
             let reachable = context.peers_status.iter().filter(|p| p.reachable).count();

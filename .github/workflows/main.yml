@@ -218,7 +218,7 @@ jobs:
       # nightly_* and nightly_full_gen_tests_* are intentionally included here.
       args-tests: >-
         --features e2e,slow_tests -- --skip k8s_ --skip isolated_test_example
-        --skip test_threshold_mpc_context_switch_6_docker
+        --skip test_mpc_context_switch_6_docker
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
     secrets: inherit

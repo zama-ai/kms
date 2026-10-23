@@ -32,7 +32,7 @@ The [trust model of the KMS core](../../explanations/trust_model.md) states whic
 > 🚨 **CRITICAL**: **Port 50100 (gRPC)** - **NEVER EXPOSE TO INTERNET**
 > This port handles sensitive cryptographic operations and MUST be restricted to localhost/authorized connectors only. Internet exposure creates severe security vulnerabilities.
 
-- **Port 50001 (P2P)**: Allow only between KMS threshold nodes
+- **Port 50001 (P2P)**: Allow only between KMS nodes
 - **Port 9646 (Metrics)**: Restrict to monitoring systems only  
 - **SSH/Management**: Limit to management networks only
 
@@ -64,7 +64,7 @@ The [trust model of the KMS core](../../explanations/trust_model.md) states whic
 - Limit monitoring access to designated systems
 - Block unnecessary egress traffic
 
-**Reference**: See `charts/kms-core/templates/networkpolicy.yaml` for NetworkPolicy examples.
+The `kms-core` chart does not ship a NetworkPolicy; define one for your cluster.
 
 ## Transport Security (TLS)
 
@@ -171,7 +171,7 @@ S3 = {
 - **Monitoring**: Read-only access to metrics and health endpoints
 - **Security Auditors**: Read-only access for compliance verification
 
-**Reference**: See `charts/kms-core/templates/rbac.yaml` for RBAC examples.
+The `kms-core` chart only creates the Role, RoleBinding and ServiceAccount that the key-generation job needs (`charts/kms-core/templates/kms-gen-keys-job.yaml`); define operator, monitoring and auditor roles for your cluster.
 
 ### Service Account Security
 
@@ -216,7 +216,7 @@ metrics_bind_address = "0.0.0.0:<METRICS_PORT>"
 
 **Implementation**: Use Prometheus alerting rules and integrate with your existing monitoring infrastructure.
 
-**Reference**: See `charts/kms-core/templates/servicemonitor.yaml` for metrics configuration.
+**Reference**: See `charts/kms-core/templates/kms-core-service-monitor.yaml` for metrics configuration.
 
 ## Container Security
 
@@ -233,7 +233,7 @@ metrics_bind_address = "0.0.0.0:<METRICS_PORT>"
 - Limit ephemeral storage usage
 - Use persistent volumes for key storage only
 
-**Reference**: See `charts/kms-core/templates/statefulset.yaml` for secure container configuration examples.
+**Reference**: See `charts/kms-core/templates/kms-core-statefulset.yaml` for secure container configuration examples.
 
 ### Image Security
 

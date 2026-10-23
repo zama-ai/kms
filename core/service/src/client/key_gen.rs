@@ -33,8 +33,7 @@ impl Client {
     ///
     /// The key generated will then be stored under the request_id handle.
     /// We need to reference the preprocessing we want to consume via
-    /// its [`RequestId`]. In theory this is not needed in the centralized case
-    /// but we still require it so that it is consistent with the threshold case.
+    /// its [`RequestId`].
     ///
     /// `context_id` and `epoch_id` are optional: when the caller does not
     /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]

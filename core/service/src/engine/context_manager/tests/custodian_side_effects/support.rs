@@ -19,7 +19,7 @@ use std::task::Poll;
 use strum::IntoEnumIterator;
 
 type TestStorage = CryptoMaterialStorage<FailingRamStorage, RamStorage>;
-type TestManager = ThresholdContextManager<FailingRamStorage, RamStorage>;
+type TestManager = ContextManager<FailingRamStorage, RamStorage>;
 
 const RETIRED_CONTEXT_BYTE: u8 = 31;
 const CURRENT_CONTEXT_BYTE: u8 = 32;
@@ -45,18 +45,14 @@ impl CustodianFixture {
             StorageProxy::from(FailingRamStorage::new()),
         )
         .await;
-        let base_kms = BaseKmsStruct::new(
-            KMSType::Threshold,
-            with_root_seed(signing_key),
-            test_rng_source(),
-        );
+        let base_kms = BaseKmsStruct::new(with_root_seed(signing_key), test_rng_source());
         let session_maker = SessionMaker::four_party_dummy_session(
             None,
             None,
             &DEFAULT_EPOCH_ID,
             base_kms.new_rngs(),
         );
-        let manager = ThresholdContextManager::new(
+        let manager = ContextManager::new(
             base_kms,
             storage.clone(),
             MetaStore::new(100, 10),

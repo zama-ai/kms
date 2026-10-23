@@ -42,7 +42,7 @@ jobs:
       - name: Lint
         uses: WyriHaximus/github-action-helm3@fc4ba26e75cf5d08182c6ce3b72623c8bfd7272b # v3.1.0
         with:
-          exec: helm lint charts/*
+          exec: helm lint charts/kms-core -f charts/kms-core/ci/four-parties-values.yaml
 
       - name: Install Helm
         uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 #v4.2.0
@@ -69,11 +69,9 @@ jobs:
           }
 
           jq empty charts/kms-core/values.schema.json
-          helm lint charts/kms-core
-          helm template test charts/kms-core >/dev/null
+          helm lint charts/kms-core -f charts/kms-core/ci/four-parties-values.yaml
+          helm template test charts/kms-core -f charts/kms-core/ci/four-parties-values.yaml >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
-          helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
-          helm template test charts/kms-core -f ci/pr-preview/centralizedWithEnclave/kms-service/values-kms-ci.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/threshold/kms-service/values-kms-ci.yaml \
             --set kmsPeers.count=4 \
             --set kmsCore.thresholdMode.thresholdValue=1 >/dev/null
@@ -137,7 +135,16 @@ jobs:
             echo "expected invalid threshold topology to fail" >&2
             exit 1
           fi
-          grep -Fq "threshold mode requires 3*t+1 parties" <<<"$output"
+          grep -Fq "a KMS network requires 3*t+1 parties" <<<"$output"
+
+          if output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=false \
+            --set kmsPeers.count=4 \
+            --set kmsCore.thresholdMode.thresholdValue=1 2>&1); then
+            echo "expected thresholdMode.enabled=false to fail" >&2
+            exit 1
+          fi
+          grep -Fq "the chart deploys threshold mode only" <<<"$output"
 
           if ! output=$(helm template test charts/kms-core \
             --set kmsCore.thresholdMode.enabled=true \

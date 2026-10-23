@@ -7,13 +7,12 @@ use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::{
     conf::{
         AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
-        init_conf, reject_secret_sharing, threshold::PeerConf,
+        init_conf, party::PeerConf, reject_secret_sharing,
     },
     consts::{SIGNING_KEY_ID, signing_material_id},
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_all_verf_material, ensure_all_verf_material,
-        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
+        delete_all_verf_material, ensure_all_verf_material, ensure_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -36,9 +35,8 @@ use validator::Validate;
 #[clap(name = "Zama KMS Signing Key and Certificate Generator", version)]
 #[clap(
     about = "A CLI tool for generating server signing keys and TLS certificates. \
-    In centralized mode it produces a single signing key plus its verification material. \
-    In threshold mode it produces the signing key and self-signed CA certificate for one party; \
-    run it once per party in a multi-party deployment. \
+    It produces the signing key, its verification material and a self-signed CA certificate \
+    for one threshold party; run it once per party. \
     Pass --config-file to provide the key-generation settings.",
     after_long_help = r#"Config file example:
 
@@ -52,7 +50,7 @@ path = "./keys"
 [private_vault.storage.file]
 path = "./keys"
 
-# Add this section to generate threshold signing material for one party.
+# The party to generate signing material for.
 [threshold]
 my_id = 1
 tls_subject = "kms-core-1""#
@@ -63,14 +61,12 @@ struct Args {
     config_file: String,
 }
 
+/// The threshold party whose signing material is generated, resolved from `[threshold]`.
 #[derive(Clone, Debug, PartialEq)]
-enum KeygenMode {
-    Centralized,
-    Threshold {
-        signing_key_party_id: NonZeroUsize,
-        tls_subject: String,
-        tls_wildcard: bool,
-    },
+struct ThresholdParty {
+    signing_key_party_id: NonZeroUsize,
+    tls_subject: String,
+    tls_wildcard: bool,
 }
 
 /// Full TOML configuration accepted by the kms-gen-keys binary.
@@ -92,9 +88,9 @@ struct KmsGenKeysConfig {
     /// Backup vault settings accepted for consistency with server configs but unused by key generation.
     #[validate(nested)]
     backup_vault: Option<VaultConfig>,
-    /// Threshold-party settings; when absent, centralized signing material is generated.
+    /// Settings of the threshold party whose signing material is generated.
     #[validate(nested)]
-    threshold: Option<KeygenThresholdConfig>,
+    threshold: KeygenThresholdConfig,
     /// Enclave bootstrap settings accepted for consistency with server configs but unused by key generation.
     #[validate(nested)]
     enclave_bootstrap: Option<EnclaveBootstrapConfig>,
@@ -128,7 +124,7 @@ struct KeygenConfig {
     repopulate: bool,
 }
 
-/// Optional `[threshold]` section used when generating one threshold party's signing material.
+/// Required `[threshold]` section that names the party whose signing material is generated.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenThresholdConfig {
@@ -146,14 +142,6 @@ struct KeygenThresholdConfig {
     peers: Option<Vec<PeerConf>>,
 }
 
-struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
-    pub_storage: &'a mut PubS,
-    priv_storage: &'a mut PrivS,
-    #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    deterministic: bool,
-    overwrite: bool,
-}
-
 struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     pub_storage: &'a mut PubS,
     priv_storage: &'a mut PrivS,
@@ -168,7 +156,7 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 fn resolve_args(args: &Args) -> anyhow::Result<KmsGenKeysConfig> {
     let config = init_conf::<KmsGenKeysConfig>(&args.config_file).with_context(|| {
         format!(
-            "failed to load kms-gen-keys config file {}; expected a [keygen] section",
+            "failed to load kms-gen-keys config file {}; expected [keygen] and [threshold] sections",
             args.config_file
         )
     })?;
@@ -199,13 +187,7 @@ fn ensure_keygen_modes_are_exclusive(keygen: &KeygenConfig) -> anyhow::Result<()
     Ok(())
 }
 
-fn resolve_keygen_config_mode(
-    threshold: Option<&KeygenThresholdConfig>,
-) -> anyhow::Result<KeygenMode> {
-    let Some(threshold) = threshold else {
-        return Ok(KeygenMode::Centralized);
-    };
-
+fn resolve_threshold_party(threshold: &KeygenThresholdConfig) -> anyhow::Result<ThresholdParty> {
     let my_id = threshold
         .my_id
         .context("threshold.my_id is required when generating threshold signing keys")?;
@@ -217,7 +199,7 @@ fn resolve_keygen_config_mode(
         my_id,
     )?;
 
-    Ok(KeygenMode::Threshold {
+    Ok(ThresholdParty {
         signing_key_party_id,
         tls_subject,
         tls_wildcard: threshold.tls_wildcard,
@@ -257,11 +239,9 @@ fn resolve_threshold_tls_subject(
     Ok(subject.to_string())
 }
 
-/// Generate the server signing keys and TLS material for a KMS deployment.
+/// Generate the server signing keys and TLS material for one threshold KMS party.
 ///
-/// Two modes are supported:
-/// - `centralized` produces a single signing key.
-/// - `threshold` produces one party's signing key and self-signed CA certificate for mTLS.
+/// The output is the party's signing key and self-signed CA certificate for mTLS.
 ///
 /// Examples:
 /// ```
@@ -281,7 +261,7 @@ fn resolve_threshold_tls_subject(
 /// [private_vault.storage.file]
 /// path = "./keys"
 ///
-/// # Add this section to generate threshold signing material for one party.
+/// # The party to generate signing material for.
 /// [threshold]
 /// my_id = 1
 /// tls_subject = "kms-core-1"
@@ -297,7 +277,11 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(&telemetry).await?;
 
     let config = resolve_args(&args)?;
-    let mode = resolve_keygen_config_mode(config.threshold.as_ref())?;
+    let ThresholdParty {
+        signing_key_party_id,
+        tls_subject,
+        tls_wildcard,
+    } = resolve_threshold_party(&config.threshold)?;
     let public_storage = config
         .public_vault
         .as_ref()
@@ -405,55 +389,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // generate keys
-    match mode {
-        KeygenMode::Centralized => {
-            let mut cmdargs = CentralCmdArgs {
-                pub_storage: &mut pub_storage,
-                priv_storage: &mut priv_vault,
-                #[cfg(any(test, feature = "testing", feature = "insecure"))]
-                deterministic: config.keygen.deterministic,
-                overwrite: config.keygen.overwrite,
-            };
-            handle_central_cmd(&mut cmdargs).await?;
-        }
-        KeygenMode::Threshold {
-            signing_key_party_id,
-            tls_subject,
-            tls_wildcard,
-        } => {
-            let mut cmdargs = ThresholdCmdArgs {
-                pub_storage: &mut pub_storage,
-                priv_storage: &mut priv_vault,
-                #[cfg(any(test, feature = "testing", feature = "insecure"))]
-                deterministic: config.keygen.deterministic,
-                overwrite: config.keygen.overwrite,
-                signing_key_party_id,
-                tls_subject,
-                tls_wildcard,
-            };
-            handle_threshold_cmd(&mut cmdargs).await?;
-        }
-    }
-    tracing::info!("Keygen finished successfully.");
-    Ok(())
-}
-
-async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
-    args: &mut CentralCmdArgs<'_, PubS, PrivS>,
-) -> anyhow::Result<()> {
-    if args.overwrite {
-        delete_signing_key_material(args.pub_storage, args.priv_storage).await?;
-    }
-    if !ensure_central_server_signing_keys_exist(
-        args.pub_storage,
-        args.priv_storage,
+    let mut cmdargs = ThresholdCmdArgs {
+        pub_storage: &mut pub_storage,
+        priv_storage: &mut priv_vault,
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
-        args.deterministic,
-    )
-    .await?
-    {
-        tracing::warn!("Signing keys already exist, skipping generation");
-    }
+        deterministic: config.keygen.deterministic,
+        overwrite: config.keygen.overwrite,
+        signing_key_party_id,
+        tls_subject,
+        tls_wildcard,
+    };
+    handle_threshold_cmd(&mut cmdargs).await?;
+    tracing::info!("Keygen finished successfully.");
     Ok(())
 }
 
@@ -463,7 +410,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     if args.overwrite {
         delete_signing_key_material(args.pub_storage, args.priv_storage).await?;
     }
-    if !ensure_threshold_server_signing_key_exists(
+    if !ensure_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
@@ -625,7 +572,12 @@ mod tests {
             public_vault: None,
             private_vault: None,
             backup_vault: None,
-            threshold: None,
+            threshold: KeygenThresholdConfig {
+                my_id: Some(1),
+                tls_subject: Some("kms-core-1".to_string()),
+                tls_wildcard: false,
+                peers: None,
+            },
             enclave_bootstrap: None,
             #[cfg(feature = "insecure")]
             mock_enclave: false,
@@ -683,23 +635,19 @@ mod tests {
         }
     }
 
-    fn resolve_mode_for_test(config: &KmsGenKeysConfig) -> anyhow::Result<KeygenMode> {
-        resolve_keygen_config_mode(config.threshold.as_ref())
-    }
-
-    fn resolved_tls_subject(mode: KeygenMode) -> String {
-        match mode {
-            KeygenMode::Threshold { tls_subject, .. } => tls_subject,
-            KeygenMode::Centralized => panic!("expected threshold mode"),
-        }
-    }
-
     #[test]
-    fn config_file_resolves_centralized_defaults() {
+    fn config_file_resolves_defaults() {
         let config = base_config();
-        let mode = resolve_mode_for_test(&config).unwrap();
+        let party = resolve_threshold_party(&config.threshold).unwrap();
 
-        assert_eq!(mode, KeygenMode::Centralized);
+        assert_eq!(
+            party,
+            ThresholdParty {
+                signing_key_party_id: NonZeroUsize::new(1).unwrap(),
+                tls_subject: "kms-core-1".to_string(),
+                tls_wildcard: false,
+            }
+        );
         assert!(config.public_vault.is_none());
         assert!(config.private_vault.is_none());
         assert!(!config.keygen.overwrite);
@@ -747,6 +695,10 @@ mod tests {
 mock_enclave = true
 
 [keygen]
+
+[threshold]
+my_id = 1
+tls_subject = "kms-core-1"
 "#,
         )
         .unwrap();
@@ -757,16 +709,45 @@ mock_enclave = true
     }
 
     #[test]
+    fn keygen_toml_without_threshold_section_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("kms-gen-keys.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[keygen]
+
+[public_vault.storage.file]
+path = "./keys"
+"#,
+        )
+        .unwrap();
+
+        let err = format!(
+            "{:#}",
+            resolve_args(&Args {
+                config_file: config_path.to_str().unwrap().to_string(),
+            })
+            .unwrap_err()
+        );
+
+        assert!(
+            err.contains(r#"missing configuration field "threshold""#),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn threshold_tls_subject_prefers_explicit_config() {
         let mut config = base_config();
         let mut threshold = threshold_config(Some(2));
         threshold.tls_subject = Some(" explicit-party ".to_string());
         threshold.peers = Some(vec![peer(2, "peer-address", Some("peer-identity"))]);
-        config.threshold = Some(threshold);
+        config.threshold = threshold;
 
-        let mode = resolve_mode_for_test(&config).unwrap();
+        let party = resolve_threshold_party(&config.threshold).unwrap();
 
-        assert_eq!(resolved_tls_subject(mode), "explicit-party");
+        assert_eq!(party.tls_subject, "explicit-party");
     }
 
     #[test]
@@ -777,11 +758,11 @@ mock_enclave = true
             peer(1, "party-one-address", Some("party-one")),
             peer(2, "party-two-address", Some("party-two")),
         ]);
-        config.threshold = Some(threshold);
+        config.threshold = threshold;
 
-        let mode = resolve_mode_for_test(&config).unwrap();
+        let party = resolve_threshold_party(&config.threshold).unwrap();
 
-        assert_eq!(resolved_tls_subject(mode), "party-two");
+        assert_eq!(party.tls_subject, "party-two");
     }
 
     #[test]
@@ -789,11 +770,11 @@ mock_enclave = true
         let mut config = base_config();
         let mut threshold = threshold_config(Some(1));
         threshold.peers = Some(vec![peer(1, "party-one-address", Some("   "))]);
-        config.threshold = Some(threshold);
+        config.threshold = threshold;
 
-        let mode = resolve_mode_for_test(&config).unwrap();
+        let party = resolve_threshold_party(&config.threshold).unwrap();
 
-        assert_eq!(resolved_tls_subject(mode), "party-one-address");
+        assert_eq!(party.tls_subject, "party-one-address");
     }
 
     #[test]
@@ -801,9 +782,11 @@ mock_enclave = true
         let mut config = base_config();
         let mut threshold = threshold_config(None);
         threshold.tls_subject = Some("party-one".to_string());
-        config.threshold = Some(threshold);
+        config.threshold = threshold;
 
-        let err = resolve_mode_for_test(&config).unwrap_err().to_string();
+        let err = resolve_threshold_party(&config.threshold)
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("threshold.my_id"));
     }
@@ -813,9 +796,11 @@ mock_enclave = true
         let mut config = base_config();
         let mut threshold = threshold_config(Some(2));
         threshold.peers = Some(vec![peer(1, "party-one-address", None)]);
-        config.threshold = Some(threshold);
+        config.threshold = threshold;
 
-        let err = resolve_mode_for_test(&config).unwrap_err().to_string();
+        let err = resolve_threshold_party(&config.threshold)
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("no entry for party 2"));
     }
@@ -928,9 +913,9 @@ root_key_spec = "symm"
 
         let config = init_conf::<KmsGenKeysConfig>(config_path.to_str().unwrap()).unwrap();
         config.validate().unwrap();
-        let mode = resolve_mode_for_test(&config).unwrap();
+        let party = resolve_threshold_party(&config.threshold).unwrap();
 
-        assert_eq!(resolved_tls_subject(mode), "kms-core-2");
+        assert_eq!(party.tls_subject, "kms-core-2");
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
         assert!(config.keygen.deterministic);
         assert!(config.keygen.overwrite);

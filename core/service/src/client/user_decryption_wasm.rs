@@ -8,9 +8,8 @@ use crate::cryptography::{
     signing::SigningSchemeType,
 };
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, Eip712VerificationParams, RejectedUserDecResponse, UserDecRejectReason,
-    UserDecTrustedValidationContext, UserDecryptionInvariants,
-    authenticate_user_decrypt_and_check_meta_data, validate_user_decrypt_responses,
+    DSEP_USER_DECRYPTION, RejectedUserDecResponse, UserDecRejectReason,
+    UserDecTrustedValidationContext, UserDecryptionInvariants, validate_user_decrypt_responses,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -126,11 +125,12 @@ where
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
     /// the encryption of the secret shared plaintext and returns this. Validates the
-    /// response matches the request, checks signatures, and handles both
-    /// centralized and distributed cases.
+    /// response matches the request, checks signatures, and reconstructs the
+    /// plaintext from the threshold shares.
     ///
-    /// If there is more than one response or more than one server identity,
-    /// then the threshold mode is used.
+    /// The number of responses or configured server identities never selects a
+    /// different decoding: every response must carry a threshold share, and
+    /// reconstruction fails if too few responses are accepted.
     ///
     /// # Arguments
     ///
@@ -163,40 +163,20 @@ impl Client {
         threshold: Option<usize>,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        // The condition below decides whether we'll parse the response
-        // in the centralized mode or threshold mode.
-        //
-        // It's important to check both the length of the server identities
-        // and the number of responses at the start to avoid "falling back"
-        // to the centralized mode by mistake since the checks that happen
-        // in the centralized mode is weaker (there are no checks on the threshold).
-        if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
-            // Execute simplified and faster flow for the centralized case
-            // Observe that we don't encode exactly the same in the centralized case and in the
-            // distributed case. For the centralized case we directly encode the [Plaintext]
-            // object whereas for the distributed we encode the plain text as a
-            // Vec<ResiduePolyF4Z128>.
-            self.centralized_user_decryption_resp(
-                client_request,
-                eip712_domain,
-                enc_key,
-                dec_key,
-                agg_resp,
-            )
-        } else {
-            self.threshold_user_decryption_resp(
-                client_request,
-                eip712_domain,
-                enc_key,
-                dec_key,
-                threshold,
-                agg_resp,
-            )
-        }
+        self.user_decryption_resp(
+            client_request,
+            eip712_domain,
+            enc_key,
+            dec_key,
+            threshold,
+            agg_resp,
+        )
     }
 
-    /// Processes the aggregated user decryption response to attempt to decrypt
+    /// Processes the aggregated user decryption responses to attempt to decrypt
     /// the encryption of the secret shared plaintext and returns this.
+    /// Every response must carry a threshold share, regardless of the number of
+    /// responses or configured server identities.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
     pub fn insecure_process_user_decryption_resp(
@@ -204,105 +184,11 @@ impl Client {
         dec_key: &UnifiedPrivateEncKey,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        // The same logic is used in `process_user_decryption_resp`.
-        if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
-            self.insecure_centralized_user_decryption_resp(agg_resp, dec_key)
-        } else {
-            self.insecure_threshold_user_decryption_resp(agg_resp, dec_key)
-        }
-    }
-
-    /// Decrypt the user decryption response from the centralized KMS and verify that the signatures are valid
-    fn centralized_user_decryption_resp(
-        &self,
-        request: &ParsedUserDecryptionRequest,
-        eip712_domain: &Eip712Domain,
-        enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateEncKey,
-        agg_resp: &[UserDecryptionResponse],
-    ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
-        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
-
-        let link = compute_link(request, eip712_domain)?;
-        if link != payload.digest {
-            return Err(anyhow_error_and_log(format!(
-                "link mismatch ({} != {}) for domain {:?}",
-                hex::encode(&link),
-                hex::encode(&payload.digest),
-                eip712_domain,
-            )));
-        }
-
-        let stored_server_addrs = self.get_server_addrs();
-        if stored_server_addrs.len() != 1 {
-            return Err(anyhow_error_and_log("incorrect length for addresses"));
-        }
-        // A single server, so no other response can outvote it.
-        let trusted_ctx = UserDecTrustedValidationContext::new(
-            &stored_server_addrs,
-            &self.scheme_verf_keys,
-            request,
-            eip712_domain,
-            Some(0),
-        )?;
-        let (cur_verf_key, _role) = authenticate_user_decrypt_and_check_meta_data(
-            &trusted_ctx,
-            &payload,
-            &resp.signature,
-            &resp.signatures,
-            &Eip712VerificationParams {
-                response_external_signature: &resp.external_signature,
-                response_extra_data: &resp.extra_data,
-                trusted_eip712_domain: eip712_domain,
-            },
-        )?;
-
-        let receiver_id = self.client_address.to_vec();
-        let unsign_key = UnifiedUnsigncryptionKey::new(
-            Arc::new(dec_key.clone()),
-            enc_key.clone(),
-            cur_verf_key.clone(),
-            receiver_id,
-        );
-
-        payload
-            .signcrypted_ciphertexts
-            .into_iter()
-            .map(|ct| {
-                unsign_key
-                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
-                    .map(|res| res.plaintext)
-                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
-            })
-            .collect()
-    }
-
-    /// Decrypt the user decryption response from the centralized KMS.
-    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
-    /// TODO hide behind flag for insecure function?
-    fn insecure_centralized_user_decryption_resp(
-        &self,
-        agg_resp: &[UserDecryptionResponse],
-        dec_key: &UnifiedPrivateEncKey,
-    ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
-        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
-
-        let mut out = vec![];
-        for ct in payload.signcrypted_ciphertexts {
-            out.push(
-                crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
-                    &ct.signcrypted_ciphertext,
-                    dec_key,
-                )?,
-            )
-        }
-        Ok(out)
+        self.insecure_user_decryption_resp(agg_resp, dec_key)
     }
 
     /// Decrypt the user decryption responses from the threshold KMS and verify that the signatures are valid
-    fn threshold_user_decryption_resp(
+    fn user_decryption_resp(
         &self,
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
@@ -409,17 +295,17 @@ impl Client {
             .collect()
     }
 
-    fn insecure_threshold_user_decryption_resp(
+    fn insecure_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                self.insecure_threshold_user_decryption_resp_z64(agg_resp, dec_key)
+                self.insecure_user_decryption_resp_z64(agg_resp, dec_key)
             }
             DecryptionMode::NoiseFloodSmall => {
-                self.insecure_threshold_user_decryption_resp_z128(agg_resp, dec_key)
+                self.insecure_user_decryption_resp_z128(agg_resp, dec_key)
             }
             e => Err(anyhow_error_and_log(format!(
                 "Unsupported decryption mode: {e}"
@@ -429,7 +315,7 @@ impl Client {
 
     #[expect(clippy::type_complexity)]
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
+    fn insecure_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
@@ -553,13 +439,13 @@ impl Client {
     }
 
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_z128(
+    fn insecure_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, dec_key)?;
+            Self::insecure_user_decryption_resp_to_blocks::<Z128>(agg_resp, dec_key)?;
 
         let mut out = vec![];
 
@@ -586,13 +472,13 @@ impl Client {
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
     // We do not attempt to zeroize when using these insecure functions.
-    fn insecure_threshold_user_decryption_resp_z64(
+    fn insecure_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
+            Self::insecure_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
@@ -871,7 +757,8 @@ pub(crate) struct StableUserDecryptionTestVector {
     pub client_address: String,
     /// KMS server identities.
     pub server_addrs: Vec<StableServerIdAddr>,
-    /// Reconstruction threshold/degree; `None` for the centralized case.
+    /// Reconstruction threshold/degree. `None` makes the client infer it from the number of
+    /// server identities as `(n - 1) / 3`.
     pub threshold: Option<u32>,
     /// The user decryption request in the hex shape `process_user_decryption_resp_from_js` expects.
     pub request: ParsedUserDecryptionRequestHex,

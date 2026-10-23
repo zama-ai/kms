@@ -41,20 +41,6 @@ pub static USER_DECRYPT_REQUEST_NAME: &str = "user_decrypt_request";
 
 static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Copy)]
-pub enum KMSType {
-    Centralized,
-    Threshold,
-}
-impl fmt::Display for KMSType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            KMSType::Centralized => write!(f, "Centralized KMS"),
-            KMSType::Threshold => write!(f, "Threshold KMS"),
-        }
-    }
-}
-
 /// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum SignedPubDataHandleInternalVersions {
@@ -321,9 +307,12 @@ pub enum PrivDataTypeVersions {
 pub enum PrivDataType {
     // WARNING: Do not reorder or remove variants; only append.
     SigningKey, // LEGACY ECDSA signing key
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    /// Legacy FHE private key material that no current code writes. The variant keeps the
+    /// discriminants of later variants stable and names the material that startup rejects as
+    /// foreign.
+    FhePrivateKey,
     #[deprecated(
         note = "Use EpochData instead, but this is still there to avoid semantic change in the storage format"
     )]
@@ -343,9 +332,9 @@ pub enum PrivDataType {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
 pub enum PrivDataTypeV1 {
     SigningKey,
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    FhePrivateKey, // Legacy only, see `PrivDataType::FhePrivateKey`
     #[deprecated(
         note = "Use PrssSetupCombined instead, but this is still there to avoid semantic change in the storage format"
     )]
@@ -357,9 +346,9 @@ pub enum PrivDataTypeV1 {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
 pub enum PrivDataTypeV0 {
     SigningKey,
-    FheKeyInfo, // Only for the threshold case
+    FheKeyInfo, // FHE key shares of this party
     CrsInfo,
-    FhePrivateKey, // Only used for the centralized case
+    FhePrivateKey, // Legacy only, see `PrivDataType::FhePrivateKey`
     PrssSetup,
     ContextInfo, // MPC context information
 }

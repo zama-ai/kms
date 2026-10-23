@@ -328,8 +328,7 @@ message Empty {}
 
 ### Description
 
-In the __threshold__ case it triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
-In the __centralized__ case no correlated randomness is needed, so this is a dummy that records preprocessing metadata but no material; the entry must nonetheless exist before calling `KeyGen`.
+It triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
@@ -403,8 +402,7 @@ Only the preprocessing ID (along with the parameters and the external signature)
 Because nothing is generated, this call completes (almost) instantly.
 
 As for the secure variant, a preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is required before threshold `InsecureKeyGen`.
-In the __threshold__ setting the stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
-In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that record preprocessing metadata but no material — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
+The stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
 Completion status can be validated using the `GetInsecureKeyGenPreprocResult` endpoint.
 </details>
 
@@ -431,7 +429,7 @@ Otherwise, it may fail with the following `tonic::Code` error codes:
 
 - `NotFound`: There has not been an `InsecureKeyGenPreproc` call for the provided `request_id`.
 - `Unavailable`: The `InsecureKeyGenPreproc` for the queried `request_id` has started but is not finished yet.
-- `FailedPrecondition`: In threshold mode, the provided `request_id` belongs to a real `KeyGenPreproc` entry rather than an insecure preprocessing entry.
+- `FailedPrecondition`: The provided `request_id` belongs to a real `KeyGenPreproc` entry rather than an insecure preprocessing entry.
 - `Internal`: The `InsecureKeyGenPreproc` for the queried `request_id` has failed due to an internal and unrecoverable server error.
 
 ### Description
@@ -469,7 +467,7 @@ message Empty {}
 
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a finished `KeyGenPreprocRequest`. This holds in both the __threshold__ and the __centralized__ setting; in the latter the preprocessing is a dummy that records metadata but no material, and the entry must still exist.
+The `preproc_id` must be the `request_id` of a finished `KeyGenPreprocRequest`.
 The `keyset_config` is the information about the keys to generate and _must_ match the similar argument used during preprocessing in `KeyGenPreprocRequest`.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
 
@@ -548,7 +546,7 @@ message Empty {}
 Insecure version of `KeyGen`, where MPC is _not_ used for key generation.
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` or `GetInsecureKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a finished preprocessing request and is consumed by this call, so each insecure key generation requires its own preprocessing. In the __threshold__ setting the preprocessing must have been produced by `InsecureKeyGenPreproc`; a `preproc_id` produced by the secure `KeyGenPreproc` fails with `FailedPrecondition`. In the __centralized__ setting both preprocessing endpoints are identical dummies, so their entries are interchangeable.
+The `preproc_id` must be the `request_id` of a finished preprocessing request and is consumed by this call, so each insecure key generation requires its own preprocessing. The preprocessing must have been produced by `InsecureKeyGenPreproc`; a `preproc_id` produced by the secure `KeyGenPreproc` fails with `FailedPrecondition`.
 
 The `keyset_config` is the information about the keys to generate.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
@@ -825,14 +823,14 @@ message KeyMaterialAvailabilityResponse {
 
 ### Description
 
-This RPC provides a comprehensive view of all available key material in the KMS, including FHE keys, CRS keys, and preprocessing material (threshold KMS only).
+This RPC provides a comprehensive view of all available key material in the KMS, including FHE keys, CRS keys, and preprocessing material.
 
 The response contains:
 
 - `fhe_key_ids`: List of all available FHE key IDs (request IDs from KeyGen operations)
 - `crs_ids`: List of all available CRS key IDs (request IDs from CrsGen operations)  
-- `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations in threshold KMS, empty for centralized KMS)
-- `storage_info`: Diagnostic information about the storage backend (e.g., "Centralized KMS" or "Threshold KMS")
+- `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations)
+- `storage_info`: Diagnostic information about the storage backend (e.g., "Threshold KMS")
 
 This endpoint is useful for:
 - Health checks and monitoring
@@ -863,88 +861,78 @@ enum HealthStatus {
   HEALTH_STATUS_UNSPECIFIED = 0;
   HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
   HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
-  HEALTH_STATUS_DEGRADED = 3;    // At least threshold + 1
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
   HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
 }
 
 // Node type for KMS deployment
 enum NodeType {
   NODE_TYPE_UNSPECIFIED = 0;
-  NODE_TYPE_CENTRALIZED = 1;
+  reserved 1;
+  reserved "NODE_TYPE_CENTRALIZED";
   NODE_TYPE_THRESHOLD = 2;
 }
 
+// Health information for a peer node
+message PeerHealth {
+  // Party ID of the peer in the context
+  uint32 peer_id = 1;
+  // Peer endpoint address
+  string endpoint = 2;
+  // Whether the peer is reachable
+  bool reachable = 3;
+  // Connection latency in milliseconds
+  uint32 latency_ms = 4;
+  // Error message if peer is unreachable
+  string error = 5;
+}
+
+message PeersFromContext {
+  RequestId context_id = 1;
+  uint32 my_party_id = 2;
+  uint32 threshold_required = 3; // Minimum nodes needed
+  uint32 nodes_reachable = 4; // Currently reachable nodes
+  HealthStatus status = 5; // Overall health status
+  repeated PeerHealth peers = 6;
+}
+
+// Response containing comprehensive health status
 message HealthStatusResponse {
-  // Overall health status
-  HealthStatus status = 1;
-  
-  // Health information for a peer node
-  message PeerHealth {
-    // Peer party ID (for threshold mode)
-    uint32 peer_id = 1;
-    
-    // Peer endpoint address
-    string endpoint = 2;
-    
-    // Whether the peer is reachable
-    bool reachable = 3;
-    
-    // Connection latency in milliseconds
-    uint32 latency_ms = 4;
-    
-    // Storage info from peer
-    string storage_info = 5;
-    
-    // Error message if peer is unreachable
-    string error = 6;
-    
-    // Key IDs for FHE keys on peer (when available)
-    repeated string fhe_key_ids = 7;
-    
-    // Key IDs for CRS keys on peer (when available)
-    repeated string crs_ids = 8;
-    
-    // Key IDs for preprocessing keys on peer (when available)
-    repeated string preprocessing_key_ids = 9;
-  }
-  
-  // Health status of all peers
-  repeated PeerHealth peers = 2;
-  
-  // Self key material IDs
-  repeated string my_fhe_key_ids = 3;
-  repeated string my_crs_ids = 4;
-  repeated string my_preprocessing_key_ids = 5;
-  string my_storage_info = 6;
-  
+  // Health status of all peers for every contexts
+  repeated PeersFromContext peers_from_all_contexts = 1;
+
+  // Self key material IDs and storage info
+  repeated string my_fhe_key_ids = 2;
+  repeated string my_crs_ids = 3;
+  repeated string my_preprocessing_key_ids = 4;
+  string my_storage_info = 5;
+
   // Runtime configuration info
-  NodeType node_type = 7;
-  uint32 my_party_id = 8; // Only for threshold mode
-  uint32 threshold_required = 9; // Minimum nodes needed
-  uint32 nodes_reachable = 10; // Currently reachable nodes
+  NodeType node_type = 6;
 }
 ```
 
 ### Description
 
-This RPC provides comprehensive health status information for the KMS instance, including connectivity to peers (threshold mode only), key material counts, and overall system health.
+This RPC reports the health of the KMS node: the reachability of its peers in every MPC context it knows, and its own key material.
 
 The response contains:
 
-- `status`: Overall health assessment using HealthStatus enum (HEALTH_STATUS_OPTIMAL, HEALTH_STATUS_HEALTHY, HEALTH_STATUS_DEGRADED, or HEALTH_STATUS_UNHEALTHY)
-- `peers`: Detailed health information for each peer in threshold mode, including:
-  - Connectivity status and latency
-  - Actual key IDs for FHE keys, CRS keys, and preprocessing material (when available)
-  - Storage backend information
-  - Error details if unreachable
-- `my_*` fields: Self key material IDs and storage information
-- Configuration details: node type (NodeType enum), party ID, threshold requirements, and reachable node count
+- `peers_from_all_contexts`: one `PeersFromContext` entry per MPC context of the node, with:
+  - `context_id`, and `my_party_id`, the party ID of this node in the context
+  - `peers`: one `PeerHealth` entry per peer, with its endpoint, reachability, latency, and the error if the health check failed or timed out
+  - `nodes_reachable`: the number of reachable nodes, this node included
+  - `threshold_required`: `n / 3 + 1` for a context of `n` nodes
+  - `status`: the health of the context (see below)
+- `my_fhe_key_ids`, `my_crs_ids`, `my_preprocessing_key_ids`: the key material of this node, read from its own storage and keygen preprocessor
+- `my_storage_info`: the storage backend of this node
+- `node_type`: always `NODE_TYPE_THRESHOLD`
 
-Health status levels:
-- **Optimal**: All nodes online and reachable, perfect operational state
-- **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes
-- **Degraded**: At least threshold + 1 but below 2/3 majority, operational with reduced fault tolerance
-- **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
+Health status levels, for a context of `n` nodes of which `r` are reachable:
+- **Optimal**: `r = n`. All nodes are online and reachable.
+- **Healthy**: `r ≥ 2n/3 + 1` (integer division). Functional, but some nodes are offline and should be investigated.
+- **Degraded**: `r > n/3 + 1`, below the healthy bound. Operational with reduced fault tolerance.
+- **Unhealthy**: any lower `r`. Too few nodes for operations; requires immediate attention.
 
 This endpoint is useful for:
 - Health monitoring and alerting
@@ -953,13 +941,7 @@ This endpoint is useful for:
 
 Do not use this endpoint for Kubernetes probes or load balancer health checks. Its result depends on the peers, so a network fault could take every node out of service at the same time. The Kubernetes probes use the `liveness` and `readiness` gRPC health services. See [Health Endpoints](../../operations/advanced/metrics.md#health-endpoints).
 
-The endpoint performs real-time connectivity checks to peers and returns current system status.
-
-**Implementation Notes:**
-- Self key material is retrieved directly from internal storage components (no redundant gRPC calls)
-- Peer key material is fetched via gRPC calls to each peer's health endpoint
-- Preprocessing key IDs are included for threshold nodes when available from the keygen preprocessor
-- Storage backend information provides visibility into the underlying storage type (file, RAM, S3)
+The endpoint runs a health check against every peer of every context when it is called, and returns the current status. It does not fetch key material from peers.
 
 </details>
 

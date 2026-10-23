@@ -11,19 +11,17 @@ The core client library is also used for running tests.
 - Ensure you have access to the required Docker images on Github:
   - Either use [this link](https://github.com/settings/tokens) or go to your GitHub, click your profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token should have the "read:packages" permission. Afterwards, do `docker login ghcr.io` and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to a short period of time.
 - A running set of KMS cores (and other required components).
-    There are two options: either a _centralized_ or a _threshold_ KMS instance.
-    - The centralized KMS consists of a single core, that runs all operations in plain and is intended for testing or when deployed on secure hardware.
-    - The threshold KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
+    - The KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
       The configuration can be extended to more than 4 parties, by adding configurations to [`core/service/config`](../../core/service/config/) and referencing them in [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml), analogous to the first 4 parties.
-    - Both cases are managed via the docker-compose files at the root of this repository: [docker-compose-core-centralized.yml](../../docker-compose-core-centralized.yml) or [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
-    - Build the development Docker images from the root of the repository with `make build-compose-centralized` for the centralized case or `make build-compose-threshold` for the threshold case. Building all images usually takes several minutes. The Compose services use development images that are not published to `ghcr.io`.
+    - The docker-compose files at the root of this repository manage the KMS cores: [docker-compose-core-base.yml](../../docker-compose-core-base.yml) and [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
+    - Build the development Docker images from the root of the repository with `make build-compose-threshold`. Building all images usually takes several minutes. The Compose services use development images that are not published to `ghcr.io`.
     - Ensure that the following is present in an `.env` file at the root of the repository:
         ```
         MINIO_ROOT_USER=admin
         MINIO_ROOT_PASSWORD=strongadminpassword
         ```
       This ensures that all entities can share public key material via minio, which emulates S3 storage locally.
-    - Then, to start the KMS components, run `make start-compose-centralized` for the centralized case or `make start-compose-threshold` for the threshold case at the root of the repository.
+    - Then, to start the KMS components, run `make start-compose-threshold` at the root of the repository.
     - Alternatively, bind the proper ports from a Kubernetes threshold namespace to your local host
     by running `bash ./bind_k8_threshold.sh` in this folder.
     You will also need to download the proper keys from S3.
@@ -33,18 +31,17 @@ The core client library is also used for running tests.
 ## Configuration File
 
 To run the core client you need a configuration file.
-The file to be used must be specified with the `-f` flag, e.g. `-f core-client/config/client_local_centralized.toml`.
+The file to be used must be specified with the `-f` flag, e.g. `-f core-client/config/client_local_threshold.toml`.
 
 The core client currently ships with the following pre-defined configurations:
-- `./config/client_local_centralized.toml` for the centralized version run via docker-compose.
-- `./config/client_local_threshold.toml` for the threshold version with n=4 parties and threshold t=1 run via docker-compose.
-- `./config/client_local_threshold_custodian_backup.toml` for the threshold version when executing custodian backup instructions towards a *single* KMS core from the CLI.
+- `./config/client_local_threshold.toml` for n=4 parties and threshold t=1 run via docker-compose.
+- `./config/client_local_threshold_custodian_backup.toml` for custodian backup instructions towards a *single* KMS core from the CLI.
 
 Values inside the TOML configs are:
-- `kms_type` - The kind of KMS to interact with; "centralized" or "threshold".
+- `kms_type` - Optional. The only accepted value is "threshold"; any other value fails to load.
 - `num_majority` - The minimum number of matching responses required to have an honest majority.
 - `num_reconstruct` - The minimum number of responses required to reconstruct a value (e.g. in user decryption).
-- `decryption_mode` - For a threshold deployment this must match to what is deployed on the threshold servers. Valid values are `NoiseFloodSmall` (default), `NoiseFloodLarge`, `BitDecSmall`, and `BitDecLarge`.
+- `decryption_mode` - This must match the setting of the deployed KMS cores. Valid values are `NoiseFloodSmall` (default), `NoiseFloodLarge`, `BitDecSmall`, and `BitDecLarge`.
 - `fhe_params` - The set of FHE parameters to use. Can be either `Default` (for large, secure parameters) or `Test` (for smaller, insecure testing parameters).
 - Each KMS core is configured under a separate `[[cores]]` section containing the following values:
   - `party_id` - The MPC party id, starting from 1 going up to n.
@@ -268,7 +265,7 @@ The steps needed are as follows:
   As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument of `custodian-backup-recovery` in step 3.
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
-  Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.
+  Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#recovery-decryption-of-backup). The base64 outputs from the custodians must then be consolidated at the KMS operator.
 1. KMS node recovers the backup decryption key and restores the backup.
   After the custodians have completed the partial decryption the results are communicated _individually_ to the KMS node.
   The KMS uses the custodians recovery request to recover the backup decryption key, which it uses to restore from the backup. This is done with the following command, passing each custodian's base64 output after `-r`:
@@ -387,12 +384,12 @@ $ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> i
 ```
 
 Required arguments:
- - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing preprocessing entry to consume (see [below](#insecure-dummy-preprocessing)). In threshold mode this must come from `insecure-preproc-key-gen`; in centralized mode either preprocessing endpoint can be used.
+ - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing preprocessing entry to consume (see [below](#insecure-dummy-preprocessing)). It must come from `insecure-preproc-key-gen`.
 
 Optional arguments:
  - `-u`/`--uncompressed`: Generate legacy uncompressed public key material (`PublicKey` + `ServerKey`). By default key generation stores compressed key material.
 
-This means that a single KMS core will generate a set of FHE keys in plain. In a threshold KMS, the contained private key material will then be secret shared between all KMS cores.
+This means that a single KMS core will generate a set of FHE keys in plain. The KMS then secret shares the contained private key material between all KMS cores.
 
 Note that this operation does *NOT* run a secure distributed keygen protocol, and therefore must *NOT* be used in production, as the security of the private key material cannot be guaranteed. This function is intended only for testing and debugging, to quickly generate a set of FHE keys, as the full distributed keygen protocol is very expensive and time-consuming.
 
@@ -423,7 +420,7 @@ Optional arguments:
 
 The resulting `REQUEST_ID` must then be passed to `insecure-key-gen` via `--preproc-id`. Each entry is consumed by the key generation, so a fresh preprocessing is needed for each insecure key-generation call.
 
-Note that in the threshold setting an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`; in the centralized setting both preprocessing variants are dummy entries and are interchangeable.
+Note that an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`.
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
@@ -804,16 +801,16 @@ rejects; it only works against enclave-backed deployments.
 
 ## Example Commands
 
-- Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
+- Generate a set of private and public FHE keys for testing using the default config. This command will expect all responses (`-a`) and will output logs (`-l`).
     ```{bash}
     $ PREPROC_ID=$(cargo run --bin kms-core-client -F insecure -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen --preproc-id "$PREPROC_ID"
     ```
-- Generate an encryption of `0x2342` of type `euint16` and ask for one user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once the request has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
+- Generate an encryption of `0x2342` of type `euint16` and ask for one user decryption from the KMS using the default config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once the request has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l user-decrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
-- Generate an encryption of `0xC0FFEE` of type `euint32` and ask for a public decryption of a batch of 3 of these ciphertexts from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will expect all responses (`-a`) and will write logs (`-l`).
+- Generate an encryption of `0xC0FFEE` of type `euint32` and ask for a public decryption of a batch of 3 of these ciphertexts from the KMS using the default config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will expect all responses (`-a`) and will write logs (`-l`).
     ```{bash}
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l public-decrypt from-args --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
@@ -826,7 +823,7 @@ The `kms-health-check` tool (included in the Docker image) provides comprehensiv
 - **Config Validation**: Validates KMS configuration files using actual server validation logic
 - **Connectivity Check**: Tests gRPC endpoint connectivity and latency
 - **Key Material Check**: Displays actual key IDs for FHE keys, CRS keys, and preprocessing material
-- **Peer Health**: Checks connectivity to all threshold peers with detailed key information
+- **Peer Health**: Checks connectivity to all peers with detailed key information
 - **JSON Output**: Machine-readable output for CI/CD and monitoring system integration
 
 ### Basic Usage

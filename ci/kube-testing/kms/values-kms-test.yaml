@@ -24,8 +24,6 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   thresholdMode:
-    initializationScript:
-      enabled: true
     enabled: true
     multiplier: 2.0
     maxInterval: 60

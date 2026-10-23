@@ -1,9 +1,9 @@
 //! Base implementation of cryptographic material storage
 //!
 //! This module provides the foundational storage implementation used by
-//! both centralized and threshold KMS variants.
-use crate::engine::threshold::service::epoch_manager::EpochData;
-use crate::engine::threshold::service::session::PRSSSetupCombined;
+//! the threshold KMS.
+use crate::engine::service::epoch_manager::EpochData;
+use crate::engine::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
@@ -14,9 +14,9 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     cryptography::signing::seed::RootSigningSeed,
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
+        base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
-        threshold::service::ThresholdFheKeys,
+        service::FheKeys,
     },
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
@@ -24,9 +24,7 @@ use crate::{
         Vault,
         storage::{
             Storage, StorageExt, StoreWriteOutcome,
-            crypto_material::{
-                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
-            },
+            crypto_material::{log_storage_success, traits::PrivateCryptoMaterialReader},
             delete_at_request_and_epoch_id, delete_at_request_id, delete_recovery_material_at_id,
             read_all_data_versioned, read_context_at_id, read_custodian_context_anchor,
             store_custodian_context_anchor, store_recovery_material,
@@ -40,7 +38,9 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_CUSTODIAN_CONTEXT};
+use observability::metrics_names::{
+    ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_EPOCH,
+};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
@@ -148,8 +148,7 @@ pub(in crate::vault::storage::crypto_material) enum BackupPolicy {
 /// So we use this trait to differentiate FHE materials from others.
 pub(crate) trait PrivateMaterialUnderEpoch {}
 
-impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
-impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
+impl PrivateMaterialUnderEpoch for FheKeys {}
 impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
 /// The public-key payload produced by an FHE keygen and consumed by the
@@ -166,14 +165,14 @@ pub enum PublicKeySet {
     },
 }
 
-/// A cached generic storage entity for the common data structures
-/// used by both the centralized and the threshold KMS.
+/// Storage for the KMS's cryptographic material.
 ///
 /// This struct provides thread-safe access to public, private, and optional backup storage,
-/// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
+/// along with a cache of the FHE keys this party holds (see `cached.rs`). Cloning is cheap due to
+/// internal Arc usage.
 ///
 /// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
-/// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
+/// meta_store -> public_storage -> private_storage -> backup_vault -> fhe_keys.
 ///
 /// TODO(#3036) Note that holding a MetaStore lock should eventually be sufficient to not require locking multiple things at once.
 pub struct CryptoMaterialStorage<
@@ -192,6 +191,9 @@ pub struct CryptoMaterialStorage<
     /// Serializes setup, destruction and recovery of the custodian context: each reads the anchor,
     /// the keychain and the vault, then rewrites some of them.
     pub(crate) custodian_context_lock: Arc<Mutex<()>>,
+
+    /// Cache of the FHE keys, by key and epoch ID. Lock it after any of the storages above.
+    pub(crate) fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), FheKeys>>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -216,6 +218,7 @@ where
             private_storage,
             backup_vault,
             custodian_context_lock: Arc::new(Mutex::new(())),
+            fhe_keys: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -241,6 +244,57 @@ where
     /// Getter for backup_storage (if present)
     pub fn get_backup_vault(&self) -> Option<Arc<Mutex<Vault>>> {
         self.backup_vault.as_ref().map(Arc::clone)
+    }
+
+    /// Write the epoch data to the storage backend.
+    /// No actions are taken on failure, but the error is returned to the caller for potential handling.
+    pub async fn write_epoch_data(
+        &self,
+        epoch_id: &EpochId,
+        epoch_data: &EpochData,
+    ) -> anyhow::Result<()> {
+        self.write_all::<EpochData, EpochData>(
+            &epoch_id.into(), // using epoch_id as req_id since epoch data is stored under this directly
+            None,
+            None, // no public data for epoch info
+            Some((epoch_data, PrivDataType::EpochData)),
+            true,
+            OP_NEW_EPOCH,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
+    }
+
+    /// Read all epoch data from the storage backend.
+    /// The result is a map of epoch IDs to their corresponding epoch data.
+    /// That is, epochs are flattened and NOT indexed by their associated context ID.
+    pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
+        let priv_storage = self.private_storage.lock().await;
+        let intermediate_res: HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
+        Ok(intermediate_res
+            .into_iter()
+            .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+            .collect())
+    }
+
+    /// Write the CRS to the storage backend (for use in connection with resharing).
+    /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
+    pub(crate) async fn resharing_crs_write_no_backup(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        crs_info: CrsGenMetadata,
+    ) -> Result<(), StorageError> {
+        self.write_all::<CrsGenMetadata, CrsGenMetadata>(
+            crs_id,
+            Some(epoch_id),
+            None, // No public data is made when refreshing a CRS
+            Some((&crs_info, PrivDataType::CrsInfo)),
+            false,
+            OP_NEW_EPOCH,
+        )
+        .await
     }
 
     // =========================
@@ -318,22 +372,17 @@ where
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
-    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
-    /// The `threshold` parameter is used to indicate if the check is for threshold or centralized keys.
+    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`). Each layout also needs the
+    /// private `FheKeyInfo` entry.
     ///
     /// Returns `Ok(true)` if either layout is fully present, `Ok(false)` if
     /// neither is, or `Err(StorageError)` on a storage backend failure.
-    pub(in crate::vault::storage::crypto_material) async fn fhe_keys_exists(
+    pub(crate) async fn fhe_keys_exists(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold: bool,
     ) -> Result<bool, StorageError> {
-        let priv_types = if threshold {
-            vec![PrivDataType::FheKeyInfo]
-        } else {
-            vec![PrivDataType::FhePrivateKey]
-        };
+        let priv_types = [PrivDataType::FheKeyInfo];
         // Try the compressed layout first.
         if self
             .data_exists_at_epoch(
@@ -1129,12 +1178,11 @@ where
     pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
         let priv_storage = self.private_storage.lock().await;
         let res = read_context_at_id(&*priv_storage, context_id).await?;
-        log_storage_success_optional_variant(
+        log_storage_success(
             context_id,
             priv_storage.info(),
             &PrivDataType::ContextInfo.to_string(),
             false,
-            None,
         );
         Ok(res)
     }
@@ -1209,7 +1257,7 @@ where
                     match cur_type {
                         // These types might have epoch-specific data
                         PrivDataType::FheKeyInfo => {
-                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, FheKeys>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
@@ -1217,15 +1265,9 @@ where
                             )
                             .await?;
                         }
-                        PrivDataType::FhePrivateKey => {
-                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
+                        // Not backed up. No current code writes this type, a node that holds it
+                        // fails boot, and restore skips it.
+                        PrivDataType::FhePrivateKey => {}
                         // Non epoched types
                         #[expect(deprecated)]
                         PrivDataType::PrssSetupCombined => {
@@ -1365,6 +1407,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
             custodian_context_lock: Arc::clone(&self.custodian_context_lock),
+            fhe_keys: Arc::clone(&self.fhe_keys),
         }
     }
 }

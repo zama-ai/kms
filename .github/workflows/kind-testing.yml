@@ -83,10 +83,6 @@ jobs:
             num-parties: 4
             runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             enable-tls: true
-          - name: centralized
-            deployment-type: centralized
-            num-parties: 1
-            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
     needs:
       - docker-build
     if: |
@@ -245,7 +241,7 @@ jobs:
         if: matrix.cargo-check == false
         id: setup
         env:
-          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
           HARBOR_READ_LOGIN: ${{ secrets.HARBOR_READ_LOGIN }}
           HARBOR_READ_TOKEN: ${{ secrets.HARBOR_READ_TOKEN }}
@@ -272,7 +268,7 @@ jobs:
         if: matrix.cargo-check == false
         id: tests
         env:
-          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |

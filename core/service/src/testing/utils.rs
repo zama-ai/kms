@@ -14,34 +14,23 @@ use kms_grpc::rpc_types::PubDataType;
 #[cfg(any(test, feature = "testing"))]
 pub mod setup {
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+    use crate::consts::{DEFAULT_PARAM, KEY_PATH_PREFIX, TEST_PARAM, TMP_PATH_PREFIX};
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };
     use crate::engine::base::derive_request_id;
-    use crate::testing::material::{MaterialType, threshold_crs_id_name, threshold_key_id_name};
-    use crate::util::key_setup::{
-        ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
-        ensure_client_keys_exist,
-    };
-    use crate::{
-        consts::{
-            DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, KEY_PATH_PREFIX,
-            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TMP_PATH_PREFIX,
-        },
-        util::key_setup::ensure_central_server_signing_keys_exist,
-    };
+    use crate::testing::material::{MaterialType, crs_id_name, key_id_name};
+    use crate::util::key_setup::{SigningKeyConfig, ensure_client_keys_exist};
     use crate::{
         util::key_setup::{
-            ensure_threshold_crs_exists, ensure_threshold_epoch_exists,
-            ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
+            ensure_crs_exists, ensure_epoch_exists, ensure_fhe_keys_exist,
+            ensure_server_signing_keys_exist,
         },
         vault::storage::{StorageType, file::FileStorage},
     };
     use anyhow::{Context, Result, bail};
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
-    use std::collections::BTreeSet;
     use std::path::Path;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
 
@@ -65,54 +54,6 @@ pub mod setup {
     pub async fn generate_material_to_path(
         material_type: MaterialType,
         path: Option<&Path>,
-        party_counts: &[usize],
-    ) -> Result<()> {
-        generate_central_material_to_path(material_type, path).await;
-
-        let unique_party_counts = party_counts.iter().copied().collect::<BTreeSet<_>>();
-        for party_count in unique_party_counts {
-            generate_threshold_material_to_path(material_type, path, party_count).await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn generate_central_material_to_path(
-        material_type: MaterialType,
-        path: Option<&Path>,
-    ) {
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_dir_exist(path).await;
-        ensure_client_keys_exist(path, true).await;
-        match material_type {
-            MaterialType::Testing => {
-                central_material(
-                    &TEST_PARAM,
-                    &TEST_CENTRAL_KEY_ID,
-                    &OTHER_CENTRAL_TEST_ID,
-                    &TEST_CENTRAL_CRS_ID,
-                    &epoch_id,
-                    path,
-                )
-                .await;
-            }
-            MaterialType::Default => {
-                central_material(
-                    &DEFAULT_PARAM,
-                    &DEFAULT_CENTRAL_KEY_ID,
-                    &OTHER_CENTRAL_DEFAULT_ID,
-                    &DEFAULT_CENTRAL_CRS_ID,
-                    &epoch_id,
-                    path,
-                )
-                .await;
-            }
-        }
-    }
-
-    pub async fn generate_threshold_material_to_path(
-        material_type: MaterialType,
-        path: Option<&Path>,
         party_count: usize,
     ) -> Result<()> {
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -122,16 +63,16 @@ pub mod setup {
         let max_supported_parties = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL.len();
         if !(2..=max_supported_parties).contains(&party_count) {
             bail!(
-                "Unsupported party count {party_count}. Threshold party counts must be between 2 and {max_supported_parties}; centralized material is generated implicitly."
+                "Unsupported party count {party_count}. Threshold party counts must be between 2 and {max_supported_parties}."
             );
         }
 
-        let key_id = derive_request_id(&threshold_key_id_name(material_type, party_count))
-            .with_context(|| {
+        let key_id =
+            derive_request_id(&key_id_name(material_type, party_count)).with_context(|| {
                 format!("Failed to derive threshold key ID for {party_count} parties")
             })?;
-        let crs_id = derive_request_id(&threshold_crs_id_name(material_type, party_count))
-            .with_context(|| {
+        let crs_id =
+            derive_request_id(&crs_id_name(material_type, party_count)).with_context(|| {
                 format!("Failed to derive threshold CRS ID for {party_count} parties")
             })?;
         let params = match material_type {
@@ -139,7 +80,7 @@ pub mod setup {
             MaterialType::Default => &DEFAULT_PARAM,
         };
 
-        threshold_material(
+        party_material(
             params,
             &key_id,
             &crs_id,
@@ -153,46 +94,7 @@ pub mod setup {
         Ok(())
     }
 
-    async fn central_material(
-        params: &DKGParams,
-        fhe_key_id: &RequestId,
-        other_fhe_key_id: &RequestId,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        path: Option<&Path>,
-    ) {
-        let mut central_pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
-        let mut central_priv_storage = FileStorage::new(path, StorageType::PRIV, None).unwrap();
-
-        ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            true,
-        )
-        .await
-        .unwrap();
-        ensure_central_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            params.to_owned(),
-            fhe_key_id,
-            other_fhe_key_id,
-            epoch_id,
-            true,
-        )
-        .await;
-        ensure_central_crs_exists(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            params.to_owned(),
-            crs_id,
-            epoch_id,
-            true,
-        )
-        .await;
-    }
-
-    async fn threshold_material(
+    async fn party_material(
         params: &DKGParams,
         fhe_key_id: &RequestId,
         crs_id: &RequestId,
@@ -206,41 +108,41 @@ pub mod setup {
             private_storage_prefixes.len()
         );
         let amount_parties = public_storage_prefixes.len();
-        let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
+        let mut pub_storages = Vec::with_capacity(amount_parties);
         for storage_prefix in public_storage_prefixes.iter() {
-            threshold_pub_storages
+            pub_storages
                 .push(FileStorage::new(path, StorageType::PUB, storage_prefix.as_deref()).unwrap());
         }
-        let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
+        let mut priv_storages = Vec::with_capacity(amount_parties);
         for storage_prefix in private_storage_prefixes.iter() {
-            threshold_priv_storages.push(
+            priv_storages.push(
                 FileStorage::new(path, StorageType::PRIV, storage_prefix.as_deref()).unwrap(),
             );
         }
 
-        ensure_threshold_server_signing_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+        ensure_server_signing_keys_exist(
+            &mut pub_storages,
+            &mut priv_storages,
             true,
-            ThresholdSigningKeyConfig::AllParties(
+            SigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
             false,
         )
         .await
         .unwrap();
-        ensure_threshold_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+        ensure_fhe_keys_exist(
+            &mut pub_storages,
+            &mut priv_storages,
             params.to_owned(),
             fhe_key_id,
             epoch_id,
             true,
         )
         .await;
-        ensure_threshold_crs_exists(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
+        ensure_crs_exists(
+            &mut pub_storages,
+            &mut priv_storages,
             params.to_owned(),
             crs_id,
             epoch_id,
@@ -249,7 +151,7 @@ pub mod setup {
         .await;
         // The key shares and CRS metadata above live under `epoch_id`, so the fixture carries
         // that epoch as well; a node refuses to boot on shares whose epoch it does not know.
-        ensure_threshold_epoch_exists(&mut threshold_priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
+        ensure_epoch_exists(&mut priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
             .await
             .unwrap();
     }
@@ -311,19 +213,19 @@ async fn test_purge() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
-    let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
-    let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
+    let mut pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
+    let mut priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
 
     // Check no keys exist
     assert!(
-        central_pub_storage
+        pub_storage
             .all_data_ids(&PubDataType::VerfKey.to_string())
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        central_priv_storage
+        priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())
             .await
             .unwrap()
@@ -331,10 +233,13 @@ async fn test_purge() {
     );
     // Create keys to be deleted
     assert!(
-        crate::util::key_setup::ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
+        crate::util::key_setup::ensure_server_signing_key_exists(
+            &mut pub_storage,
+            &mut priv_storage,
             true,
+            std::num::NonZeroUsize::MIN,
+            "p1".to_string(),
+            false,
         )
         .await
         .unwrap()
@@ -344,7 +249,7 @@ async fn test_purge() {
         let id = signing_material_id(scheme);
         for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
             assert!(
-                central_pub_storage
+                pub_storage
                     .all_data_ids(&data_type)
                     .await
                     .unwrap()
@@ -353,7 +258,7 @@ async fn test_purge() {
             );
         }
     }
-    let priv_ids = central_priv_storage
+    let priv_ids = priv_storage
         .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
@@ -371,7 +276,7 @@ async fn test_purge() {
     // Check the keys were deleted
     for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
         assert!(
-            central_pub_storage
+            pub_storage
                 .all_data_ids(&data_type)
                 .await
                 .unwrap()
@@ -380,7 +285,7 @@ async fn test_purge() {
         );
     }
     assert!(
-        central_priv_storage
+        priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())
             .await
             .unwrap()

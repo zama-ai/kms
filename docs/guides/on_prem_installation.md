@@ -93,8 +93,7 @@ kmsCore:
     tag: latest
   thresholdMode:
     enabled: true
-    initializationScript:
-      enabled: true
+    thresholdValue: 1
     peersList:
       - id: 1
         host: kms-threshold-staging-1
@@ -151,34 +150,22 @@ helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/helm-charts/kms-servic
 
 ## Configuration Options
 
-### Threshold Mode
+### Threshold Configuration
 
-To enable threshold mode, add the following to your values file:
-
-```yaml
-kmsCore:
-  thresholdMode:
-    enabled: true
-    # Number of peers (must match kmsPeers.count)
-    dec_capacity: 10000
-    min_dec_cache: 6000
-    num_sessions_preproc: 2 # Number of core of vCPU
-
-kmsPeers:
-  count: 4  # Number of KMS peers for threshold setup
-```
-
-### Centralized Mode
-
-To enable centralized mode, add the following to your values file:
+The number of parties must be `3 * thresholdValue + 1`.
+Rendering fails if you set `kmsCore.thresholdMode.enabled` to `false`.
 
 ```yaml
 kmsCore:
   thresholdMode:
-    enabled: false
+    # 1 for 4 parties, 4 for 13 parties
+    thresholdValue: 1
+    decCapacity: 10000
+    minDecCache: 6000
+    numSessionsPreproc: 2 # Number of vCPUs
 
 kmsPeers:
-  count: 1  # For centralized setup keep 1 peer
+  count: 4  # Number of KMS peers
 ```
 
 ### Storage Configuration
@@ -211,7 +198,7 @@ podSecurityContext:
 
 ### Resource Requirements
 
-The KMS service requires sufficient CPU and memory resources to handle key generation and encryption operations efficiently. Here are the recommended resource configurations:
+The KMS service requires sufficient CPU and memory resources to handle key generation and encryption operations efficiently. Set them in `kmsCore.resources`. These values apply only to workloads outside a Nitro Enclave. Here are the recommended resource configurations:
 
 ```yaml
 kmsCore:
@@ -222,16 +209,6 @@ kmsCore:
     limits:
       cpu: "4"        # Maximum 4 CPU cores
       memory: "8Gi"   # Maximum 8GB RAM to handle peak loads
-
-  # For threshold mode, increase resources:
-  thresholdMode:
-    resources:
-      requests:
-        cpu: "4"      # Minimum 4 CPU cores for threshold operations
-        memory: "8Gi" # Minimum 8GB RAM for threshold operations
-      limits:
-        cpu: "8"      # Maximum 8 CPU cores
-        memory: "16Gi" # Maximum 16GB RAM for complex key generation
 ```
 
 ### 3. Install the Chart locally with minio
@@ -259,8 +236,7 @@ kmsCore:
     tag: latest
   thresholdMode:
     enabled: true
-    initializationScript:
-      enabled: true
+    thresholdValue: 1
     peersList:
       - id: 1
         host: kms-threshold-staging-1
@@ -304,7 +280,7 @@ kyverno:
 Factors affecting resource requirements:
 - Number of concurrent key generation requests
 - Key size and complexity
-- Threshold mode configuration
+- Number of parties and threshold value
 - Number of active sessions
 
 For production deployments with heavy workloads, monitor resource usage and adjust accordingly. It's recommended to start with higher limits and adjust down based on observed usage patterns.

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use futures::future::join_all;
 use kms_core_client::*;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
 #[cfg(feature = "slow_tests")]
@@ -14,7 +14,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::conf::{ContextEpochAssociation, MigrationConfig};
-use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT};
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -23,7 +23,6 @@ use std::fs::write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
-use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
 #[cfg(feature = "slow_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
@@ -95,9 +94,9 @@ fn build_test_core_config(
     threshold_value: u8,
     server_id: usize,
     material_path: &Path,
-    peers: Vec<kms_lib::conf::threshold::PeerConf>,
+    peers: Vec<kms_lib::conf::party::PeerConf>,
 ) -> kms_lib::conf::CoreConfig {
-    use kms_lib::conf::threshold::{ThresholdPartyConf, TlsConf};
+    use kms_lib::conf::party::{ThresholdPartyConf, TlsConf};
     use kms_lib::conf::{
         AWSConfig, CoreConfig, FileStorage, S3Storage, ServiceEndpoint, Storage, VaultConfig,
     };
@@ -138,7 +137,7 @@ fn build_test_core_config(
         }),
         backup_vault: None,
         bandwidth_benchmark: None,
-        threshold: Some(ThresholdPartyConf {
+        threshold: ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
             listen_port: mpc_port,
             tls: Some(TlsConf::Auto {
@@ -160,7 +159,7 @@ fn build_test_core_config(
             peers: Some(peers),
             core_to_core_net: CoreToCoreNetworkConfig::default(),
             decryption_mode: DecryptionMode::NoiseFloodSmall,
-        }),
+        },
         internal_config: None,
         mock_enclave: Some(true),
         migration: Some(MigrationConfig {
@@ -202,127 +201,25 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 // CLI TEST SETUP FUNCTIONS
 // ============================================================================
 
-/// Helper to setup isolated centralized KMS for CLI testing (without backup vault)
-///
-/// # Arguments
-/// * `test_name` - Test identifier for logging/debugging (e.g., "centralized_insecure")
-///
-/// # Returns
-/// * `TempDir` - Isolated temporary directory with test material (auto-cleanup on drop)
-/// * `ServerHandle` - Running KMS server (auto-shutdown on drop)
-/// * `PathBuf` - Path to generated CLI config file (for --config flag)
-///
-/// # Example
-/// ```no_run
-/// let (material_dir, _server, config_path) =
-///     setup_isolated_centralized_cli_test("my_test").await?;
-/// ```
-async fn setup_isolated_centralized_cli_test(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, false, false, FheParameter::Test).await
-}
-
-/// Helper to setup isolated centralized KMS for CLI testing with backup vault
-#[cfg(feature = "insecure")]
-async fn setup_isolated_centralized_cli_test_with_backup(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, false, FheParameter::Test).await
-}
-
-/// Helper to setup isolated centralized KMS for CLI testing with custodian backup vault
-async fn setup_isolated_centralized_cli_test_with_custodian_backup(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, true, FheParameter::Test).await
-}
-
-/// Generate CLI config file for centralized KMS
-///
-/// Note: We generate configs dynamically (not from template files) because:
-/// - Ports are dynamically allocated (random free ports per test)
-/// - Paths are dynamic (unique TempDir per test)
-/// - This ensures complete test isolation
-///
-/// Output matches the production client schema (`CoreClientConfig`); see
-/// `core-client/config/client_local_centralized.toml` for the reference shape.
-fn generate_centralized_cli_config(
-    material_dir: &TempDir,
-    server: &ServerHandle,
-    fhe_params: FheParameter,
-) -> Result<PathBuf> {
-    let config_path = material_dir.path().join("client_config.toml");
-    // Canonicalize the path to resolve symlinks (e.g., /var -> /private/var on macOS)
-    // This ensures the CLI client uses the same path as the FileStorage
-    let canonical_path = material_dir.path().canonicalize()?;
-    let cfg = CoreClientConfig {
-        kms_type: KmsType::Centralized,
-        cores: vec![CoreConf {
-            party_id: 1,
-            address: format!("localhost:{}", server.service_port),
-            s3_endpoint: format!("file://{}", canonical_path.display()),
-            object_folder: "PUB".to_string(),
-            private_object_folder: None,
-            config_path: None,
-        }],
-        decryption_mode: None,
-        num_parties: 1,
-        num_majority: 1,
-        num_reconstruct: 1,
-        fhe_params: Some(fhe_params),
-        default_domain: None,
-    };
-    write_core_client_toml(&config_path, &cfg)?;
-    Ok(config_path)
-}
-
-/// Internal implementation for centralized CLI test setup
-async fn setup_isolated_centralized_cli_test_impl(
-    test_name: &str,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
-    fhe_params: FheParameter,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    // Use builder pattern with full feature support
-    let mut builder = CentralizedTestEnv::builder().with_test_name(test_name);
-
-    if with_backup_vault {
-        builder = builder.with_backup_vault();
-    }
-
-    if with_custodian_keychain {
-        builder = builder.with_custodian_keychain();
-    }
-
-    let env = builder.build().await?;
-
-    let material_dir = env.material_dir;
-    let server = env.server;
-
-    // Generate CLI config file pointing to local test material
-    let config_path = generate_centralized_cli_config(&material_dir, &server, fhe_params)?;
-
-    Ok((material_dir, server, config_path))
-}
-
 /// Helper to setup isolated threshold KMS for CLI testing WITHOUT pre-loaded PRSS material.
 ///
 /// These tests create their own MPC context and epoch from scratch.
 /// The server will start with an empty epoch map, so `NewEpoch` calls won't conflict
 /// with pre-loaded PRSS data.
-async fn setup_isolated_threshold_cli_test_signing_only(
+async fn setup_isolated_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test(
+    setup_isolated_cli_test(
         test_name,
         party_count,
         false,
         false,
         false,
         FheParameter::Test,
-        Some(kms_lib::testing::material::TestMaterialSpec::threshold_signing_only(party_count)),
+        Some(kms_lib::testing::material::TestMaterialSpec::signing_only(
+            party_count,
+        )),
     )
     .await
 }
@@ -330,7 +227,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// Helper to setup isolated threshold KMS for CLI testing with PRSS enabled
 ///
 /// # Arguments
-/// * `test_name` - Test identifier for logging/debugging (e.g., "threshold_prss_keygen")
+/// * `test_name` - Test identifier for logging/debugging (e.g., "prss_keygen")
 /// * `party_count` - Number of parties in threshold cluster (typically 4)
 ///
 /// # Returns
@@ -347,17 +244,17 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// #[tokio::test]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
-///         setup_isolated_threshold_cli_test_with_prss("my_prss_test", 4).await?;
+///         setup_isolated_cli_test_with_prss("my_prss_test", 4).await?;
 ///     // Run PRSS operations
 ///     Ok(())
 /// }
 /// ```
 #[cfg(feature = "slow_tests")]
-async fn setup_isolated_threshold_cli_test_with_prss(
+async fn setup_isolated_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test(
+    setup_isolated_cli_test(
         test_name,
         party_count,
         true,
@@ -371,11 +268,11 @@ async fn setup_isolated_threshold_cli_test_with_prss(
 
 /// Helper to setup isolated threshold KMS for CLI testing with backup vault, including a valid PRSS setup
 #[cfg(feature = "insecure")]
-async fn setup_isolated_threshold_cli_test_with_prss_with_backup(
+async fn setup_isolated_cli_test_with_prss_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test(
+    setup_isolated_cli_test(
         test_name,
         party_count,
         true,
@@ -388,11 +285,11 @@ async fn setup_isolated_threshold_cli_test_with_prss_with_backup(
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with custodian backup vault
-async fn setup_isolated_threshold_cli_test_with_custodian_backup(
+async fn setup_isolated_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test(
+    setup_isolated_cli_test(
         test_name,
         party_count,
         false,
@@ -407,7 +304,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters and PRSS enabled
 ///
 /// # Arguments
-/// * `test_name` - Test identifier for logging/debugging (e.g., "threshold_default")
+/// * `test_name` - Test identifier for logging/debugging (e.g., "default_preproc_keygen")
 /// * `party_count` - Number of parties in threshold cluster (typically 4)
 ///
 /// # Returns
@@ -422,13 +319,13 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 /// # Example
 /// ```no_run
 /// let (material_dir, _servers, config_path) =
-///     setup_isolated_threshold_cli_test_with_prss_default("my_test", 4).await?;
+///     setup_isolated_cli_test_with_prss_default("my_test", 4).await?;
 /// ```
-async fn setup_isolated_threshold_cli_test_with_prss_default(
+async fn setup_isolated_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test(
+    setup_isolated_cli_test(
         test_name,
         party_count,
         true,
@@ -451,13 +348,13 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 /// Client output matches `CoreClientConfig`; see `core-client/config/client_local_threshold.toml`.
 /// Per-party `compose_*.toml` server configs are built from typed `CoreConfig` structs
 /// to ensure compile-time schema compatibility.
-fn generate_threshold_cli_config(
+fn generate_cli_config(
     material_dir: &tempfile::TempDir,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
     fhe_params: FheParameter,
 ) -> Result<PathBuf> {
-    use kms_lib::conf::threshold::PeerConf;
+    use kms_lib::conf::party::PeerConf;
 
     let config_path = material_dir.path().join("client_config.toml");
     let majority = party_count / 2 + 1;
@@ -481,9 +378,7 @@ fn generate_threshold_cli_config(
                     party_id: j,
                     address: "127.0.0.1".to_string(),
                     mpc_identity: Some(format!("kms-core-{j}.local")),
-                    port: peer_server
-                        .mpc_port
-                        .expect("MPC port should be set for threshold server"),
+                    port: peer_server.mpc_port,
                     tls_cert: None,
                     verification_address: None,
                 }
@@ -492,7 +387,7 @@ fn generate_threshold_cli_config(
 
         let core_config = build_test_core_config(
             server.service_port,
-            server.mpc_port.expect("MPC port should be set"),
+            server.mpc_port,
             i,
             threshold_value,
             i,
@@ -512,7 +407,6 @@ fn generate_threshold_cli_config(
     }
 
     let cfg = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores,
         decryption_mode: None,
         num_parties: party_count,
@@ -528,7 +422,7 @@ fn generate_threshold_cli_config(
 /// Internal implementation for threshold CLI test setup.
 ///
 /// `material_spec` overrides the default signing-only material selected for `fhe_params`.
-async fn setup_isolated_threshold_cli_test(
+async fn setup_isolated_cli_test(
     test_name: &str,
     party_count: usize,
     with_prss: bool,
@@ -538,14 +432,14 @@ async fn setup_isolated_threshold_cli_test(
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     // Use builder pattern with full feature support
-    let mut builder = ThresholdTestEnv::builder()
+    let mut builder = TestEnv::builder()
         .with_test_name(test_name)
         .with_party_count(party_count);
 
     // These CLI tests either generate their own FHE material or do not use FHE material, so only
     // signing material is copied by default.
     let mut default_material_spec =
-        kms_lib::testing::material::TestMaterialSpec::threshold_signing_only(party_count);
+        kms_lib::testing::material::TestMaterialSpec::signing_only(party_count);
     if fhe_params == FheParameter::Default {
         default_material_spec.material_type = MaterialType::Default;
     }
@@ -570,8 +464,7 @@ async fn setup_isolated_threshold_cli_test(
     let servers = env.servers;
 
     // Generate CLI config files
-    let config_path =
-        generate_threshold_cli_config(&material_dir, &servers, party_count, fhe_params)?;
+    let config_path = generate_cli_config(&material_dir, &servers, party_count, fhe_params)?;
 
     Ok((material_dir, servers, config_path))
 }
@@ -609,7 +502,7 @@ async fn setup_party_resharing_servers(
     PathBuf,
     PathBuf,
 )> {
-    use kms_lib::conf::threshold::PeerConf;
+    use kms_lib::conf::party::PeerConf;
     use kms_lib::testing::helpers::create_test_material_manager;
     use kms_lib::testing::material::TestMaterialSpec;
     use kms_lib::vault::storage::StorageType;
@@ -619,8 +512,8 @@ async fn setup_party_resharing_servers(
 
     // Setup material for 4 parties (the test uses 6 servers but operates in 4-party contexts)
     // Servers 1-4 form context 1, servers 5,6,3,4 form context 2 (party resharing)
-    // Use threshold_signing_only since this test generates FHE keys dynamically
-    let spec = TestMaterialSpec::threshold_signing_only(4);
+    // Use signing_only since this test generates FHE keys dynamically
+    let spec = TestMaterialSpec::signing_only(4);
     let material_dir = manager.setup_test_material_temp(&spec, test_name).await?;
 
     // Create storage for each of the 6 servers
@@ -658,14 +551,12 @@ async fn setup_party_resharing_servers(
 
     // Ensure signing keys exist for all 6 servers
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
-    use kms_lib::util::key_setup::{
-        ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
-    };
-    ensure_threshold_server_signing_keys_exist(
+    use kms_lib::util::key_setup::{SigningKeyConfig, ensure_server_signing_keys_exist};
+    ensure_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
         true, // deterministic
-        ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
+        SigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists
     )
     .await
@@ -682,7 +573,7 @@ async fn setup_party_resharing_servers(
             party_id: i,
             address: "127.0.0.1".to_string(),
             mpc_identity: Some(format!("kms-core-{}.local", i)),
-            port: 0, // Will be updated by setup_threshold_with_custom_peers
+            port: 0, // Will be updated by setup_servers_with_custom_peers
             tls_cert: None,
             verification_address: None,
         })
@@ -749,7 +640,7 @@ async fn setup_party_resharing_servers(
     let vaults: Vec<Option<kms_lib::vault::Vault>> = (0..6).map(|_| None).collect();
 
     // Start servers with custom peer configurations
-    let servers = kms_lib::client::test_tools::setup_threshold_with_custom_peers(
+    let servers = kms_lib::client::test_tools::setup_servers_with_custom_peers(
         server_configs,
         pub_storages,
         priv_storages,
@@ -793,7 +684,7 @@ async fn setup_party_resharing_servers(
                     party_id: peer.party_id,
                     address: "127.0.0.1".to_string(),
                     mpc_identity: Some(format!("kms-core-{peer_server_id}.local")),
-                    port: peer_server.mpc_port.expect("MPC port should be set"),
+                    port: peer_server.mpc_port,
                     tls_cert: None,
                     verification_address: None,
                 }
@@ -802,7 +693,7 @@ async fn setup_party_resharing_servers(
 
         let core_config = build_test_core_config(
             server.service_port,
-            server.mpc_port.expect("MPC port should be set"),
+            server.mpc_port,
             my_party_id,
             threshold_value as u8,
             server_id,
@@ -879,7 +770,6 @@ async fn setup_party_resharing_servers(
         })
         .collect();
     let cfg_1234 = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores: cores_1234,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
         num_parties: 4,
@@ -918,7 +808,6 @@ async fn setup_party_resharing_servers(
         })
         .collect();
     let cfg_5634 = CoreClientConfig {
-        kms_type: KmsType::Threshold,
         cores: cores_5634,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
         num_parties: 4,
@@ -965,7 +854,7 @@ fn cmd_config(config_path: &Path, command: CCCommand, max_iter: usize) -> CmdCon
 }
 
 /// Build a `CipherParameters` with sensible defaults, overriding only what varies per test case.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn cipher_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -989,7 +878,7 @@ fn cipher_params(
 }
 
 /// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 fn public_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1015,7 +904,7 @@ fn public_decrypt_params(
 }
 
 /// Build `DecryptParameters` for a single non-rate user decrypt.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn user_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1039,7 +928,7 @@ fn user_decrypt_params(
     }
 }
 
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
     DecryptFile {
         input_path,
@@ -1051,7 +940,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
 
 /// Helper to run the insecure (dummy) preprocessing and insecure key generation
 /// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1088,6 +977,7 @@ async fn insecure_preproc_and_keygen(
 // ============================================================================
 
 /// Helper to run CRS generation via CLI (isolated version)
+#[cfg(feature = "insecure")]
 async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -> Result<String> {
     crs_gen_with_params(
         config_path,
@@ -1141,7 +1031,7 @@ async fn crs_gen_with_params(
 /// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
 /// - Encrypt to file + PublicDecrypt/UserDecrypt from file
 /// - SnS precompute variants (no_precompute_sns=false)
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn integration_test_commands(
     config_path: &Path,
     keys_folder: &Path,
@@ -2190,37 +2080,6 @@ struct StrictCheckedInCoreToml {
 }
 
 #[test]
-fn config_conformance_client_local_centralized() {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_centralized.toml");
-    let raw =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw).expect(
-        "strict TOML parse of client_local_centralized.toml failed (unknown or extra keys?)",
-    );
-    assert_eq!(strict.kms_type, "centralized");
-    assert_eq!(strict.num_parties, 1);
-    assert_eq!(strict.num_majority, 1);
-    assert_eq!(strict.num_reconstruct, 1);
-    assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
-    assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
-    assert_eq!(strict.cores.len(), 1);
-    assert_eq!(strict.cores[0].party_id, 1);
-    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
-    // the load.  This avoids the need for unsafe env::remove_var and lets the
-    // test run concurrently with other tests that read the environment.
-    let loaded: CoreClientConfig = Settings::builder()
-        .path(path.to_str().expect("utf8 path"))
-        .env_prefix("_CONF_TEST_NOOP")
-        .build()
-        .init_conf()
-        .expect("Settings::init_conf for client_local_centralized.toml");
-    assert_eq!(loaded.kms_type, KmsType::Centralized);
-    assert_eq!(loaded.cores.len(), 1);
-    assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
-}
-
-#[test]
 fn config_conformance_client_local_threshold() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_threshold.toml");
     let raw =
@@ -2237,14 +2096,15 @@ fn config_conformance_client_local_threshold() {
     for (i, core) in strict.cores.iter().enumerate() {
         assert_eq!(core.party_id, i + 1);
     }
-    // Use an inert env_prefix — see config_conformance_client_local_centralized.
+    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
+    // the load.  This avoids the need for unsafe env::remove_var and lets the
+    // test run concurrently with other tests that read the environment.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))
         .env_prefix("_CONF_TEST_NOOP")
         .build()
         .init_conf()
         .expect("Settings::init_conf for client_local_threshold.toml");
-    assert_eq!(loaded.kms_type, KmsType::Threshold);
     assert_eq!(loaded.cores.len(), 4);
     assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
 }
@@ -2253,156 +2113,14 @@ fn config_conformance_client_local_threshold() {
 // TESTS
 // ============================================================================
 
-/// Test centralized insecure key generation via CLI
-#[cfg(feature = "insecure")]
-#[tokio::test]
-async fn test_centralized_insecure() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure").await?;
-
-    // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    integration_test_commands(&config_path, keys_folder, key_id).await?;
-
-    Ok(())
-}
-
-/// Test centralized CRS generation via CLI
-#[tokio::test]
-async fn test_centralized_crsgen_secure() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_crsgen").await?;
-
-    // Run CRS generation via CLI (use material_dir as keys_folder)
-    let keys_folder = material_dir.path();
-    let crs_id = crs_gen(&config_path, keys_folder, false).await?;
-
-    // Verify CRS ID format (hex string with double the length of ID_LENGTH)
-    assert_eq!(crs_id.len(), ID_LENGTH * 2);
-
-    Ok(())
-}
-
-/// Test centralized abort key generation via CLI
-///
-/// Aborting an unknown request_id exercises the CLI dispatch: the command fans
-/// out to every party and completes successfully even though each server
-/// responds with an error code (NotFound for centralized).
-#[tokio::test]
-async fn test_centralized_abort_key_gen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_abort_key_gen").await?;
-
-    let keys_folder = material_dir.path();
-    let request_id =
-        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd21")?;
-    let res = abort_key_gen(&config_path, keys_folder, request_id).await?;
-    // No ongoing key generation, so NotFound should be returned by all servers
-    res.iter().for_each(|r| assert!(r.contains("not found")));
-    Ok(())
-}
-
-/// Test centralized abort CRS generation via CLI
-#[tokio::test]
-async fn test_centralized_abort_crs_gen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_abort_crs_gen").await?;
-
-    let keys_folder = material_dir.path();
-    let request_id =
-        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd22")?;
-    let res = abort_crs_gen(&config_path, keys_folder, request_id).await?;
-    // No ongoing key generation, so NotFound should be returned by all servers
-    res.iter().for_each(|r| assert!(r.contains("not found")));
-    Ok(())
-}
-
-/// Test centralized restore from backup via CLI (without custodians)
-///
-/// Note: This test mainly validates the CLI endpoints and content returned from KMS.
-/// Full restore validation is done in service/client tests.
-#[cfg(feature = "insecure")]
-#[tokio::test]
-async fn test_centralized_restore_from_backup() -> Result<()> {
-    init_logging();
-
-    // Setup isolated centralized KMS server with backup vault
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test_with_backup("centralized_restore").await?;
-
-    // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
-    let keys_folder = material_dir.path();
-    let _crs_id = crs_gen(&config_path, keys_folder, true).await?;
-    restore_from_backup(&config_path, keys_folder).await?;
-
-    Ok(())
-}
-
-/// Test centralized custodian backup via CLI
-#[tokio::test]
-async fn test_centralized_custodian_backup() -> Result<()> {
-    init_logging();
-
-    let amount_custodians = 5;
-    let custodian_threshold = 2;
-
-    // Setup isolated centralized KMS server with custodian backup vault (includes SecretSharingKeychain)
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test_with_custodian_backup("centralized_custodian").await?;
-
-    let temp_path = material_dir.path();
-
-    // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
-
-    // Create custodian context
-    let cus_backup_id =
-        new_custodian_context(&config_path, temp_path, custodian_threshold, setup_msgs).await;
-
-    // Initialize custodian backup, naming the context as an operator does after a rotation.
-    let operator_recovery_resp = custodian_backup_init(
-        &config_path,
-        temp_path,
-        Some(RequestId::from_str(&cus_backup_id)?),
-    )
-    .await;
-
-    // Re-encrypt with custodian keys
-    let custodian_recovery_output =
-        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resp).await?;
-
-    // Recover backup using custodian outputs
-    let recovery_backup_id = custodian_backup_recovery(
-        &config_path,
-        temp_path,
-        custodian_recovery_output,
-        RequestId::from_str(&cus_backup_id)?,
-    )
-    .await;
-    assert_eq!(cus_backup_id, recovery_backup_id);
-
-    Ok(())
-}
-
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_insecure() -> Result<()> {
+async fn test_insecure_commands() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
+        setup_isolated_cli_test_with_prss_default("insecure_commands", 4).await?;
 
     let keys_folder = material_dir.path();
     let key_id =
@@ -2415,12 +2133,12 @@ async fn test_threshold_insecure() -> Result<()> {
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
+async fn nightly_tests_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for test context) with PRSS enabled
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("nightly_preproc", 4).await?;
+        setup_isolated_cli_test_with_prss("nightly_preproc", 4).await?;
 
     // Run sequential preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
@@ -2438,12 +2156,12 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 /// Test threshold concurrent preprocessing and keygen operations
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
+async fn test_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for test context) with PRSS enabled
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("concurrent_preproc", 4).await?;
+        setup_isolated_cli_test_with_prss("concurrent_preproc", 4).await?;
 
     // Each concurrent execute_cmd needs its own keys_folder to avoid file races.
     // With file:// endpoints, concurrent fetches of VerfAddress race on the same
@@ -2475,15 +2193,16 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
 /// Test threshold sequential CRS generation via CLI with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
+async fn nightly_tests_sequential_crs() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with Default FHE params and the default epoch
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("threshold_seq_crs", 4).await?;
+        setup_isolated_cli_test_with_prss_default("seq_crs", 4).await?;
 
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
-    // Secure ZK ceremony with Default params can take ~17min per CRS gen
+    // The secure ceremony with Default params and 4 parties takes about 2.5 min per CRS gen here
+    // (CI, 2026-10-20)
     let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_with_params(
         &config_path,
@@ -2519,15 +2238,15 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// with networking timeouts between parties.
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_concurrent_crs() -> Result<()> {
+async fn test_concurrent_crs() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with Default FHE params and the default epoch
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("threshold_concurrent_crs", 4).await?;
+        setup_isolated_cli_test_with_prss_default("concurrent_crs", 4).await?;
 
     // Each concurrent execute_cmd needs its own keys_folder to avoid file races
-    // (see test_threshold_concurrent_preproc_keygen for details).
+    // (see test_concurrent_preproc_keygen for details).
     let keys_folder_1 = tempfile::tempdir()?;
     let keys_folder_2 = tempfile::tempdir()?;
     copy_dir_recursive(
@@ -2572,11 +2291,11 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// that both produce distinct key IDs.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_default_preproc_keygen() -> Result<()> {
+async fn test_default_preproc_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_default_preproc_keygen", 4).await?;
+        setup_isolated_cli_test_with_prss("default_preproc_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
     let key_id_1 =
@@ -2598,13 +2317,12 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 4. A public decrypt in the default context still succeeds
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_mpc_context_switch() -> Result<()> {
+async fn test_mpc_context_switch() -> Result<()> {
     init_logging();
 
     let party_count = 4;
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_mpc_context_switch", party_count)
-            .await?;
+        setup_isolated_cli_test_with_prss("mpc_context_switch", party_count).await?;
 
     let test_path = material_dir.path();
     let context_path = material_dir.path().join("mpc_context_switch.bin");
@@ -2690,11 +2408,11 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
 /// Aborting an unknown request_id on the threshold cluster: every party responds
 /// (with NotFound since no key gen is running), so the CLI command succeeds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_abort_key_gen() -> Result<()> {
+async fn test_abort_key_gen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_signing_only("threshold_abort_key_gen", 4).await?;
+        setup_isolated_cli_test_signing_only("abort_key_gen", 4).await?;
 
     let keys_folder = material_dir.path();
     let request_id =
@@ -2707,11 +2425,11 @@ async fn test_threshold_abort_key_gen() -> Result<()> {
 
 /// Test threshold abort CRS generation via CLI
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_abort_crs_gen() -> Result<()> {
+async fn test_abort_crs_gen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_signing_only("threshold_abort_crs_gen", 4).await?;
+        setup_isolated_cli_test_signing_only("abort_crs_gen", 4).await?;
 
     let keys_folder = material_dir.path();
     let request_id =
@@ -2728,12 +2446,12 @@ async fn test_threshold_abort_crs_gen() -> Result<()> {
 /// Full restore validation is done in service/client tests.
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_restore_from_backup() -> Result<()> {
+async fn test_restore_from_backup() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with backup vaults
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_with_backup("threshold_restore", 4).await?;
+        setup_isolated_cli_test_with_prss_with_backup("restore_from_backup", 4).await?;
 
     // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
@@ -2745,7 +2463,7 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 
 /// Test threshold custodian backup via CLI
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_custodian_backup() -> Result<()> {
+async fn test_custodian_backup() -> Result<()> {
     init_logging();
 
     let amount_custodians = 5;
@@ -2754,8 +2472,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 
     // Setup isolated threshold KMS servers with custodian backup vaults (includes SecretSharingKeychain)
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_custodian_backup("threshold_custodian", party_count)
-            .await?;
+        setup_isolated_cli_test_with_custodian_backup("custodian_backup", party_count).await?;
 
     let temp_path = material_dir.path();
 
@@ -2775,30 +2492,35 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     )
     .await;
 
-    // Initialize custodian backup
-    let operator_recovery_resps =
-        custodian_backup_init(&single_core_config_path, temp_path, None).await;
+    // Recover twice: once from the installed context, and once naming the context
+    // as an operator does after a rotation. A successful recovery clears the
+    // ephemeral key, so the second initialization does not need to overwrite it.
+    for custodian_context_id in [None, Some(RequestId::from_str(&cus_backup_id)?)] {
+        // Initialize custodian backup
+        let operator_recovery_resps =
+            custodian_backup_init(&single_core_config_path, temp_path, custodian_context_id).await;
 
-    // Re-encrypt with custodian keys (single operator)
-    let custodian_recovery_output =
-        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
+        // Re-encrypt with custodian keys (single operator)
+        let custodian_recovery_output =
+            custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
 
-    // Recover backup using custodian outputs
-    let recovery_backup_id = custodian_backup_recovery(
-        &single_core_config_path,
-        temp_path,
-        custodian_recovery_output,
-        RequestId::from_str(&cus_backup_id)?,
-    )
-    .await;
-    assert_eq!(cus_backup_id, recovery_backup_id);
+        // Recover backup using custodian outputs
+        let recovery_backup_id = custodian_backup_recovery(
+            &single_core_config_path,
+            temp_path,
+            custodian_recovery_output,
+            RequestId::from_str(&cus_backup_id)?,
+        )
+        .await;
+        assert_eq!(cus_backup_id, recovery_backup_id);
+    }
 
     Ok(())
 }
 
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
-/// Requires pre-generated material in the `test-material/default/threshold-4` directory
+/// Requires pre-generated material in the `test-material/default/parties-4` directory
 /// (produced by `generate-test-material --profile secure --parties 4,13`):
 /// - **PRSS**: the default epoch is copied from the fixture and loaded at server startup.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
@@ -2806,7 +2528,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Uses partial preprocessing to keep this test comfortably below CI timeout
 /// while still validating Default-parameter preproc+keygen end-to-end.
 /// Single round only: two rounds with Default params take ~4-6h, exceeding the 2h CI timeout.
-/// The Test-param variant (`nightly_tests_threshold_sequential_preproc_keygen`) covers
+/// The Test-param variant (`nightly_tests_sequential_preproc_keygen`) covers
 /// sequential 2-round behavior.
 ///
 // Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
@@ -2815,14 +2537,14 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
-async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
+async fn nightly_full_gen_tests_default_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
     // Tuned for CI runtime budget with buffer.
     const PARTIAL_PREPROC_PERCENTAGE_OFFLINE: u32 = 1;
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
+        setup_isolated_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
     let keys_folder = material_dir.path();
     let t0 = std::time::Instant::now();
@@ -2841,7 +2563,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
     )
     .await?;
     info!(
-        "nightly_full_gen_tests_default_threshold_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
+        "nightly_full_gen_tests_default_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         t0.elapsed().as_secs_f64(),
     );
@@ -2853,16 +2575,17 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
+async fn nightly_full_gen_tests_default_sequential_crs() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for default context) with Default FHE params
     // and the default epoch
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("full_gen_crs", 4).await?;
+        setup_isolated_cli_test_with_prss_default("full_gen_crs", 4).await?;
 
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
-    // Secure ZK ceremony with Default params can take ~17min per CRS gen
+    // The secure ceremony with Default params and 4 parties takes about 2.5 min per CRS gen here
+    // (CI, 2026-10-20)
     let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_with_params(
         &config_path,
@@ -2901,7 +2624,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_mpc_context_init() -> Result<()> {
+async fn test_mpc_context_init() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) WITHOUT PRSS initialization
@@ -2909,7 +2632,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     // Note: 4 parties required to satisfy MPC context validation formula n = 3t + 1 (with t=1)
     // Uses signing_only spec to avoid pre-loaded PRSS conflicting with NewEpoch calls
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_signing_only("threshold_mpc_context_init", 4).await?;
+        setup_isolated_cli_test_signing_only("mpc_context_init", 4).await?;
 
     let test_path = material_dir.path();
     let context_path = material_dir.path().join("mpc_context.bin");
@@ -2969,12 +2692,12 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_mpc_context_switch_6() -> Result<()> {
+async fn test_mpc_context_switch_6() -> Result<()> {
     init_logging();
 
     // Setup 6 servers with per-server peer configuration for party resharing
     let (material_dir, servers, config_path_1234, config_path_5634) =
-        setup_party_resharing_servers("threshold_context_switch_6").await?;
+        setup_party_resharing_servers("mpc_context_switch_6").await?;
 
     let test_path = material_dir.path();
     let all_configs = [config_path_1234.as_path(), config_path_5634.as_path()];
@@ -3185,7 +2908,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     Ok(())
 }
 
-/// Docker-compose harness + TLS-enabled variant of `test_threshold_mpc_context_switch_6`.
+/// Docker-compose harness + TLS-enabled variant of `test_mpc_context_switch_6`.
 ///
 /// The isolated tests in this file run without TLS, so this module exists to
 /// exercise mTLS + certificate-store reload when the MPC context changes and
@@ -3193,7 +2916,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 mod docker_harness {
     use super::*;
     use test_context::{AsyncTestContext, test_context};
-    use test_utils_cc::{DockerCompose, KMSMode};
+    use test_utils_cc::{ComposeProfile, DockerCompose};
 
     trait DockerComposeManager {
         fn root_path(&self) -> PathBuf;
@@ -3203,11 +2926,11 @@ mod docker_harness {
         }
     }
 
-    pub struct DockerComposeThresholdTestNoInitSixParty {
+    pub struct DockerComposeTestNoInitSixParty {
         pub cmd: DockerCompose,
     }
 
-    impl DockerComposeManager for DockerComposeThresholdTestNoInitSixParty {
+    impl DockerComposeManager for DockerComposeTestNoInitSixParty {
         fn root_path(&self) -> PathBuf {
             self.cmd.cmd.root_path.clone()
         }
@@ -3221,10 +2944,10 @@ mod docker_harness {
         }
     }
 
-    impl AsyncTestContext for DockerComposeThresholdTestNoInitSixParty {
+    impl AsyncTestContext for DockerComposeTestNoInitSixParty {
         async fn setup() -> Self {
             Self {
-                cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInitSixParty),
+                cmd: DockerCompose::new(ComposeProfile::TestParameterNoInitSixParty),
             }
         }
 
@@ -3233,17 +2956,15 @@ mod docker_harness {
         }
     }
 
-    /// Docker-compose variant of `test_threshold_mpc_context_switch_6`.
+    /// Docker-compose variant of `test_mpc_context_switch_6`.
     ///
     /// Runs against 6 KMS servers under Docker Compose with mTLS enabled.
     ///
     /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
-    #[test_context(DockerComposeThresholdTestNoInitSixParty)]
+    #[test_context(DockerComposeTestNoInitSixParty)]
     #[tokio::test]
     #[cfg_attr(not(feature = "slow_tests"), ignore)]
-    async fn test_threshold_mpc_context_switch_6_docker(
-        ctx: &DockerComposeThresholdTestNoInitSixParty,
-    ) -> Result<()> {
+    async fn test_mpc_context_switch_6_docker(ctx: &DockerComposeTestNoInitSixParty) -> Result<()> {
         init_logging();
 
         let temp_dir = tempfile::tempdir()?;
@@ -3307,14 +3028,14 @@ mod docker_harness {
 /// 7. Execute resharing command
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_threshold_reshare() -> Result<()> {
+async fn test_reshare() -> Result<()> {
     init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) WITHOUT PRSS initialization
     // This simulates servers that need context and PRSS setup
     // Uses signing_only spec to avoid pre-loaded PRSS conflicting with NewEpoch calls
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_signing_only("threshold_reshare", 4).await?;
+        setup_isolated_cli_test_signing_only("reshare", 4).await?;
 
     let test_path = material_dir.path();
     let context_path = material_dir.path().join("mpc_context.bin");
@@ -3454,6 +3175,6 @@ async fn test_threshold_reshare() -> Result<()> {
     // The second element is the previous epoch_id used for reshare
     assert_eq!(resharing_result[1].0.unwrap(), epoch_id.into());
 
-    info!("✅ Threshold reshare test completed successfully");
+    info!("✅ Reshare test completed successfully");
     Ok(())
 }

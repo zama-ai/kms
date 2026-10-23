@@ -13,8 +13,8 @@ pub struct TestMaterialSpec {
     pub material_type: MaterialType,
     /// Required key types for this test
     pub required_keys: HashSet<KeyType>,
-    /// Number of parties for threshold tests (None for centralized)
-    pub party_count: Option<usize>,
+    /// Number of threshold parties
+    pub party_count: usize,
     /// Whether to include slow test material (CRS, etc.)
     pub include_slow_material: bool,
 }
@@ -51,23 +51,8 @@ pub enum KeyType {
 }
 
 impl TestMaterialSpec {
-    /// Create specification for basic centralized test
-    pub fn centralized_basic() -> Self {
-        let mut required_keys = HashSet::new();
-        required_keys.insert(KeyType::ClientKeys);
-        required_keys.insert(KeyType::SigningKeys);
-        required_keys.insert(KeyType::FheKeys);
-
-        Self {
-            material_type: MaterialType::Testing,
-            required_keys,
-            party_count: None,
-            include_slow_material: false,
-        }
-    }
-
     /// Create specification for basic threshold test
-    pub fn threshold_basic(party_count: usize) -> Self {
+    pub fn basic(party_count: usize) -> Self {
         let mut required_keys = HashSet::new();
         required_keys.insert(KeyType::ClientKeys);
         required_keys.insert(KeyType::SigningKeys);
@@ -78,7 +63,7 @@ impl TestMaterialSpec {
         Self {
             material_type: MaterialType::Testing,
             required_keys,
-            party_count: Some(party_count),
+            party_count,
             include_slow_material: false,
         }
     }
@@ -87,7 +72,7 @@ impl TestMaterialSpec {
     ///
     /// Use this for tests that generate FHE keys dynamically (e.g., party resharing tests)
     /// and only need signing keys for authentication.
-    pub fn threshold_signing_only(party_count: usize) -> Self {
+    pub fn signing_only(party_count: usize) -> Self {
         let mut required_keys = HashSet::new();
         required_keys.insert(KeyType::ClientKeys);
         required_keys.insert(KeyType::SigningKeys);
@@ -96,24 +81,21 @@ impl TestMaterialSpec {
         Self {
             material_type: MaterialType::Testing,
             required_keys,
-            party_count: Some(party_count),
+            party_count,
             include_slow_material: false,
         }
     }
 
     /// Create specification for comprehensive test with all material
-    pub fn comprehensive(party_count: Option<usize>) -> Self {
+    pub fn comprehensive(party_count: usize) -> Self {
         let mut required_keys = HashSet::new();
         required_keys.insert(KeyType::ClientKeys);
         required_keys.insert(KeyType::SigningKeys);
+        required_keys.insert(KeyType::ServerSigningKeys);
         required_keys.insert(KeyType::FheKeys);
         required_keys.insert(KeyType::CrsKeys);
         required_keys.insert(KeyType::DecompressionKeys);
-
-        if party_count.is_some() {
-            required_keys.insert(KeyType::ServerSigningKeys);
-            required_keys.insert(KeyType::DefaultEpoch);
-        }
+        required_keys.insert(KeyType::DefaultEpoch);
 
         Self {
             material_type: MaterialType::Testing,
@@ -123,36 +105,15 @@ impl TestMaterialSpec {
         }
     }
 
-    /// Create specification for centralized test with Default parameters
-    ///
-    /// Uses production-like key sizes (MaterialType::Default).
-    /// **Requires:** Pre-generated secure material, e.g.
-    /// `generate-test-material --profile secure --parties 4`
-    pub fn centralized_default() -> Self {
-        let mut spec = Self::centralized_basic();
-        spec.material_type = MaterialType::Default;
-        spec
-    }
-
     /// Create specification for threshold test with Default parameters
     ///
     /// Uses production-like key sizes (MaterialType::Default).
     /// **Requires:** Pre-generated secure material, e.g.
     /// `generate-test-material --profile secure --parties 4`
-    pub fn threshold_default(party_count: usize) -> Self {
-        let mut spec = Self::threshold_basic(party_count);
+    pub fn default_params(party_count: usize) -> Self {
+        let mut spec = Self::basic(party_count);
         spec.material_type = MaterialType::Default;
         spec
-    }
-
-    /// Check if this specification requires threshold setup
-    pub fn is_threshold(&self) -> bool {
-        self.party_count.is_some()
-    }
-
-    /// Get the party count, defaulting to 1 for centralized
-    pub fn party_count(&self) -> usize {
-        self.party_count.unwrap_or(1)
     }
 
     /// Check if a specific key type is required
@@ -161,35 +122,16 @@ impl TestMaterialSpec {
     }
 }
 
-impl Default for TestMaterialSpec {
-    fn default() -> Self {
-        Self::centralized_basic()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_centralized_basic_spec() {
-        let spec = TestMaterialSpec::centralized_basic();
+    fn test_basic_spec() {
+        let spec = TestMaterialSpec::basic(4);
 
         assert_eq!(spec.material_type, MaterialType::Testing);
-        assert!(!spec.is_threshold());
-        assert_eq!(spec.party_count(), 1);
-        assert!(spec.requires_key_type(KeyType::ClientKeys));
-        assert!(spec.requires_key_type(KeyType::SigningKeys));
-        assert!(spec.requires_key_type(KeyType::FheKeys));
-    }
-
-    #[test]
-    fn test_threshold_basic_spec() {
-        let spec = TestMaterialSpec::threshold_basic(4);
-
-        assert_eq!(spec.material_type, MaterialType::Testing);
-        assert!(spec.is_threshold());
-        assert_eq!(spec.party_count(), 4);
+        assert_eq!(spec.party_count, 4);
         assert!(spec.requires_key_type(KeyType::ClientKeys));
         assert!(spec.requires_key_type(KeyType::SigningKeys));
         assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
@@ -198,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_comprehensive_spec() {
-        let spec = TestMaterialSpec::comprehensive(Some(4));
+        let spec = TestMaterialSpec::comprehensive(4);
 
         assert!(spec.include_slow_material);
         assert!(spec.requires_key_type(KeyType::CrsKeys));
@@ -206,17 +148,16 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_default_spec() {
-        let spec = TestMaterialSpec::threshold_default(4);
+    fn test_default_params_spec() {
+        let spec = TestMaterialSpec::default_params(4);
 
         assert_eq!(spec.material_type, MaterialType::Default);
-        assert!(spec.is_threshold());
-        assert_eq!(spec.party_count(), 4);
+        assert_eq!(spec.party_count, 4);
     }
 
     #[test]
     fn test_serialization() {
-        let spec = TestMaterialSpec::threshold_basic(4);
+        let spec = TestMaterialSpec::basic(4);
         let serialized = serde_json::to_string(&spec).unwrap();
         let deserialized: TestMaterialSpec = serde_json::from_str(&serialized).unwrap();
 

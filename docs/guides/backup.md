@@ -231,7 +231,7 @@ earlier release takes the greatest id it finds there.
 
 The recovering operator boots against the same public storage and backup vault but with empty private storage. It calls `CustodianRecoveryInit`, generates an ephemeral MLKEM1024-P384 encryption keypair `(sk^{e_i}, pk^{e_i})` pinned in process memory, reads `RecoveryValidationMaterial` from the backup vault at `ctx_id`, verifies the operator's signatures on it, and returns a `RecoveryRequest` to the core-client (which writes it to disk for later distribution to the custodians).
 
-The recovering operator has no signing identity, so it boots in recovery mode, as a threshold or a centralized node. It runs with the backup key set of the original operator:
+The recovering operator has no signing identity, so it boots in recovery mode. It runs with the backup key set of the original operator:
 
 - The ECDSA key comes from public storage. When public storage no longer holds it, the key comes from the `operator_verf_keys` that the recovery material in the backup vault embeds. The node refuses to boot if the contexts in the vault embed different key sets, or if any of that material is not validly signed under the key set it embeds.
 - The other keys always come from `operator_verf_keys`. The node also publishes them in public storage, but recovery mode does not read them there: the gateway does not hold them, so a copy in public storage is no more trustworthy than the material.

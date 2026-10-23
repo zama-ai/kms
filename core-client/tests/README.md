@@ -5,9 +5,8 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests -- threshold` |
+| **Native (slow tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
-| **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
 ## Folder Layout
 
@@ -17,7 +16,7 @@
 ## Feature flags (what they enable)
 
 - `testing`
-  - Enables test helper code used by integration tests. Most threshold tests
+  - Enables test helper code used by integration tests. Most integration tests
     (preproc+keygen, reshare, MPC context init/switch) run under this feature.
 - `insecure`
   - Enables the client-side `InsecureKeyGen*` and `InsecureCrsGen*` CLI commands.
@@ -26,7 +25,7 @@
   - Enables the full native/K8s e2e surface, including insecure-only fast-path commands.
 - `slow_tests`
   - Implies `testing`.
-  - Compiles&runs the threshold tests that are too slow to run locally.
+  - Compiles&runs the integration tests that are too slow to run locally.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
   - Implies `e2e`.
@@ -43,15 +42,14 @@
 
 ### Test gating patterns
 
-- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow threshold tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_threshold_cli_test_with_prss`).
-- **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_threshold_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
+- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow integration tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_cli_test_with_prss`).
+- **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
 
 ### Test naming conventions (CI skip rules)
 
 CI uses `--skip` prefix matching to exclude certain test groups from regular runs:
 - `nightly_*` — skipped in regular CI, run only in nightly schedule
 - `k8s_*` — skipped in native CI, run only in Kind cluster CI
-- `isolated_test_example` — demo test, always skipped in CI
 
 ### CLI commands (`CCCommand`)
 
@@ -88,8 +86,8 @@ Native tests spawn KMS servers in-process. See `integration/integration_test.rs`
 ```rust
 #[tokio::test]
 async fn test_my_feature() -> Result<()> {
-    // Setup returns (TempDir, ServerHandle, config_path)
-    let (_dir, _server, config) = setup_isolated_centralized_cli_test("my_test").await?;
+    // Setup returns (TempDir, HashMap<party_id, ServerHandle>, config_path)
+    let (_dir, _servers, config) = setup_isolated_cli_test_signing_only("my_test", 4).await?;
     
     // Run CLI command
     let output = Command::new(env!("CARGO_BIN_EXE_kms-core-client"))
@@ -101,18 +99,13 @@ async fn test_my_feature() -> Result<()> {
 }
 ```
 
-**Centralized setup variants:**
-- `setup_isolated_centralized_cli_test` — basic centralized test
-- `setup_isolated_centralized_cli_test_with_backup` — with backup vault
-- `setup_isolated_centralized_cli_test_with_custodian_backup` — with custodian backup vault
-
-**Threshold setup variants** (all take `party_count: usize`):
-- `setup_isolated_threshold_cli_test` — basic threshold test
-- `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
-- `setup_isolated_threshold_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
-- `setup_isolated_threshold_cli_test_with_prss_with_backup` — with backup vault
-- `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
-- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
+**Setup variants** (all take `party_count: usize`):
+- `setup_isolated_cli_test` — basic setup
+- `setup_isolated_cli_test_signing_only` — signing without pre-loaded PRSS
+- `setup_isolated_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
+- `setup_isolated_cli_test_with_prss_with_backup` — with backup vault
+- `setup_isolated_cli_test_with_custodian_backup` — with custodian backup vault
+- `setup_isolated_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
 
 ---
 
@@ -122,13 +115,11 @@ K8s tests connect to a real kind cluster.
 
 **Prerequisites:**
 ```bash
-# Start kind cluster (threshold mode with TLS enabled by default)
+# Start kind cluster (TLS enabled by default)
 ./ci/scripts/deploy.sh --target kind-local --deployment-type threshold --block
 ```
 
-**Which file to use:**
-- **Threshold tests** → `core-client/tests/kind-testing/kubernetes_test_threshold.rs`
-- **Centralized tests** → `core-client/tests/kind-testing/kubernetes_test_centralized.rs`
+K8s tests live in `core-client/tests/kind-testing/kubernetes_test_threshold.rs`.
 
 ### Writing a K8s test
 

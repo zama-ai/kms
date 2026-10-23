@@ -1,7 +1,6 @@
 use super::super::DUMMY_SIGNING_KEY_REQ_ID;
 use super::support::*;
 use crate::consts::DEFAULT_MPC_CONTEXT;
-use crate::engine::traits::ContextManager;
 use crate::vault::VaultDataType;
 use crate::vault::storage::test_support::{
     BackupEntry, FaultPhase, StorageEntry, StorageEvent, StorageOp, StorageOutcome,

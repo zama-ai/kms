@@ -36,7 +36,7 @@ COPY --from=kms-server /app/kms/bin/ /app/kms/bin/
 RUN chown -R kms:kms /app/kms
 USER kms
 
-CMD ["kms-server", "centralized"]
+CMD ["kms-server"]
 
 
 ################################################################
@@ -59,4 +59,4 @@ FROM --platform=$BUILDPLATFORM prod AS dev
 USER root
 COPY --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
 
-CMD ["kms-server", "centralized"]
+CMD ["kms-server"]

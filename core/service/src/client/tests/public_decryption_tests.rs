@@ -1,0 +1,446 @@
+use std::collections::HashMap;
+use std::path::Path;
+
+use crate::client::client_wasm::Client;
+use crate::client::test_tools::ServerHandle;
+use crate::client::tests::common::{PollConfig, retrying_poll};
+use crate::consts::DEFAULT_KEY_ID_4P;
+use crate::consts::DEFAULT_PARAM;
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+use crate::consts::TEST_KEY_ID_4P;
+use crate::consts::TEST_PARAM;
+use crate::dummy_domain;
+use crate::engine::base::derive_request_id;
+use crate::testing::prelude::{TestEnv, TestMaterialSpec};
+use crate::util::key_setup::max_threshold;
+use crate::util::key_setup::test_tools::{
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
+};
+use kms_grpc::RequestId;
+use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::TypedCiphertext;
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use tokio::task::JoinSet;
+use tonic::transport::Channel;
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+async fn test_decryption_no_decompression(
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
+) {
+    public_decryption(
+        TEST_PARAM,
+        key_id,
+        vec![
+            TestingPlaintext::U8(u8::MAX),
+            TestingPlaintext::U8(2),
+            TestingPlaintext::U16(444),
+        ],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        amount_parties,
+        None,
+        Some(decryption_mode),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+async fn test_decryption(
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
+) {
+    public_decryption(
+        TEST_PARAM,
+        key_id,
+        vec![
+            TestingPlaintext::U8(u8::MAX),
+            TestingPlaintext::U8(2),
+            TestingPlaintext::U16(444),
+        ],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        2,
+        amount_parties,
+        None,
+        Some(decryption_mode),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4, &TEST_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+async fn test_decryption_precompute_sns(
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
+    #[values(true, false)] compression: bool,
+) {
+    public_decryption(
+        TEST_PARAM,
+        key_id,
+        vec![
+            TestingPlaintext::U8(u8::MAX),
+            TestingPlaintext::U8(2),
+            TestingPlaintext::U16(444),
+        ],
+        EncryptionConfig {
+            compression,
+            precompute_sns: true,
+        },
+        2,
+        amount_parties,
+        None,
+        Some(decryption_mode),
+    )
+    .await;
+}
+
+#[rstest::rstest]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P, DecryptionMode::BitDecSmall)]
+#[tokio::test(flavor = "multi_thread")]
+async fn default_decryption(
+    #[case] msg: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
+) {
+    public_decryption(
+        DEFAULT_PARAM,
+        key_id,
+        msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        parallelism,
+        amount_parties,
+        None,
+        Some(decryption_mode),
+    )
+    .await;
+}
+
+#[rstest::rstest]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_KEY_ID_4P)]
+#[tokio::test(flavor = "multi_thread")]
+async fn default_decryption_precompute_sns(
+    #[case] msg: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[values(true, false)] compression: bool,
+) {
+    public_decryption(
+        DEFAULT_PARAM,
+        key_id,
+        msg,
+        EncryptionConfig {
+            compression,
+            precompute_sns: true,
+        },
+        parallelism,
+        amount_parties,
+        None,
+        None,
+    )
+    .await;
+}
+
+#[rstest::rstest]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_KEY_ID_4P)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn default_decryption_with_crash(
+    #[case] msg: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] party_ids_to_crash: Option<Vec<usize>>,
+    #[case] key_id: &RequestId,
+) {
+    public_decryption(
+        DEFAULT_PARAM,
+        key_id,
+        msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        parallelism,
+        amount_parties,
+        party_ids_to_crash,
+        None,
+    )
+    .await;
+}
+
+#[expect(clippy::too_many_arguments)]
+pub async fn public_decryption(
+    dkg_params: DKGParams,
+    key_id: &RequestId,
+    msgs: Vec<TestingPlaintext>,
+    enc_config: EncryptionConfig,
+    parallelism: usize,
+    amount_parties: usize,
+    party_ids_to_crash: Option<Vec<usize>>,
+    decryption_mode: Option<DecryptionMode>,
+) {
+    assert!(parallelism > 0);
+
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
+    // default epoch (PRSS) comes from the fixture with the key shares.
+    let spec = if dkg_params == TEST_PARAM {
+        TestMaterialSpec::basic(amount_parties)
+    } else {
+        TestMaterialSpec::default_params(amount_parties)
+    };
+
+    let mut builder = TestEnv::builder()
+        .with_test_name(format!("decryption_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder.build().await.expect("TestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
+    run_public_decryption(
+        amount_parties,
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        None,
+        key_id,
+        None,
+        msgs,
+        enc_config,
+        party_ids_to_crash,
+        parallelism,
+        Some(&material_path),
+    )
+    .await;
+}
+#[expect(clippy::too_many_arguments)]
+pub async fn run_public_decryption(
+    amount_parties: usize,
+    kms_servers: &mut HashMap<u32, ServerHandle>,
+    kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
+    key_id: &RequestId,
+    context_id: Option<&ContextId>,
+    msgs: Vec<TestingPlaintext>,
+    enc_config: EncryptionConfig,
+    party_ids_to_crash: Option<Vec<usize>>,
+    parallelism: usize,
+    data_root_path: Option<&Path>,
+) {
+    run_public_decryption_optionally_fail(
+        amount_parties,
+        kms_servers,
+        kms_clients,
+        internal_client,
+        encryption_key_id,
+        key_id,
+        context_id,
+        msgs,
+        enc_config,
+        party_ids_to_crash,
+        parallelism,
+        data_root_path,
+        false,
+    )
+    .await
+}
+
+/// - `encryption_key_id` is set to `key_id` if not given.
+///   this is the key used to encrypt the ciphertext.
+#[expect(clippy::too_many_arguments)]
+pub async fn run_public_decryption_optionally_fail(
+    amount_parties: usize,
+    kms_servers: &mut HashMap<u32, ServerHandle>,
+    kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
+    key_id: &RequestId,
+    context_id: Option<&ContextId>,
+    msgs: Vec<TestingPlaintext>,
+    enc_config: EncryptionConfig,
+    party_ids_to_crash: Option<Vec<usize>>,
+    parallelism: usize,
+    data_root_path: Option<&Path>,
+    expect_request_failure: bool,
+) {
+    let encryption_key_id = encryption_key_id.unwrap_or(key_id);
+    assert_eq!(kms_clients.len(), kms_servers.len());
+    assert!(parallelism > 0);
+    let mut cts = Vec::new();
+    for (i, msg) in msgs.clone().into_iter().enumerate() {
+        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+            data_root_path,
+            msg,
+            encryption_key_id,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+            enc_config,
+        )
+        .await;
+        let ctt = TypedCiphertext {
+            ciphertext: ct.into(),
+            fhe_type: fhe_type as i32,
+            ciphertext_format: ct_format.into(),
+            external_handle: i.to_be_bytes().to_vec(),
+        };
+        cts.push(ctt);
+    }
+
+    // make parallel requests by calling [decrypt] in a thread
+    let mut req_tasks = JoinSet::new();
+    let reqs: Vec<_> = (0..parallelism)
+        .map(|j| {
+            // Make it unique wrt key_id as well do be sure there's no clash when running
+            // the dec test with multiple keys.
+            // Also, make it depend on the messages because we may use the same function
+            // to decrypt multiple messages.
+            let request_id =
+                derive_request_id(&format!("TEST_DEC_ID_{j}_KEY_{key_id}_{msgs:?}")).unwrap();
+
+            internal_client
+                .public_decryption_request(
+                    cts.clone(),
+                    &dummy_domain(),
+                    &request_id,
+                    context_id,
+                    key_id,
+                    None,
+                    &[],
+                )
+                .unwrap()
+        })
+        .collect();
+
+    // Either send the request, or crash the party if it's in
+    // party_ids_to_crash
+    let party_ids_to_crash = party_ids_to_crash.unwrap_or_default();
+    let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
+    for i in kms_servers_keys.iter() {
+        if party_ids_to_crash.contains(&(*i as usize)) {
+            let server_handle = kms_servers.remove(i).unwrap();
+            server_handle.assert_shutdown().await;
+            let _kms_client = kms_clients.remove(i).unwrap();
+        } else {
+            for j in 0..parallelism {
+                let req_cloned = reqs.get(j).unwrap().clone();
+                let mut cur_client = kms_clients.get(i).unwrap().clone();
+                req_tasks.spawn(async move {
+                    cur_client
+                        .public_decrypt(tonic::Request::new(req_cloned))
+                        .await
+                });
+            }
+        }
+    }
+
+    if expect_request_failure {
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap_err());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
+        // return here because there won't be a response
+        return;
+    } else {
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
+    }
+
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    for i in kms_servers_keys.iter() {
+        if party_ids_to_crash.contains(&(*i as usize)) {
+            continue;
+        }
+        for req in &reqs {
+            let cur_client = kms_clients.get(i).unwrap().clone();
+            let req_id_clone = req.request_id.as_ref().unwrap().clone();
+            resp_tasks.spawn(async move {
+                let response = retrying_poll(
+                    cur_client,
+                    req_id_clone.clone(),
+                    "public decryption result",
+                    PollConfig::default(),
+                    |client, request| {
+                        Box::pin(async move { client.get_public_decryption_result(request).await })
+                    },
+                )
+                .await;
+                (req_id_clone, response.unwrap().into_inner())
+            });
+        }
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        resp_response_vec.push(resp.unwrap());
+    }
+
+    for req in &reqs {
+        let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
+        let responses: Vec<_> = resp_response_vec
+            .iter()
+            .filter_map(|resp| {
+                if resp.0 == *req_id {
+                    Some(resp.1.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Compute threshold < amount_parties/3
+        let threshold = max_threshold(amount_parties);
+        let min_count_agree = (threshold + 1) as u32;
+        let received_plaintexts = internal_client
+            .process_decryption_resp(req, min_count_agree, &responses)
+            .unwrap();
+
+        // we need 1 plaintext for each ciphertext in the batch
+        assert_eq!(received_plaintexts.len(), msgs.len());
+
+        // check that the plaintexts are correct
+        for (i, plaintext) in received_plaintexts.iter().enumerate() {
+            crate::client::tests::common::assert_plaintext(&msgs[i], plaintext);
+        }
+    }
+}

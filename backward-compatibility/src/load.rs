@@ -145,11 +145,16 @@ impl Display for TestSuccess {
 pub struct TestSkipped {
     pub(crate) module: String,
     pub(crate) test_name: String,
+    pub(crate) reason: String,
 }
 
 impl Display for TestSkipped {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Test: {}::{}: SKIPPED", self.module, self.test_name)
+        write!(
+            f,
+            "Test: {}::{}: SKIPPED: {}",
+            self.module, self.test_name, self.reason
+        )
     }
 }
 

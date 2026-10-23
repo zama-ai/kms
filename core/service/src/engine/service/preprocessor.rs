@@ -1,0 +1,1285 @@
+// === Standard Library ===
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
+
+// === External Crates ===
+use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
+use kms_grpc::{
+    RequestId,
+    identifiers::{ContextId, EpochId},
+    kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
+};
+#[cfg(feature = "insecure")]
+use observability::metrics_names::{
+    OP_INSECURE_KEYGEN_PREPROC_REQUEST, OP_INSECURE_KEYGEN_PREPROC_RESULT,
+};
+use observability::{
+    metrics::{DurationGuard, METRICS},
+    metrics_names::{
+        OP_KEYGEN_ABORT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
+    },
+};
+use threshold_execution::{
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::{
+        PreprocessorFactory,
+        orchestration::{
+            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
+        },
+    },
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::parameters::DKGParams,
+};
+use threshold_types::party::Identity;
+use tokio::sync::{Mutex, RwLock};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tonic::{Request, Response, Status};
+use tracing::Instrument;
+
+// === Internal Crate ===
+use crate::{
+    anyhow_error_and_log,
+    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+    cryptography::signing::{SigningSchemeType, identity::NodeSigningIdentity},
+    engine::{
+        base::{
+            BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
+        },
+        service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+        utils::{MetricedError, signing_identity_for},
+        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
+    },
+    util::meta_store::{
+        MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store_with_timeout,
+        update_req_in_meta_store,
+    },
+};
+
+// === Current Module Imports ===
+use super::{BucketMetaStore, PreprocMaterial};
+
+pub(crate) struct Preprocessor<
+    P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
+> {
+    // TODO eventually add mode to allow for nlarge as well.
+    pub(crate) base_kms: BaseKmsStruct,
+    pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
+    pub preproc_factory:
+        Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
+    pub num_sessions_preproc: u16,
+    pub(crate) session_maker: ImmutableSessionMaker,
+    pub tracker: Arc<TaskTracker>,
+    pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+    pub(crate) _producer_factory: PhantomData<P>,
+}
+
+impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
+    #[expect(clippy::too_many_arguments)]
+    async fn launch_dkg_preproc(
+        &self,
+        dkg_params: DKGParams,
+        keyset_config: ddec_keyset_config::KeySetConfig,
+        request_id: RequestId,
+        context_id: ContextId,
+        epoch_id: EpochId,
+        extra_data: Vec<u8>,
+        sk: Arc<NodeSigningIdentity>,
+        signing_schemes: Vec<SigningSchemeType>,
+        domain: &alloy_sol_types::Eip712Domain,
+        timer: DurationGuard<'static>,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
+        #[cfg(feature = "insecure")] percentage_offline: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
+    ) -> anyhow::Result<()> {
+        let my_identity = self.session_maker.my_identity(&context_id).await?;
+
+        // Derive a sequence of sessionId from request_id
+        let sids = (0..self.num_sessions_preproc)
+            .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let small_sessions = {
+            let mut res = Vec::with_capacity(sids.len());
+            for sid in sids {
+                let session = self
+                    .session_maker
+                    .make_small_sync_session_z128(sid, context_id, epoch_id)
+                    .await?;
+                res.push(session)
+            }
+            res
+        };
+
+        let factory = Arc::clone(&self.preproc_factory);
+        let bucket_store = Arc::clone(&self.preproc_buckets);
+
+        let token = CancellationToken::new();
+        {
+            let mut ongoing_lock = self.ongoing.lock().await;
+            if ongoing_lock.contains_key(&request_id) {
+                return Err(anyhow_error_and_log(format!(
+                    "Preprocessing with request ID {} is already ongoing. This should never happen and means the meta store is not up to date",
+                    request_id
+                )));
+            }
+            // We just checked above that eviction cannot happen
+            let _ = ongoing_lock.insert(request_id, token.clone());
+        }
+        let ongoing = Arc::clone(&self.ongoing);
+
+        let domain_clone = domain.clone();
+        self.tracker.spawn(
+            async move {
+                // Keep timer in the async task, will drop at the end of the task
+                let _timer = timer;
+                Self::preprocessing_background(
+                    sk,
+                    &request_id,
+                    &domain_clone,
+                    signing_schemes,
+                    small_sessions,
+                    bucket_store,
+                    my_identity,
+                    dkg_params,
+                    keyset_config,
+                    extra_data,
+                    factory,
+                    meta_permit,
+                    token,
+                    #[cfg(feature = "insecure")]
+                    percentage_offline,
+                )
+                .await;
+                ongoing.lock().await.remove(&request_id);
+            }
+            .instrument(tracing::Span::current()),
+        );
+        Ok(())
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    async fn preprocessing_background(
+        sk: Arc<NodeSigningIdentity>,
+        req_id: &RequestId,
+        domain: &alloy_sol_types::Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
+        sessions: Vec<SmallSession<ResiduePolyF4Z128>>,
+        bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
+        own_identity: Identity,
+        params: DKGParams,
+        keyset_config: ddec_keyset_config::KeySetConfig,
+        extra_data: Vec<u8>,
+        factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
+        cancel_token: CancellationToken,
+        #[cfg(feature = "insecure")] partial_params: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
+    ) {
+        let preprocessing_started_at = Instant::now();
+
+        #[cfg(feature = "insecure")]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (partial_preproc: {}, percentage_offline: {:?}, store_dummy_preprocessing: {:?})",
+            req_id,
+            own_identity,
+            partial_params.is_some(),
+            partial_params.map(|p| p.percentage_offline),
+            partial_params.map(|p| p.store_dummy_preprocessing),
+        );
+
+        #[cfg(not(feature = "insecure"))]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (full preprocessing)",
+            req_id,
+            own_identity,
+        );
+
+        // Create the orchestrator
+        // !! If insecure we allow generating partial preprocessing !!
+        #[cfg(feature = "insecure")]
+        let orchestrator_result = {
+            let mut factory_guard = factory.lock().await;
+            let factory = factory_guard.as_mut();
+            match partial_params {
+                Some(partial_params) => {
+                    PreprocessingOrchestrator::<ResiduePolyF4Z128>::new_partial(
+                        factory,
+                        params,
+                        keyset_config,
+                        partial_params.percentage_offline as usize,
+                    )
+                }
+                None => PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(
+                    factory,
+                    params,
+                    keyset_config,
+                ),
+            }
+        };
+
+        #[cfg(not(feature = "insecure"))]
+        let orchestrator_result = {
+            let mut factory_guard = factory.lock().await;
+            let factory = factory_guard.as_mut();
+            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params, keyset_config)
+        };
+
+        // Process the result of orchestration or orchestrator creation.
+        let handle_update: Result<_, String> = match orchestrator_result {
+            Ok(orchestrator) => {
+                tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
+                let orchestration_outcome = tokio::select! {
+                    biased;
+                    () = cancel_token.cancelled() => Err("aborted".to_string()),
+                    res = orchestrator
+                        .orchestrate_dkg_processing_small_session::<P>(sessions)
+                    => res.map_err(|e| e.to_string()),
+                };
+                match orchestration_outcome {
+                    Ok((sessions, preproc_handle)) => {
+                        tracing::info!(
+                            "Preproc orchestration phase finished for request {} on P[{:?}] (elapsed: {:.1}s). Finalizing result...",
+                            req_id,
+                            own_identity,
+                            preprocessing_started_at.elapsed().as_secs_f64(),
+                        );
+                        Ok((sessions, Arc::new(Mutex::new(preproc_handle))))
+                    }
+                    Err(error) => {
+                        tracing::error!("Failed during preprocessing orchestration: {}", error);
+                        Err(error)
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!("Failed to create preprocessing orchestrator: {}", err);
+                Err(err.to_string())
+            }
+        };
+
+        #[cfg(feature = "insecure")]
+        let handle_update: Result<_, String> = {
+            use threshold_execution::online::preprocessing::{
+                DKGPreprocessing, dummy::DummyPreprocessing,
+            };
+
+            match (handle_update, partial_params) {
+                (Err(e), _) => Err(e),
+                (Ok((sessions, handle)), Some(partial_params)) => {
+                    if partial_params.store_dummy_preprocessing {
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] storing DummyPreprocessing (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
+                        match sessions.first() {
+                            Some(first_session) => {
+                                let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> =
+                                    Box::new(DummyPreprocessing::new(0, first_session));
+                                Ok((sessions, Arc::new(Mutex::new(preproc))))
+                            }
+                            None => {
+                                tracing::error!(
+                                    "Could not retrieve any session after partial preprocessing"
+                                );
+                                Err("Could not retrieve any session after partial preprocessing"
+                                    .to_string())
+                            }
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] keeping real preprocessing handle (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
+                        Ok((sessions, handle))
+                    }
+                }
+                (Ok((sessions, handle)), None) => Ok((sessions, handle)),
+            }
+        };
+
+        // Build the final bucket result by combining the orchestration outcome
+        // with the external signature computation.
+        let bucket_result: Result<BucketMetaStore, String> = match handle_update {
+            Err(e) => Err(e),
+            Ok((_sessions, inner)) => {
+                tracing::debug!(
+                    "Preproc request {} on P[{:?}] computing external signature",
+                    req_id,
+                    own_identity,
+                );
+                match compute_preprocessing_signatures(
+                    &sk,
+                    &signing_schemes,
+                    req_id,
+                    domain,
+                    extra_data,
+                ) {
+                    Ok((external_signature, signatures)) => Ok(BucketMetaStore {
+                        external_signature,
+                        signatures,
+                        preprocessing_id: *req_id,
+                        preprocessing_store: PreprocMaterial::Real(inner),
+                        dkg_param: params,
+                    }),
+                    Err(e) => {
+                        tracing::error!("Failed to compute external signature: {}", e);
+                        Err(format!("Failed to compute external signature: {e}"))
+                    }
+                }
+            }
+        };
+
+        // Consume the meta-store permit in exactly one terminal-state write.
+        let bucket_result_ok = bucket_result.is_ok();
+        let meta_store_ok = update_req_in_meta_store::<_, String>(
+            &bucket_store,
+            meta_permit,
+            bucket_result,
+            OP_KEYGEN_PREPROC_REQUEST,
+        )
+        .await;
+
+        if bucket_result_ok && meta_store_ok {
+            tracing::info!(
+                "Preproc Finished Successfully P[{:?}] for request {} (total elapsed: {:.1}s)",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            );
+        } else if !bucket_result_ok {
+            tracing::error!(
+                "Preproc Failed P[{:?}] for request {} after {:.1}s",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            );
+        } else {
+            tracing::error!(
+                "Preproc meta store update failed P[{:?}] for request {} after {:.1}s",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+
+    async fn inner_key_gen_preproc(
+        &self,
+        request: KeyGenPreprocRequest,
+        #[cfg(feature = "insecure")] partial_params: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
+    ) -> Result<Response<Empty>, MetricedError> {
+        let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
+
+        let (
+            request_id,
+            context_id,
+            epoch_id,
+            dkg_params,
+            keyset_config,
+            eip712_domain,
+            extra_data,
+            signing_schemes,
+        ) = validate_preproc_request(request)?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+        )?;
+        let my_role = validate_context_and_epoch(
+            OP_KEYGEN_PREPROC_REQUEST,
+            &self.session_maker,
+            Some(request_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
+        timer.tags(metric_tags);
+
+        // Add preprocessing to metastore and fail in case it is already present.
+        let meta_permit = add_req_to_meta_store(
+            &self.preproc_buckets,
+            &request_id,
+            OP_KEYGEN_PREPROC_REQUEST,
+        )
+        .await?;
+
+        tracing::info!("Starting preproc generation for Request ID {}", request_id);
+
+        self.launch_dkg_preproc(
+                dkg_params,
+                keyset_config,
+                request_id,
+                context_id,
+                epoch_id,
+                extra_data,
+                sk,
+                signing_schemes,
+                &eip712_domain,
+                timer,
+                meta_permit,
+            #[cfg(feature = "insecure")] partial_params
+        ).await.map_err(|e|
+            MetricedError::new(OP_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"),
+                tonic::Code::Internal)
+            )?;
+        Ok(Response::new(Empty {}))
+    }
+
+    /// Insecure (dummy) preprocessing: no preprocessing material is generated,
+    /// only the preprocessing ID, the external signature and the DKG parameters
+    /// are stored in the meta store.
+    /// The stored entry can only be consumed by the insecure key generation.
+    #[cfg(feature = "insecure")]
+    async fn inner_insecure_key_gen_preproc(
+        &self,
+        request: KeyGenPreprocRequest,
+    ) -> Result<Response<Empty>, MetricedError> {
+        let mut timer = METRICS
+            .time_operation(OP_INSECURE_KEYGEN_PREPROC_REQUEST)
+            .start();
+
+        let (
+            request_id,
+            context_id,
+            epoch_id,
+            dkg_params,
+            _keyset_config,
+            eip712_domain,
+            extra_data,
+            signing_schemes,
+        ) = validate_preproc_request(request)?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+        )?;
+        let my_role = validate_context_and_epoch(
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+            &self.session_maker,
+            Some(request_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
+        timer.tags(metric_tags);
+
+        tracing::info!("Starting preproc generation for Request ID {}", request_id);
+
+        // Add preprocessing to metastore and fail in case it is already present.
+        let meta_permit = add_req_to_meta_store(
+            &self.preproc_buckets,
+            &request_id,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+        )
+        .await?;
+        let preproc_bucket_res = super::new_insecure_preproc_bucket(
+            &sk,
+            &signing_schemes,
+            request_id,
+            dkg_params,
+            &eip712_domain,
+            extra_data,
+        )
+        .map_err(|e| e.to_string());
+        let preproc_error = preproc_bucket_res.as_ref().err().cloned();
+
+        if !update_req_in_meta_store(
+            &self.preproc_buckets,
+            meta_permit,
+            preproc_bucket_res,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+        )
+        .await
+        {
+            return Err(MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Failed to store insecure preprocessing result for Request ID {request_id}"
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+        if let Some(error) = preproc_error {
+            return Err(MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Failed to build insecure preprocessing bucket for Request ID {request_id}: {error}"
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+        tracing::warn!(
+            "Stored insecure (dummy) preprocessing for Request ID {} - no preprocessing material was generated",
+            request_id
+        );
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn inner_get_result(
+        &self,
+        request: Request<v1::RequestId>,
+        op_tag: &'static str,
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+        let request_id =
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+
+        tracing::info!(
+            "Polling preproc result for request {} (waiting up to {}s)",
+            request_id,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        );
+
+        let preproc_data = retrieve_from_meta_store_with_timeout(
+            &self.preproc_buckets,
+            &request_id,
+            OP_KEYGEN_PREPROC_RESULT,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await?;
+
+        tracing::info!("Preproc result ready for request {}", request_id);
+
+        if preproc_data.preprocessing_id != request_id {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
+                    request_id,
+                    preproc_data.preprocessing_id
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+
+        // The kind of result requested must match the kind of preprocessing
+        // stored: the insecure endpoint must not return real material, and the
+        // secure endpoint must not return insecure (dummy) material.
+        #[cfg(feature = "insecure")]
+        {
+            let is_insecure_tag = op_tag == OP_INSECURE_KEYGEN_PREPROC_RESULT;
+            let is_insecure_store =
+                matches!(preproc_data.preprocessing_store, PreprocMaterial::Insecure);
+            if is_insecure_tag != is_insecure_store {
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Preprocessing kind mismatch for ID {request_id}: is_insecure_tag={is_insecure_tag} != is_insecure_store={is_insecure_store}",
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ));
+            }
+        }
+
+        Ok(Response::new(KeyGenPreprocResult {
+            preprocessing_id: Some(request_id.into()),
+            external_signature: preproc_data.external_signature.clone(),
+            signatures: stored_scheme_signatures_to_proto(&preproc_data.signatures),
+        }))
+    }
+
+    pub(crate) async fn key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        self.inner_key_gen_preproc(
+            request.into_inner(),
+            #[cfg(feature = "insecure")]
+            None,
+        )
+        .await
+    }
+
+    #[cfg(feature = "insecure")]
+    pub(crate) async fn partial_key_gen_preproc(
+        &self,
+        request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        let inner = request.into_inner();
+        let base_request = inner.base_request.ok_or_else(|| {
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                None,
+                anyhow::anyhow!("Missing preproc base_request"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        self.inner_key_gen_preproc(base_request, inner.partial_params)
+            .await
+    }
+
+    /// Insecure (dummy) preprocessing that records metadata but no preprocessing
+    /// material in the meta store, to be consumed by the insecure key generation.
+    #[cfg(feature = "insecure")]
+    pub(crate) async fn insecure_key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        self.inner_insecure_key_gen_preproc(request.into_inner())
+            .await
+    }
+
+    pub(crate) async fn get_result(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        self.inner_get_result(request, OP_KEYGEN_PREPROC_RESULT)
+            .await
+    }
+
+    /// Same as [`Self::get_result`] but for preprocessing started via
+    /// [`Self::insecure_key_gen_preproc`].
+    #[cfg(feature = "insecure")]
+    pub(crate) async fn get_insecure_result(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        self.inner_get_result(request, OP_INSECURE_KEYGEN_PREPROC_RESULT)
+            .await
+    }
+
+    pub(crate) async fn abort_key_gen_preproc(
+        &self,
+        preproc_id: RequestId,
+        key_gen_cancel_res: Status,
+    ) -> Result<Response<Empty>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        // Step 1: If preprocessing is still running — cancel it
+        let mut ongoing = self.ongoing.lock().await;
+        if let Some(token) = ongoing.remove(&preproc_id) {
+            // Observe that the cancellation arm handles the abortion and clean-up
+            token.cancel();
+            tracing::info!("Cancelled preprocessing {}", preproc_id);
+            Ok(Response::new(Empty {}))
+        } else {
+            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existed
+            // Regardless return key gen abort result
+            if key_gen_cancel_res.code() == tonic::Code::Ok {
+                // Existed and had been consumed by key gen, but key gen was able to cancel successfully
+                Ok(Response::new(Empty {}))
+            } else {
+                // Either did not exist or something went wrong with key gen cancellation
+                Err(MetricedError::new(
+                    OP_KEYGEN_ABORT,
+                    Some(preproc_id),
+                    key_gen_cancel_res.message().to_string(),
+                    key_gen_cancel_res.code(),
+                ))
+            }
+        }
+    }
+
+    pub(crate) async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError>
+    where
+        P: Send + Sync,
+    {
+        let guarded_meta_store = self.preproc_buckets.read().await;
+        Ok(guarded_meta_store
+            .get_successful_completed_request_ids()
+            .map(|id| id.to_string())
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+    use crate::engine::rng_source::test_rng_source;
+    use crate::engine::{base::BaseKmsStruct, service::session::SessionMaker};
+    use crate::testing::utils::poll_result_until_ready;
+    use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
+    use threshold_execution::{
+        malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
+            DummyProducerFactory, FailingProducerFactory,
+        },
+        online::preprocessing::create_memory_factory,
+        small_execution::prss::PRSSSetup,
+    };
+    use threshold_types::rng::AesRng;
+
+    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Preprocessor<P> {
+        fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
+            let tracker = Arc::new(TaskTracker::new());
+            let ongoing = Arc::new(Mutex::new(HashMap::new()));
+            Self {
+                base_kms,
+                preproc_buckets: MetaStore::new_unlimited(),
+                preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
+                num_sessions_preproc: 2,
+                session_maker,
+                tracker,
+                ongoing,
+                _producer_factory: PhantomData,
+            }
+        }
+    }
+
+    async fn setup_prep<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>(
+        rng: &mut AesRng,
+        use_prss: bool,
+    ) -> Preprocessor<P> {
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let (_pk, sk) = gen_sig_keys(rng);
+        let base_kms = BaseKmsStruct::new(
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+            test_rng_source(),
+        );
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = if use_prss {
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        let prss_setup_z64 = if use_prss {
+            Some(
+                PRSSSetup::testing_party_epoch_init(4, 1, role)
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            &epoch_id,
+            base_kms.new_rngs(),
+        );
+        Preprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        // `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        {
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: None,
+                domain: Some(domain.clone()),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because request ID is empty
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: None,
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain.clone()),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because params is invalid
+            let mut rng = AesRng::seed_from_u64(22);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(req_id.into()),
+                params: 10,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain.clone()),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because domain is missing
+            let mut rng = AesRng::seed_from_u64(22);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: None,
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because the context ID has a bad format
+            let mut rng = AesRng::seed_from_u64(23);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }),
+                domain: Some(domain.clone()),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn internal() {
+        let mut rng = AesRng::seed_from_u64(22);
+        // NOTE we're not using the dummy producer factory here
+        let prep = setup_prep::<FailingProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+
+        // even though we use a failing preprocessor, the request should be ok
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        // `NotFound` - If the preprocessing does not exist for `request`.
+        {
+            let mut rng = AesRng::seed_from_u64(22);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+            let req_id = RequestId::new_random(&mut rng);
+
+            // no need to wait because [get_result] is semi-blocking
+            assert_eq!(
+                prep.get_result(tonic::Request::new(req_id.into()))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+        // `NotFound` - If the PRSS/epoch does not exist
+        {
+            let mut rng = AesRng::seed_from_u64(23);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain),
+                epoch_id: None,
+                extra_data: vec![],
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // try again with the same request and we should get AlreadyExists error
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn cannot_start_same_preproc_id_after_completion() {
+        // The `already_exists` test covers the in-progress case. This ensures the ID
+        // remains reserved even after the background task finishes successfully.
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
+            .await
+            .unwrap();
+
+        // Re-starting with the same preprocessing ID must still be rejected.
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain.clone()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
+            .await
+            .unwrap();
+    }
+
+    #[cfg(feature = "insecure")]
+    fn insecure_preproc_request(req_id: RequestId) -> tonic::Request<KeyGenPreprocRequest> {
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        tonic::Request::new(KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        })
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_sunshine() {
+        use kms_grpc::solidity_types::PrepKeygenVerification;
+
+        use crate::cryptography::signatures::recover_address_from_ext_signature;
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let verf_key = prep.base_kms.verf_key();
+
+        let req_id = RequestId::new_random(&mut rng);
+        prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        // The insecure preprocessing is instant, so the result is available right away
+        let inner_res = prep
+            .get_insecure_result(tonic::Request::new(req_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // Check that the external signature is valid
+        let sol_struct = PrepKeygenVerification::new(
+            &inner_res.preprocessing_id.unwrap().try_into().unwrap(),
+            vec![],
+        );
+        assert_eq!(
+            recover_address_from_ext_signature(
+                &sol_struct,
+                &dummy_domain(),
+                &inner_res.external_signature
+            )
+            .unwrap(),
+            verf_key.address()
+        );
+
+        // The stored bucket must hold no preprocessing material
+        let bucket = retrieve_from_meta_store_with_timeout(
+            &prep.preproc_buckets,
+            &req_id,
+            "test",
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            bucket.preprocessing_store,
+            super::PreprocMaterial::Insecure
+        ));
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_result_rejects_real_preproc() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        prep.key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        // Real preprocessing can far outlast the default poll window under heavy
+        // parallel test load, so use a generous attempt budget.
+        assert_eq!(
+            crate::testing::utils::poll_result_until_ready_with_max_tries(6000, || prep
+                .get_insecure_result(tonic::Request::new(req_id.into())))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::FailedPrecondition
+        );
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_already_exists() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        // a second request with the same ID must be rejected
+        assert_eq!(
+            prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+
+        // it must also be rejected by the secure preprocessing endpoint
+        assert_eq!(
+            prep.key_gen_preproc(insecure_preproc_request(req_id))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_preproc_not_found() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let random_id = RequestId::new_random(&mut rng);
+
+        // When there is no preproc and the key gen returned NotFound too,
+        // the abort endpoint must surface NotFound.
+        let key_gen_cancel_res = Status::not_found("no keygen running");
+        let err = prep
+            .abort_key_gen_preproc(random_id, key_gen_cancel_res)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Start a real preprocessing task and abort it right after it has started.
+    #[tokio::test]
+    async fn abort_during_preproc() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        // No key generation is running
+        let key_gen_cancel_res = Status::not_found("no keygen running");
+        // Abort while preprocessing is running
+        assert!(
+            prep.abort_key_gen_preproc(req_id, key_gen_cancel_res.clone())
+                .await
+                .is_ok()
+        );
+        // Second call should fail since it has already been cancelled
+        // Should return the `key_gen_cancel_res` status
+        let status = prep
+            .abort_key_gen_preproc(req_id, key_gen_cancel_res)
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), tonic::Code::NotFound);
+        // Retrieving the result must now surface an error (the bucket was updated to
+        // aborted; poll since the result endpoint is non-blocking)
+        assert_eq!(
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+
+        // Finally try to assume that key gen was aborted correctly
+        // to validate that this also returns ok when aborting preprocessing
+        assert!(
+            prep.abort_key_gen_preproc(req_id, Status::ok("keygen aborted successfully"))
+                .await
+                .is_ok()
+        )
+    }
+}

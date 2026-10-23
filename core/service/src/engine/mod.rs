@@ -6,15 +6,19 @@ mod server;
 #[cfg(feature = "non-wasm")]
 pub mod backup_operator;
 #[cfg(feature = "non-wasm")]
-pub mod base;
+pub mod bandwidth_bench;
 #[cfg(feature = "non-wasm")]
-pub mod centralized;
+pub mod base;
 #[cfg(feature = "non-wasm")]
 pub mod context;
 #[cfg(feature = "non-wasm")]
 pub mod context_manager;
 #[cfg(feature = "non-wasm")]
+mod endpoint;
+#[cfg(feature = "non-wasm")]
 pub mod keyset_configuration;
+#[cfg(feature = "non-wasm")]
+pub mod kms;
 #[cfg(feature = "non-wasm")]
 pub mod material_integrity;
 #[cfg(feature = "non-wasm")]
@@ -24,11 +28,9 @@ pub(crate) mod public_material_sync;
 #[cfg(feature = "non-wasm")]
 pub mod rng_source;
 #[cfg(feature = "non-wasm")]
+pub mod service;
+#[cfg(feature = "non-wasm")]
 pub(crate) mod storage_material_verification;
-#[cfg(feature = "non-wasm")]
-pub mod threshold;
-#[cfg(feature = "non-wasm")]
-pub mod traits;
 #[cfg(feature = "non-wasm")]
 pub mod utils;
 

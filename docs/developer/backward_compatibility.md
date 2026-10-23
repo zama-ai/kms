@@ -369,7 +369,7 @@ impl TestedModule for KMS {
 A test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) runs as part of the `core/service` test suite, but its scan is workspace-wide: it uses `cargo metadata` to enumerate every workspace member and statically inspects each one for `#[derive(VersionsDispatch)]` enums, enforcing two invariants:
 
 1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
-2. **Fixture coverage** — every dispatch type (with its `Versions` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
+2. **Fixture coverage** — every dispatch type (with its `Versions` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file. A type renamed in Rust after its fixtures were generated is listed in the `RENAMED` constant with the name its fixtures use (for example `FheKeys`, recorded as `ThresholdFheKeys`); keep its `Named::NAME` unchanged.
 
 The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is to add a direct `.ron` fixture for it, as described in [Adding a test for a new type](#adding-a-test-for-a-new-type). `ALLOW_UNCOVERED` is for inner types that are only reachable as fields of a parent type that already has a fixture.
 
@@ -384,7 +384,7 @@ where each entry must carry a comment that records:
 Example:
 
 ```rust
-// Field of ThresholdFheKeys.public_material.
+// Field of FheKeys.public_material.
 // Covered via ThresholdFheKeysTest.
 "PublicKeyMaterial",
 ```
@@ -502,6 +502,10 @@ impl Upgrade<PrivateSigKey> for PrivateSigKeyV0 {
 ```
 
 For more in-depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
+
+## Skipping the fixtures of a removed type
+
+Frozen data cannot change, so the fixtures of a type that the service no longer has stay in the `.ron` files and in `backward-compatibility/src/lib.rs`. The `run_test` arm for such a type returns `TestResult::Skipped(testcase.skip("<reason>"))`, and the loader prints the reason next to the test name. The `KmsFheKeyHandles` fixtures in [`core/service/tests/backward_compatibility_kms.rs`](../../core/service/tests/backward_compatibility_kms.rs) use this.
 
 ## Updating the test without testing backward compatibility
 

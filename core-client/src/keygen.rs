@@ -969,25 +969,14 @@ pub(crate) async fn get_preproc_keygen_responses(
 mod tests {
     use super::*;
     use crate::dummy_domain;
-    use kms_grpc::{
-        rpc_types::{PrivDataType, PubDataType, ecdsa_signatures},
-        solidity_types::KeygenVerification,
-    };
+    use kms_grpc::{rpc_types::ecdsa_signatures, solidity_types::KeygenVerification};
     use kms_lib::{
-        consts::{
-            DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,
-            TEST_PARAM, default_extra_data,
-        },
-        cryptography::signatures::{
-            PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
-        },
-        engine::base::INSECURE_PREPROCESSING_ID,
-        util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+        consts::{TEST_PARAM, default_extra_data},
+        cryptography::signatures::{PublicSigKey, compute_eip712_signature, gen_sig_keys},
+        engine::base::{INSECURE_PREPROCESSING_ID, derive_request_id},
     };
     use rand::SeedableRng;
-    use std::str::FromStr;
-    use tfhe::xof_key_set::CompressedXofKeySet;
+    use threshold_execution::tfhe_internals::test_feature::gen_key_set;
 
     /// The error every failed ECDSA check now reports.
     const UNKNOWN_PARTY: &str = "belongs to no known party";
@@ -1007,51 +996,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_eip712_sigs() {
-        let mut pub_storage = RamStorage::new();
-        let mut priv_storage = RamStorage::new();
-
-        // make sure signing keys exist
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, sk) = gen_sig_keys(&mut rng);
+        let client = client_knowing(verf_key);
 
         // generate a small FHE keyset for testing
-        let key_id = &TEST_CENTRAL_KEY_ID;
+        let key_id = &derive_request_id("test_eip712_sigs_key").unwrap();
         let prep_id = &INSECURE_PREPROCESSING_ID;
-        ensure_central_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            TEST_PARAM,
-            key_id,
-            &OTHER_CENTRAL_TEST_ID,
-            &DEFAULT_EPOCH_ID,
-            true,
-        )
-        .await;
-        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
-            &pub_storage,
-            &RequestId::from_str(&key_id.to_string()).unwrap(),
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await
-        .unwrap();
-        let compact_public_key: tfhe::CompactPublicKey = read_versioned_at_request_id(
-            &pub_storage,
-            &RequestId::from_str(&key_id.to_string()).unwrap(),
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        .unwrap();
-
-        // read generated private signature key, derive public verification key and address from it
-        let sk: PrivateSigKey = read_versioned_at_request_id(
-            &priv_storage,
-            &RequestId::from_str(&SIGNING_KEY_ID.to_string()).unwrap(),
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        let client = client_knowing(sk.verf_key());
+        let (keyset, compressed_keyset) = gen_key_set(TEST_PARAM, key_id.into(), &mut rng).unwrap();
+        let compact_public_key = keyset.public_keys.public_key;
 
         // === compressed keyset signatures ===
         let compressed_keyset_digest =

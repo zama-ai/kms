@@ -1,6 +1,8 @@
 # Upgrade from v0.15 to v0.16
 
-Version 0.16 removes the KMS rate limiter. Remove the entire `[rate_limiter_conf]` section from every centralized and threshold KMS configuration file.
+## Rate limiter
+
+Version 0.16 removes the KMS rate limiter. Remove the entire `[rate_limiter_conf]` section from every KMS configuration file.
 
 This includes all seven settings, regardless of their configured values:
 
@@ -42,3 +44,27 @@ KMS_CORE__RATE_LIMITER_CONF__NEW_EPOCH
 For Helm deployments, remove `kmsCore.rateLimiter.bucketSize` and its parent `kmsCore.rateLimiter` block from custom values files. Remove corresponding `--set` overrides from deployment commands.
 
 These settings have no replacement. The decryption MetaStore limits, `[threshold].dec_capacity` and `[threshold].min_dec_cache`, remain valid and still control admission and result retention.
+
+## Centralized mode
+
+Version 0.16 removes the centralized KMS mode. Every node runs as a party of a threshold network.
+
+### Server configuration
+
+`kms-server` and `kms-gen-keys` require a `[threshold]` section. A configuration file without it fails at load with `missing configuration field "threshold"`. `kms-server` also reports `failed to load kms-server config file <path>; expected [service] and [threshold] sections`.
+
+### Helm chart
+
+The chart deploys threshold networks only. `kmsCore.thresholdMode.enabled` defaults to `true`, and rendering fails if it is `false`.
+
+### core-client configuration
+
+The `kms_type` key is optional. The only accepted value is `"threshold"`. Any other value fails to load.
+
+### Private storage and backups
+
+A node does not boot if its private storage holds `FhePrivateKey` entries. The boot-time checks report them with the error `Foreign material in private storage`. A backup restore skips `FhePrivateKey` entries in the backup vault and logs a warning.
+
+### Health checks
+
+The proto `NodeType` value `1` is reserved. `kms-health-check` reports every node type other than `2` (`NODE_TYPE_THRESHOLD`) as `Unsupported node type <n>`, and it sets the overall status to Unhealthy.
