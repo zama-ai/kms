@@ -108,6 +108,7 @@
 #                            FHE parameters for preprocessing and keygen in Argo.
 #   old_kms_chart_version  (string, default 1.5.1)
 #                            KMS Helm chart version for the all-old deploy (Step 1).
+#                            A v0.15+ old side needs chart 1.9.x or later.
 #   new_kms_chart_version  (string, default repository)
 #                            KMS Helm chart for upgraded parties; use "repository"
 #                            to use charts from the checked-out branch.
@@ -198,7 +199,7 @@ on:
           - 'Default'
           - 'Test'
       old_kms_chart_version:
-        description: 'KMS Helm chart version for old (baseline) deployment'
+        description: 'KMS Helm chart version for old (baseline) deployment. A v0.15+ old side needs chart 1.9.x or later'
         required: true
         type: string
         default: '1.5.1'

@@ -1,230 +1,53 @@
 # Commands
 
-Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
+Run from the repository root unless stated otherwise. See [EDITING.md](./EDITING.md#verification) for required checks.
+Use the [Makefile](../Makefile) for target definitions, [README](../README.md) for prerequisites, and [rust-toolchain.toml](../rust-toolchain.toml) for the toolchain.
 
-Toolchain is pinned via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+## Test selection
 
-## Build and lint
+CI runs `cargo nextest run --profile ci --no-fail-fast`, one process per test. Prefer `cargo nextest run` locally so results match CI; it takes the same feature, package, and name-filter arguments as `cargo test`. Nextest skips doctests: run `cargo test --doc` for those.
 
-Build the workspace:
+| Command | Scope / caveat |
+|---|---|
+| `cargo nextest run -F testing` | Secure/default surface |
+| `cargo nextest run -F testing --lib` | Unit tests only |
+| `cargo nextest run -F testing -p <crate> <pattern>` | Focused test |
+| `cargo nextest run -p kms-core-client -F e2e` | Client e2e, including insecure keygen and CRS |
+| `cargo nextest run -p kms-core-client -F e2e,slow_tests` | Adds PRSS, preprocessing, insecure fast paths |
+| `cargo nextest run -F slow_tests` | Full slow suite; can take hours |
+| `cargo bench -p kms --bench meta_store --features testing` | Metastore microbenchmarks; append `-- --save-baseline before` or `-- --baseline before` |
 
-```
-cargo build
-```
+## Feature flags
 
-Format + full lint. This mirrors CI; run before presenting any change as done (see [EDITING.md](./EDITING.md) — Build verification):
+| Feature | Effect |
+|---|---|
+| `testing` | Exposes test helper APIs across crate boundaries. |
+| `slow_tests` | Enables the long-running suite; implies `testing`. |
+| `insecure` (`kms`, `kms-core-client`) | Development RPCs and mock enclave support. Forwards `threshold-networking/insecure`, which permits plaintext core-to-core transport and mock attestation. Debugging and testing only. |
+| `e2e` (`kms-core-client`) | Client end-to-end tests; implies `testing` and `insecure`. |
+| `non-wasm` (`kms`, default) | Native build. Code under `#[cfg(not(feature = "non-wasm"))]`, such as `core/service/src/client/js_api.rs`, is the wasm surface and is invisible to default builds. |
 
-```
-cargo fmt
-cargo clippy --all-targets -- -D warnings
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-All-features clippy as a Makefile target:
-
-```
-make lint
-```
-
-Lint a single crate:
-
-```
-make lint-package PACKAGE=<crate-name>
-```
-
-Installing and running dylint:
-
-```
-make install-dylint
-make lint-dylint
-```
-
-
-## Testing
-
-Typical test run for the secure/default client surface — uses the `testing` feature and includes unit plus integration tests that do not rely on insecure client commands (some integration tests need Redis running locally):
-
-```
-cargo test -F testing
-```
-
-Full `kms-core-client` e2e coverage, including insecure keygen/CRS client commands:
-
-```
-cargo test -p kms-core-client -F e2e
-```
-
-Threshold-heavy `kms-core-client` e2e coverage (PRSS + preprocessing + insecure fast paths):
-
-```
-cargo test -p kms-core-client -F e2e,slow_tests
-```
-
-Skip the integration tests that need Redis (unit tests only):
-
-```
-cargo test -F testing --lib
-```
-
-Full slow suite (can take hours):
-
-```
-cargo test -F slow_tests
-```
-
-Narrow to a single test by name pattern, scoped to a crate:
-
-```
-cargo test -F testing -p <crate> <pattern>
-```
-
-Run the focused metastore microbenchmarks:
-
-```
-cargo bench -p kms --bench meta_store --features testing
-```
-
-Save and compare a local Criterion baseline:
-
-```
-cargo bench -p kms --bench meta_store --features testing -- --save-baseline before
-cargo bench -p kms --bench meta_store --features testing -- --baseline before
-```
-
-Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
+`make lint-package PACKAGE=<crate>` is a narrower lint, not full validation.
+Dylint: `make install-dylint`, then `make lint-dylint`.
 
 ## Backward compatibility
 
-Run BC tests against stored LFS vectors (pulls LFS first, then runs the tests):
+- `make test-backward-compatibility`: pulls LFS, then tests stored vectors.
+- `make test-backward-compatibility-local`: tests local vectors without LFS pull. Use it to test vectors you just regenerated.
+- `make backward-snapshot-check BASE_REF=origin/main`: detects removed variants and suspicious layout/upgrade changes.
+- `make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md`: writes the report.
+- `make generate-backward-compatibility-all`: regenerates only deterministic versions.
+- `make generate-backward-compatibility-v0.16.0`: example single-version regeneration.
+- `make clean-backward-compatibility-data`: removes deterministic data; preserves frozen directories and shared `.ron` manifests.
 
-```
-make test-backward-compatibility
-```
+The Makefile's `FROZEN_BWC_VERSIONS` must not be regenerated during normal work: their generators are nondeterministic.
+Frozen-version target output must not be committed; it can append duplicate manifest entries.
+See the [compatibility guide](../docs/developer/backward_compatibility.md) and [release procedure](../backward-compatibility/ADDING_NEW_VERSIONS.md).
 
-Run against locally regenerated vectors — does NOT pull LFS:
+## Other workflows
 
-```
-make test-backward-compatibility-local
-```
-
-Generate and compare `VersionsDispatch` snapshots between a base ref and the current checkout. This detects removed version variants and suspicious type-layout or upgrade-body changes:
-
-```
-make backward-snapshot-check BASE_REF=origin/main
-make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
-```
-
-Direct cargo invocation (what the make targets call under the hood):
-
-```
-cargo test --test 'backward_compatibility_*' -- --include-ignored
-```
-
-Regenerate vectors. Versions are split into two lists in the `Makefile`:
-
-- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
-- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0`, `0.15.0`, `0.16.0` and future versions. Re-running produces byte-identical output.
-
-Regenerate all deterministic versions (cleans only deterministic data dirs first, then runs their generators; frozen versions are left untouched):
-
-```
-make generate-backward-compatibility-all
-```
-
-Regenerate for a single deterministic version:
-
-```
-make generate-backward-compatibility-v0.16.0
-```
-
-Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, and `v0.13.20` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
-
-Remove generated BC data for deterministic versions only — frozen data dirs and all shared `.ron` files are preserved:
-
-```
-make clean-backward-compatibility-data
-```
-
-**Gotcha**: do not run `make test-backward-compatibility` right after generating — the LFS pull will overwrite newly generated data. Use the `-local` variant.
-
-Background and authoring workflow: [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md). Adding a new release: [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).
-
-## Test material generation
-
-```
-make generate-test-material-all       # insecure + secure profiles, all party counts
-make generate-test-material-default   # secure profile, parties 4,13
-make generate-test-material-testing   # insecure profile, parties 4
-make clean-test-material              # remove ./test-material
-```
-
-## Local deployment (Docker compose)
-
-Build compose images:
-
-```
-make build-compose-base
-make build-compose-threshold
-make build-compose-centralized
-```
-
-`make build-compose-threshold` and `make build-compose-centralized` build a
-shared `kms-binaries-insecure:latest-dev` image first. They pass this image to
-the package Dockerfile through `KMS_BINARIES_IMAGE` to reuse the Rust build.
-
-Start / stop a 4-party threshold cluster (detached, waits for readiness; `stop` removes volumes and orphans):
-
-```
-make start-compose-threshold
-make stop-compose-threshold
-```
-
-Start / stop the centralized single-node variant:
-
-```
-make start-compose-centralized
-make stop-compose-centralized
-```
-
-Threshold cluster with telemetry sidecars (Jaeger / Prometheus):
-
-```
-make start-compose-threshold-telemetry
-make stop-compose-threshold-telemetry
-```
-
-Custodian-based backup requires an env var at startup:
-
-```
-KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
-```
-
-## Running the client (core-client)
-
-All from the `core-client/` directory:
-
-```
-cd core-client
-cargo run -- --help
-cargo run -- -f config/client_local_threshold.toml crs-gen
-```
-
-When using the core client for custodian backup CLI management instead use:
-```
-cd core-client
-cargo run -- --help
-cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context
-```
-
-More: [docs/guides/core_client.md](../docs/guides/core_client.md).
-
-## Git / LFS
-
-Git LFS is required for BC test vectors and for the `backward-compatibility/data/*.bincode` files.
-
-```
-make check-git-lfs   # verify git-lfs is installed
-make pull-lfs-files  # or: git lfs pull
-```
-
-Branch naming and commit/PR title rules: [GIT.md](./GIT.md).
+- Compose: [docker-compose.md](../docker-compose.md); Makefile targets `build-compose-*`, `start-compose-*`, `stop-compose-*`. **Stop targets remove volumes and orphans.**
+- Custodian backup in compose: `KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold`.
+- Test material: `make generate-test-material-{all,default,testing}`; `make clean-test-material` removes `test-material`.
+- Client commands/configs: [core-client guide](../docs/guides/core_client.md); run from `core-client/`.
+- LFS: `make check-git-lfs`, `make pull-lfs-files`.

@@ -86,7 +86,7 @@ spec:
           ##########################################################################
           # Public decrypt tests
           ##########################################################################
-          - name: public-decrypt-euint64-req1
+          - name: public-decrypt-euint64-batch1
             dependencies: ["crs-gen"]
             template: run-test
             continueOn:
@@ -94,7 +94,7 @@ spec:
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-req1"
+                  value: "public-decrypt-euint64-batch1"
                 - name: test-command
                   value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
@@ -102,15 +102,15 @@ spec:
           ##########################################################################
           # User decrypt tests
           ##########################################################################
-          - name: user-decrypt-euint64-req1
-            dependencies: ["public-decrypt-euint64-req1"]
+          - name: user-decrypt-euint64-batch1
+            dependencies: ["public-decrypt-euint64-batch1"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-req1"
+                  value: "user-decrypt-euint64-batch1"
                 - name: test-command
                   value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
@@ -119,15 +119,15 @@ spec:
           ##########################################################################
           # Public decrypt tests
           ##########################################################################
-          - name: public-decrypt-euint64-req10
-            dependencies: ["user-decrypt-euint64-req1"]
+          - name: public-decrypt-euint64-batch10
+            dependencies: ["user-decrypt-euint64-batch1"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-req10"
+                  value: "public-decrypt-euint64-batch10"
                 - name: test-command
                   value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 10"
                 - name: fhe-params
@@ -136,15 +136,15 @@ spec:
           ##########################################################################
           # User decrypt tests
           ##########################################################################
-          - name: user-decrypt-euint64-req10
-            dependencies: ["public-decrypt-euint64-req10"]
+          - name: user-decrypt-euint64-batch10
+            dependencies: ["public-decrypt-euint64-batch10"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-req10"
+                  value: "user-decrypt-euint64-batch10"
                 - name: test-command
                   value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 10"
                 - name: fhe-params
@@ -155,10 +155,10 @@ spec:
             dependencies: [
               "insecure-key-gen",               # Insecure keygen
               "crs-gen",                        # CRS gen
-              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt (correctness)
-              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt (correctness)
-              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt (correctness)
-              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt (correctness)
+              "public-decrypt-euint64-batch1",  # 1-ciphertext batch euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-batch1",    # 1-ciphertext batch euint64 User decrypt (correctness)
+              "public-decrypt-euint64-batch10", # 10-ciphertext batch euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-batch10",   # 10-ciphertext batch euint64 User decrypt (correctness)
             ]
             template: summary-report
             continueOn:
@@ -170,13 +170,13 @@ spec:
               - name: test-result-2
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
               - name: test-result-3
-                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-batch1.outputs.parameters.test-result}}"
               - name: test-result-4
-                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-batch1.outputs.parameters.test-result}}"
               - name: test-result-5
-                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-batch10.outputs.parameters.test-result}}"
               - name: test-result-6
-                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-batch10.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -457,10 +457,10 @@ spec:
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-key-gen.json
           echo '{{inputs.parameters.test-result-2}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-batch1.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-batch1.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-batch10.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-batch10.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -482,10 +482,10 @@ spec:
           for result in \
             /mnt/results/insecure-key-gen.json \
             /mnt/results/crs-gen.json \
-            /mnt/results/public-decrypt-euint64-req1.json \
-            /mnt/results/user-decrypt-euint64-req1.json \
-            /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/user-decrypt-euint64-req10.json; do
+            /mnt/results/public-decrypt-euint64-batch1.json \
+            /mnt/results/user-decrypt-euint64-batch1.json \
+            /mnt/results/public-decrypt-euint64-batch10.json \
+            /mnt/results/user-decrypt-euint64-batch10.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -647,10 +647,10 @@ spec:
                 "text": "\`\`\`\n$(for result in \
                   /mnt/results/insecure-key-gen.json \
                   /mnt/results/crs-gen.json \
-                  /mnt/results/public-decrypt-euint64-req1.json \
-                  /mnt/results/user-decrypt-euint64-req1.json \
-                  /mnt/results/public-decrypt-euint64-req10.json \
-                  /mnt/results/user-decrypt-euint64-req10.json; do
+                  /mnt/results/public-decrypt-euint64-batch1.json \
+                  /mnt/results/user-decrypt-euint64-batch1.json \
+                  /mnt/results/public-decrypt-euint64-batch10.json \
+                  /mnt/results/user-decrypt-euint64-batch10.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
