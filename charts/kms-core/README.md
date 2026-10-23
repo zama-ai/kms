@@ -27,6 +27,28 @@ A couple of things worth noting:
 - **This is cheap.** If the image hasn't actually changed since the last pull, nothing is re-downloaded — the kubelet only verifies the current image against the registry and reuses the cached layers.
 - **The only trade-off** is that the registry must be reachable when a sidecar container starts. Already-running pods are never affected; the check happens only at container start (restart, reschedule, or node scale-up).
 
+## Public vault folder and TLS subject of a party
+
+The TLS certificate and key of party `<id>` live in the public vault under one folder. The same folder is used to upload this party's certificate, to fetch its key and CA at boot, and by clients and key generation.
+
+- For this party: `kmsCore.publicVault.s3.prefix`, else `PUB-p<id>`.
+- For another party: the `prefix` of its `peersList` entry, else `PUB-p<id>`.
+
+The core's vault configuration uses only `kmsCore.publicVault.s3.prefix`. If this party's own `peersList` entry sets a `prefix`, it must equal this party's folder, so set `kmsCore.publicVault.s3.prefix` to the same value. The chart fails to render otherwise.
+
+`kmsPeers.name`, when set, is the TLS subject and the certificate name. It must equal the `host` of this party's `peersList` entry, because peers check the certificate against that host. The chart fails to render if they differ.
+
+### Upgrading a deployment without an enclave
+
+Before chart 1.9.7, the certificate and key were always stored under `PUB-p<id>`. Without an enclave, the job that creates them runs only on install, so an upgrade does not move them. If you set `kmsCore.publicVault.s3.prefix`, or a `prefix` on this party's `peersList` entry, to anything other than `PUB-p<id>`, copy the files before upgrading:
+
+```sh
+aws s3 cp --recursive s3://<public-bucket>/PUB-p<id>/CACert/ s3://<public-bucket>/<prefix>/CACert/
+aws s3 cp --recursive s3://<public-bucket>/PUB-p<id>/PrivateKey/ s3://<public-bucket>/<prefix>/PrivateKey/
+```
+
+Peers that list this party must use the same `prefix`. With an enclave, the job also runs on upgrade when `kmsGenCertAndKeys.enabled` is set.
+
 ## Local testing
 
 When `minio.enabled=true`, connect to minio UI on http://localhost:9001:
