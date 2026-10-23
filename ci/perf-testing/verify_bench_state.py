@@ -58,8 +58,9 @@ def validate(pods, configmaps, logs, parties, tokio, rayon, preproc, tuning):
                     for key in ("args", "command", "env", "envFrom", "resources", "securityContext")
                 }, sort_keys=True).encode()).hexdigest(),
             }
-        if "kms-core" not in images:
-            raise ValueError(f"{name}: missing kms-core container identity")
+        main_containers = {c["name"] for c in spec.get("containers", [])} & {"kms-core", "kms-core-enclave"}
+        if len(main_containers) != 1:
+            raise ValueError(f"{name}: expected exactly one kms-core or kms-core-enclave main container")
         fleet[name] = {
             "uid": metadata["uid"], "node": spec["nodeName"], "containers": images,
             "config_sha256": hashlib.sha256(body.encode()).hexdigest(),

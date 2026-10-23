@@ -17,10 +17,16 @@ fi
 cargo fmt --all --check
 cargo test --locked -p observability -p thread-handles --lib -- --test-threads=2
 cargo test --locked -p threshold-networking --lib -- --test-threads=2
-cargo test --locked -p threshold-algebra --lib optimistic -- --test-threads=2
-cargo test --locked -p threshold-execution --features testing --lib reconstruct_batch -- --test-threads=2
-MPC_OPTIMISTIC_RECONSTRUCTION=0 cargo test --locked -p threshold-execution --features testing --lib reconstruct_batch -- --test-threads=2
-cargo test --locked -p threshold-execution --features testing --lib reconstruct_mode -- --test-threads=2
+if [ -f core/threshold-algebra/src/sharing/optimistic.rs ]; then
+  cargo test --locked -p threshold-algebra --lib optimistic -- --test-threads=2
+  cargo test --locked -p threshold-execution --features testing --lib reconstruct_batch -- --test-threads=2
+  MPC_OPTIMISTIC_RECONSTRUCTION=0 cargo test --locked -p threshold-execution --features testing --lib reconstruct_batch -- --test-threads=2
+  cargo test --locked -p threshold-execution --features testing --lib reconstruct_mode -- --test-threads=2
+else
+  # The pre-replay baseline has no optimistic module or mode-control tests.
+  # Exercise its decoder tests instead of accepting an empty filtered test run.
+  cargo test --locked -p threshold-execution --features testing --lib sharing::open::test:: -- --test-threads=2
+fi
 cargo test --locked -p threshold-execution --features testing --lib offline_small -- --test-threads=2
 MPC_DKG_PRSS_PIPELINE=1 cargo test --locked -p threshold-execution --features testing --lib offline_small -- --test-threads=2
 cargo test --locked -p threshold-execution --features testing --lib broadcast -- --test-threads=2

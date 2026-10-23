@@ -120,6 +120,7 @@ Each row restores the full baseline configuration.
 Only `MPC_OPTIMISTIC_RECONSTRUCTION` changes.
 The first row supplies the reference placement when `REFERENCE_FLEET` is unset.
 Repeat the block in reversed order if the difference is small or the baseline drifts.
+The paired helper fixes the order at off/on/on/off; use four explicit experiment-runner invocations for on/off/off/on.
 
 Compare these results:
 
@@ -246,6 +247,15 @@ Historical captures without measurement boundaries remain exploratory.
 
 ## Validation status
 
-Local checks and their results are recorded in the implementation handoff.
+Local validation of the treatment worktree on 2026-10-23:
+
+- Shell syntax checks and all 51 Python harness regression tests passed.
+- `cargo fmt --all --check` passed.
+- Rust unit tests passed: observability 39, thread handles 1, networking 55, and optimistic algebra 7.
+- The focused Rust runner stopped while compiling threshold-execution tests: rustc was OOM-killed by this workspace's 8 GiB memory limit. A one-job, package-only test optimization level 1 retry also exhausted memory. Threshold-execution and KMS tests remain unverified, not passing.
+- Both workspace Clippy configurations (`--all-targets` and `--all-targets --all-features`, with `-D warnings`) were attempted offline but could not start analysis because the cache lacks `quinn-proto v0.11.19`.
+
+Rerun the Rust checker and both Clippy commands on a build host with more memory and access to the locked dependencies before accepting the candidate.
+The decoder-only baseline has a separate opening-test path in the checker; this avoids silently selecting absent optimistic tests, but the complete baseline Rust suite has not been run here.
 This workspace has no cluster connection or Docker daemon.
 The enclave deployment, repeatability runs, and end-to-end preprocessing validation remain cluster steps.

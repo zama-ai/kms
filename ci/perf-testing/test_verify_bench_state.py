@@ -33,6 +33,55 @@ class FleetValidationTests(unittest.TestCase):
         self.assertEqual(fleet[self.name]["node"], "node-1")
         check_continuity(fleet, copy.deepcopy(fleet))
 
+    def enclave_pod(self):
+        pod = self.pods["items"][0]
+        pod["spec"]["containers"][0]["name"] = "kms-core-enclave"
+        pod["status"]["containerStatuses"][0]["name"] = "kms-core-enclave"
+        pod["spec"]["initContainers"] = [
+            {"name": name, "restartPolicy": "Always"}
+            for name in ("kms-core-enclave-logger", "enclave-network-tunnel")
+        ]
+        pod["status"]["initContainerStatuses"] = [
+            {"name": container["name"], "imageID": "sha256:" + container["name"], "restartCount": 0,
+             "state": {"running": {"startedAt": "2026-10-22T10:00:00Z"}}}
+            for container in pod["spec"]["initContainers"]
+        ]
+        return pod
+
+    def test_enclave_main_and_native_sidecars_are_accepted(self):
+        self.enclave_pod()
+        fleet = self.fleet()
+        self.assertEqual(set(fleet[self.name]["containers"]), {
+            "kms-core-enclave", "kms-core-enclave-logger", "enclave-network-tunnel",
+        })
+        check_continuity(fleet, copy.deepcopy(fleet))
+
+    def test_exactly_one_supported_main_container_is_required(self):
+        pod = self.enclave_pod()
+        for main_names in (("unrelated",), ("kms-core", "kms-core-enclave")):
+            with self.subTest(main_names=main_names):
+                pod["spec"]["containers"] = [{"name": name} for name in main_names]
+                pod["status"]["containerStatuses"] = [
+                    {"name": name, "imageID": "sha256:test"} for name in main_names
+                ]
+                with self.assertRaisesRegex(ValueError, "exactly one"):
+                    self.fleet()
+
+    def test_enclave_main_and_native_sidecar_restarts_are_rejected(self):
+        pod = self.enclave_pod()
+        before = self.fleet()
+        for container in pod["status"]["containerStatuses"] + pod["status"]["initContainerStatuses"]:
+            with self.subTest(container=container["name"]):
+                container["restartCount"] = 1
+                with self.assertRaisesRegex(ValueError, "changed during measurement"):
+                    check_continuity(before, self.fleet())
+                container["restartCount"] = 0
+
+    def test_missing_enclave_sidecar_status_is_rejected(self):
+        self.enclave_pod()["status"]["initContainerStatuses"].pop()
+        with self.assertRaisesRegex(ValueError, "status inventory"):
+            self.fleet()
+
     def test_missing_party_and_unready_party_are_rejected(self):
         original = copy.deepcopy(self.pods)
         self.pods["items"] = []

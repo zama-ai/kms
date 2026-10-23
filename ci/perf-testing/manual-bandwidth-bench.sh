@@ -99,8 +99,14 @@ for pod in pods:
     ):
         raise SystemExit(f"{name} is not Ready")
     containers = status.get("containerStatuses", []) + status.get("initContainerStatuses", [])
+    declared = pod["spec"].get("containers", []) + pod["spec"].get("initContainers", [])
+    if {c["name"] for c in declared} != {c["name"] for c in containers}:
+        raise SystemExit(f"{name} has incomplete container status inventory")
+    main_containers = {c["name"] for c in pod["spec"].get("containers", [])} & {"kms-core", "kms-core-enclave"}
+    if len(main_containers) != 1:
+        raise SystemExit(f"{name} must have exactly one kms-core or kms-core-enclave main container")
     images = {c["name"]: [c.get("imageID"), c.get("restartCount", 0), c.get("state")] for c in containers}
-    if "kms-core" not in images or any(not data[0] for data in images.values()):
+    if any(not data[0] for data in images.values()):
         raise SystemExit(f"{name} has incomplete image provenance")
     fleet[name] = {"uid": pod["metadata"]["uid"], "node": pod["spec"]["nodeName"], "containers": images}
 if len({json.dumps({k: v[0] for k, v in p["containers"].items()}, sort_keys=True) for p in fleet.values()}) != 1:
