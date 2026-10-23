@@ -130,6 +130,11 @@ pub(crate) async fn do_new_epoch(
     } else {
         cc_conf.num_majority
     };
+    anyhow::ensure!(
+        core_endpoints.len() >= num_expected_responses,
+        "Not enough core endpoints: expected at least {num_expected_responses}, but only have {}",
+        core_endpoints.len()
+    );
 
     let (new_epoch_id, new_context_id) = (
         new_epoch_params.new_epoch_id,

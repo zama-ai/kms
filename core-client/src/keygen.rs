@@ -242,11 +242,18 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = party_confs
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("no party configs returned from fetch_public_elements"))?
-        .party_id as usize;
-    let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
+
+    let core_config = cc_conf
+        .cores
+        .iter()
+        .find(|c| c == &&party_confs[0])
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "core client config not found for party {:?} in CRS gen",
+                party_confs[0].party_id
+            )
+        })?;
+    let pub_storage_prefix = Some(core_config.object_folder.as_str());
 
     let mut signers = Vec::with_capacity(responses.len());
     // Even if we did not download all keys, we still check that they are identical

@@ -193,10 +193,12 @@ impl Client {
         )
     }
 
-    /// Retrieve the server key and public key of `key_gen_result` from `storage`, and check
-    /// their digests and the signature of the party that produced the result.
+    /// Retrieves the server key and public key of `key_gen_result` from `storage`, and checks
+    /// their digests against the digests in `key_gen_result`.
     ///
-    // TODO(zama-ai/kms-internal#2727)
+    /// The signature check accepts a valid signature from any server address this client
+    /// knows, and the signer is not returned. Thus the caller cannot tell which party signed.
+    // TODO(zama-ai/kms-internal#2727): could be refactoring to allow reuse to use internal client
     pub async fn retrieve_server_key_and_public_key<R: StorageReader>(
         &self,
         preproc_id: &RequestId,
