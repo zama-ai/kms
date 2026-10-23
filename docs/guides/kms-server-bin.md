@@ -186,7 +186,7 @@ chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
 runs before install, and before each upgrade while `kmsGenCertAndKeys.enabled`
 is `true`. That job writes the certificates the core loads into its config.
 Set `kmsGenCertAndKeys.enabled` to `true` for the upgrade, then set it back to
-`false`. From chart 1.9.7, the hook reads this release's core pod and pins the
+`false`. From chart 1.9.8, the hook reads this release's core pod and pins the
 job to that node before creating it. The party is down until the StatefulSet
 starts the core again. The job reports success also when step 1 failed, so
 step 2 is mandatory. See
