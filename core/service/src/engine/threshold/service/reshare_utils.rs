@@ -17,8 +17,25 @@ use crate::{
 use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::collections::{BTreeMap, HashMap};
-use tfhe::{ServerKey, xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
-use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use tfhe::{
+    ServerKey, conformance::ParameterSetConformant, xof_key_set::CompressedXofKeySet,
+    zk::CompactPkeCrs,
+};
+use threshold_execution::tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet};
+
+/// Checks that a compressed keyset conforms to `parameters`, including its dedicated OPRF key.
+///
+/// Returns an error if any TFHE conformance check fails.
+pub(crate) fn check_compressed_keyset_conformance(
+    keyset: &CompressedXofKeySet,
+    parameters: DKGParams,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        keyset.is_conformant(&parameters.to_tfhe_config()),
+        "Compressed keyset does not conform to the requested parameters"
+    );
+    Ok(())
+}
 
 /// Public-key representation selected by the validated digest fields of a reshare request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -711,6 +728,7 @@ mod tests {
     use crate::engine::context::{NodeInfo, SchemeDigests};
     use crate::engine::material_integrity::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::engine::public_material_sync::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
+    use crate::engine::threshold::service::reshare_utils::check_compressed_keyset_conformance;
     use crate::engine::threshold::service::reshare_utils::ensure_verified_reshare_public_bytes;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_crs_material;
@@ -1218,6 +1236,76 @@ mod tests {
             CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
                 .unwrap();
         compressed_keyset
+    }
+
+    /// Returns `keyset` without its dedicated OPRF key and keeps every other component.
+    fn without_oprf_key(keyset: CompressedXofKeySet) -> CompressedXofKeySet {
+        let (seed, public_key, server_key) = keyset.into_raw_parts();
+        let (
+            compute_key,
+            cpk_key_switch,
+            compression_key,
+            decompression_key,
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            rerandomization_key,
+            _oprf_key,
+            transciphering_key,
+            tag,
+        ) = server_key.into_raw_parts();
+        let server_key = tfhe::CompressedServerKey::from_raw_parts(
+            compute_key,
+            cpk_key_switch,
+            compression_key,
+            decompression_key,
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            rerandomization_key,
+            None,
+            transciphering_key,
+            tag,
+        );
+        CompressedXofKeySet::from_raw_parts(seed, public_key, server_key)
+    }
+
+    #[test]
+    fn compressed_keyset_conformance_checks_parameters() {
+        let mut rng = AesRng::seed_from_u64(2334);
+        let params = crate::consts::TEST_PARAM;
+        let keyset = generate_compressed_keyset(params, &RequestId::new_random(&mut rng));
+        check_compressed_keyset_conformance(&keyset, params).unwrap();
+
+        let mut wrong_pbs = params;
+        let mut pbs = params.classic_pbs();
+        pbs.lwe_dimension.0 += 1;
+        wrong_pbs.meta.compute_parameters = pbs.into();
+        let mut wrong_public_key = params;
+        wrong_public_key
+            .meta
+            .dedicated_compact_public_key_parameters
+            .as_mut()
+            .unwrap()
+            .pke_params
+            .encryption_lwe_dimension
+            .0 += 1;
+        let mut no_compression = params;
+        no_compression.meta.compression_parameters = None;
+        for mismatched_params in [wrong_pbs, wrong_public_key, no_compression] {
+            assert!(check_compressed_keyset_conformance(&keyset, mismatched_params).is_err());
+        }
+    }
+
+    #[test]
+    fn compressed_keyset_conformance_requires_oprf_key() {
+        let mut rng = AesRng::seed_from_u64(2334);
+        let params = crate::consts::TEST_PARAM;
+        let keyset = without_oprf_key(generate_compressed_keyset(
+            params,
+            &RequestId::new_random(&mut rng),
+        ));
+        assert!(!keyset.has_oprf_key());
+        let err = check_compressed_keyset_conformance(&keyset, params).unwrap_err();
+        assert!(err.to_string().contains("does not conform"), "{err}");
     }
 
     async fn setup_public_materials_test_compressed(

@@ -83,8 +83,8 @@ use crate::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
                 FheKeyDigestMode, VerifiedCrsMaterial, VerifiedPublicMaterial,
-                ensure_verified_reshare_public_bytes, get_verified_crs_material,
-                get_verified_fhe_public_materials,
+                check_compressed_keyset_conformance, ensure_verified_reshare_public_bytes,
+                get_verified_crs_material, get_verified_fhe_public_materials,
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
@@ -157,6 +157,8 @@ struct VerifiedKeyInfo {
     /// CompressedXofKeySet and PublicKey digests. They are verified against the stored public
     /// material and signed for the new epoch.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
+    /// Public-key representation that `key_digests` selects.
+    pub digest_mode: FheKeyDigestMode,
 }
 
 impl VerifiedKeyInfo {
@@ -342,7 +344,7 @@ fn verify_epoch_info(
                 })?;
             // Every party validates the same digest shape before role dispatch. Set 2 also
             // verifies the digest values against the stored public material.
-            FheKeyDigestMode::from_digests(&key_digests).map_err(|e| {
+            let digest_mode = FheKeyDigestMode::from_digests(&key_digests).map_err(|e| {
                 MetricedError::new(
                     OP_NEW_EPOCH,
                     Some(*epoch_id_as_request_id),
@@ -355,6 +357,7 @@ fn verify_epoch_info(
                 preproc_id,
                 key_parameters,
                 key_digests,
+                digest_mode,
             })
         })
         .try_collect()?;
@@ -536,8 +539,11 @@ impl<
         Ok(())
     }
 
-    /// Read the old keys, need ownership because
-    /// reshare zeroize it (although, probably a bit useless cause we don't want to delete it just now)
+    /// Returns owned private keysets whose ClassicPBS parameters match the request.
+    ///
+    /// When the request selects compressed material, the stored compressed keyset must also pass
+    /// [`check_compressed_keyset_conformance`]. Returns `InvalidArgument` if the key material is
+    /// unavailable or a check fails.
     async fn fetch_existing_private_keysets(
         &self,
         epoch_id_as_request_id: kms_grpc::RequestId,
@@ -559,6 +565,40 @@ impl<
                             tonic::Code::InvalidArgument,
                         )
                     })?;
+                if keys.private_keys.parameters != key_info.key_parameters.classic_pbs() {
+                    return Err(MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(epoch_id_as_request_id),
+                        anyhow::anyhow!(
+                            "ClassicPBS parameters for key {} in epoch {} do not match the requested parameters",
+                            key_info.key_id,
+                            verified_previous_epoch.epoch_id,
+                        ),
+                        tonic::Code::InvalidArgument,
+                    ));
+                }
+                // The request selects the representation even when storage retains both formats.
+                if key_info.digest_mode == FheKeyDigestMode::Compressed {
+                    keys.public_material
+                        .compressed_keyset()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Stored key material has no compressed keyset")
+                        })
+                        .and_then(|keyset| {
+                            check_compressed_keyset_conformance(&keyset, key_info.key_parameters)
+                        })
+                        .map_err(|e| {
+                            MetricedError::new(
+                                OP_NEW_EPOCH,
+                                Some(epoch_id_as_request_id),
+                                e.context(format!(
+                                    "Stored public material for key {} in epoch {} does not match the requested parameters",
+                                    key_info.key_id, verified_previous_epoch.epoch_id,
+                                )),
+                                tonic::Code::InvalidArgument,
+                            )
+                        })?;
+                }
                 let private_keyset = keys.private_keys.as_ref().clone();
                 let meta_data = keys.meta_data.clone();
                 Ok((private_keyset, meta_data))
@@ -566,6 +606,50 @@ impl<
 
         // Concurrently fetch the keys but collect them in order
         join_all(futures).await.into_iter().collect()
+    }
+
+    /// Returns the public material of each key, verified with [`get_verified_fhe_public_materials`].
+    ///
+    /// A compressed keyset must also pass [`check_compressed_keyset_conformance`], or the call
+    /// returns `InvalidArgument`. Uncompressed material skips the conformance check.
+    async fn fetch_verified_public_materials(
+        &self,
+        epoch_id_as_request_id: kms_grpc::RequestId,
+        verified_previous_epoch: &VerifiedPreviousEpochInfo,
+    ) -> Result<Vec<VerifiedPublicMaterial>, MetricedError> {
+        join_all(verified_previous_epoch.keys_info.iter().map(
+            |key_info| async {
+                let material = get_verified_fhe_public_materials(
+                    &self.crypto_storage,
+                    &epoch_id_as_request_id,
+                    &key_info.key_id,
+                    &verified_previous_epoch.context_id,
+                    &key_info.key_digests,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+                .await?;
+                // Uncompressed keys will be deprecated in favor of compressed keysets.
+                if let VerifiedPublicMaterial::Compressed { keyset, .. } = &material {
+                    check_compressed_keyset_conformance(keyset, key_info.key_parameters).map_err(
+                        |e| {
+                            MetricedError::new(
+                                OP_NEW_EPOCH,
+                                Some(epoch_id_as_request_id),
+                                e.context(format!(
+                                    "Public material for key {} in epoch {} does not match the requested parameters",
+                                    key_info.key_id, verified_previous_epoch.epoch_id,
+                                )),
+                                tonic::Code::InvalidArgument,
+                            )
+                        },
+                    )?;
+                }
+                Ok(material)
+            },
+        ))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<VerifiedPublicMaterial>, MetricedError>>()
     }
 
     async fn fetch_existing_crs_metadata(
@@ -1060,22 +1144,9 @@ impl<
     > {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let verified_fhe_public_materials = join_all(verified_previous_epoch.keys_info.iter().map(
-            |key_info| async {
-                get_verified_fhe_public_materials(
-                    &self.crypto_storage,
-                    &epoch_id_as_request_id,
-                    &key_info.key_id,
-                    &verified_previous_epoch.context_id,
-                    &key_info.key_digests,
-                    &RealReadOnlyS3StorageGetter {},
-                )
-                .await
-            },
-        ))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<VerifiedPublicMaterial>, MetricedError>>()?;
+        let verified_fhe_public_materials = self
+            .fetch_verified_public_materials(epoch_id_as_request_id, &verified_previous_epoch)
+            .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
@@ -1216,22 +1287,9 @@ impl<
     > {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let verified_fhe_public_materials = join_all(verified_previous_epoch.keys_info.iter().map(
-            |key_info| async {
-                get_verified_fhe_public_materials(
-                    &self.crypto_storage,
-                    &epoch_id_as_request_id,
-                    &key_info.key_id,
-                    &verified_previous_epoch.context_id,
-                    &key_info.key_digests,
-                    &RealReadOnlyS3StorageGetter {},
-                )
-                .await
-            },
-        ))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<VerifiedPublicMaterial>, MetricedError>>()?;
+        let verified_fhe_public_materials = self
+            .fetch_verified_public_materials(epoch_id_as_request_id, &verified_previous_epoch)
+            .await?;
 
         let keys = self
             .fetch_existing_private_keysets(epoch_id_as_request_id, &verified_previous_epoch)
@@ -3090,10 +3148,210 @@ pub(crate) mod tests {
                 key_id: *key_id,
                 preproc_id: *preproc_id,
                 key_parameters,
+                // Test digests can be incomplete, so only the compressed keyset digest selects
+                // the mode here.
+                digest_mode: if key_digests.contains_key(&PubDataType::CompressedXofKeySet) {
+                    FheKeyDigestMode::Compressed
+                } else {
+                    FheKeyDigestMode::Uncompressed
+                },
                 key_digests,
             }],
             crs_info,
         }
+    }
+
+    /// Asserts that a reshare fetcher rejected a parameter mismatch for `key_id` in `epoch_id`.
+    fn assert_parameter_mismatch(err: MetricedError, key_id: &RequestId, epoch_id: &EpochId) {
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let message = err.internal_err().to_string();
+        assert!(
+            message.contains("match the requested parameters"),
+            "{message}"
+        );
+        assert!(message.contains(&key_id.to_string()), "{message}");
+        assert!(message.contains(&epoch_id.to_string()), "{message}");
+    }
+
+    #[tokio::test]
+    async fn reshare_fetchers_check_compressed_parameters() {
+        let mut rng = AesRng::seed_from_u64(43);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let key_id = derive_request_id("compressed_reshare_conformance").unwrap();
+        let preproc_id = derive_request_id("compressed_reshare_conformance_preproc").unwrap();
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let request_id = RequestId::new_random(&mut rng);
+        let params = crate::consts::TEST_PARAM;
+        let keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
+        let keyset = keys.public_material.compressed_keyset().unwrap();
+        let public_key = keyset.decompress().into_raw_parts().0;
+        let compressed_digest = store_public_bytes(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            PubDataType::CompressedXofKeySet,
+            &serialize(&*keyset),
+        )
+        .await;
+        let public_key_digest = store_public_bytes(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            &serialize(&public_key),
+        )
+        .await;
+        store_previous_epoch_keys(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            &previous_epoch_id,
+            &keys,
+        )
+        .await;
+        let mut previous_epoch = make_verified_previous_epoch(
+            previous_epoch_id,
+            &key_id,
+            &preproc_id,
+            params,
+            HashMap::from([
+                (PubDataType::CompressedXofKeySet, compressed_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+            vec![],
+        );
+
+        let private = epoch_manager
+            .fetch_existing_private_keysets(request_id, &previous_epoch)
+            .await
+            .unwrap();
+        assert_eq!(private.len(), 1);
+        assert_eq!(private[0].0, *keys.private_keys);
+        assert_eq!(private[0].1, keys.meta_data);
+        let public = epoch_manager
+            .fetch_verified_public_materials(request_id, &previous_epoch)
+            .await
+            .unwrap();
+        assert_eq!(public.len(), 1);
+
+        let mut wrong_pbs = params;
+        let mut pbs = params.classic_pbs();
+        pbs.lwe_dimension.0 += 1;
+        wrong_pbs.meta.compute_parameters = pbs.into();
+        // These two keep the ClassicPBS parameters, so only the keyset conformance check
+        // rejects them.
+        let mut wrong_compression = params;
+        wrong_compression.meta.compression_parameters = None;
+        let mut wrong_public_key = params;
+        wrong_public_key
+            .meta
+            .dedicated_compact_public_key_parameters
+            .as_mut()
+            .unwrap()
+            .pke_params
+            .encryption_lwe_dimension
+            .0 += 1;
+        for mismatched_params in [wrong_pbs, wrong_compression, wrong_public_key] {
+            previous_epoch.keys_info[0].key_parameters = mismatched_params;
+            let private_err = epoch_manager
+                .fetch_existing_private_keysets(request_id, &previous_epoch)
+                .await
+                .unwrap_err();
+            assert_parameter_mismatch(private_err, &key_id, &previous_epoch_id);
+            let public_err = epoch_manager
+                .fetch_verified_public_materials(request_id, &previous_epoch)
+                .await
+                .unwrap_err();
+            assert_parameter_mismatch(public_err, &key_id, &previous_epoch_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn reshare_fetchers_accept_uncompressed_material_without_oprf() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let key_id = derive_request_id("uncompressed_reshare_conformance").unwrap();
+        let preproc_id = derive_request_id("uncompressed_reshare_conformance_preproc").unwrap();
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let request_id = RequestId::new_random(&mut rng);
+        let params = crate::consts::TEST_PARAM;
+        // The keys carry only the ClassicPBS parameters of `params`: no OPRF, compression or
+        // dedicated public-key parameters. The private ClassicPBS check passes, and uncompressed
+        // material skips the keyset conformance check.
+        let client_key = tfhe::ClientKey::generate(
+            tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+                .use_dedicated_oprf_key(false),
+        );
+        let server_key = client_key.generate_server_key();
+        assert!(!server_key.has_oprf_key());
+        let server_key_digest = store_public_bytes(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            PubDataType::ServerKey,
+            &serialize(&server_key),
+        )
+        .await;
+        let public_key_digest = store_public_bytes(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            PubDataType::PublicKey,
+            &serialize(&tfhe::CompactPublicKey::new(&client_key)),
+        )
+        .await;
+        let mut keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
+        keys.public_material = PublicKeyMaterial::new_uncompressed(
+            Arc::new(server_key.into_raw_parts().0),
+            None,
+            None,
+        );
+        let private_keys = Arc::make_mut(&mut keys.private_keys);
+        private_keys.oprf_secret_key_share = None;
+        private_keys.transciphering_secret_key_share = None;
+        store_previous_epoch_keys(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            &previous_epoch_id,
+            &keys,
+        )
+        .await;
+        let mut previous_epoch = make_verified_previous_epoch(
+            previous_epoch_id,
+            &key_id,
+            &preproc_id,
+            params,
+            HashMap::from([
+                (PubDataType::ServerKey, server_key_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+            vec![],
+        );
+
+        let private = epoch_manager
+            .fetch_existing_private_keysets(request_id, &previous_epoch)
+            .await
+            .unwrap();
+        assert_eq!(private.len(), 1);
+        assert_eq!(private[0].0, *keys.private_keys);
+        let public = epoch_manager
+            .fetch_verified_public_materials(request_id, &previous_epoch)
+            .await
+            .unwrap();
+        assert_eq!(public.len(), 1);
+        assert!(!public[0].has_oprf_key());
+
+        // A request for compressed material fails when this party stores only uncompressed keys.
+        let key_info = &mut previous_epoch.keys_info[0];
+        key_info.key_digests = HashMap::from([
+            (PubDataType::CompressedXofKeySet, vec![1]),
+            (PubDataType::PublicKey, vec![2]),
+        ]);
+        key_info.digest_mode = FheKeyDigestMode::Compressed;
+        let err = epoch_manager
+            .fetch_existing_private_keysets(request_id, &previous_epoch)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{:?}", err.internal_err()).contains("no compressed keyset"),
+            "{err:?}"
+        );
+        assert_parameter_mismatch(err, &key_id, &previous_epoch_id);
     }
 
     #[tokio::test]
