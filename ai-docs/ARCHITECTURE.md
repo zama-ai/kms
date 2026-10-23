@@ -42,6 +42,7 @@ Source of truth: [kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto)
 - Known IDs normally return `AlreadyExists`. Async decryption can redo failed attempts; sync decryption attaches to existing work/results and can redo failures.
 - Metastores are in memory. Connector persistence coordinates retries across core restarts; do not assume durable server-side deduplication.
 - Noise-flooded user decryption derives masks locally from epoch PRSS and ciphertext session IDs; it needs no network session. Public and bit-decomposition user decryption do.
+- After the local session closes, each outbound peer task gives every queued message half of `max_waiting_time_for_message_queue` to deliver, then drops it. A successful session can therefore discard final messages a slow peer still needs. See [get_closed_session_delivery_timeout](../core/threshold-networking/src/grpc/config.rs).
 - Centralized nodes have no epoch registry; epoch-scoped operations accept only the default epoch. Omitted epoch IDs default to it.
 - Startup selects the greatest epoch's metadata per key/CRS ID; epoch ordering is big-endian integer ordering.
 - Keygen/CRS persist only after generation succeeds. Abort updates request state without purging storage. Insecure keygen still requires a preprocessing ID.

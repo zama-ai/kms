@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::error::Error;
+use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -13,8 +14,8 @@ use crate::ggen::Status;
 use crate::ggen::gnetworking_client::GnetworkingClient;
 use crate::grpc::CoreToCoreNetworkConfig;
 use backoff::SystemClock;
+use backoff::backoff::Backoff;
 use backoff::exponential::ExponentialBackoff;
-use backoff::future::retry_notify;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::metrics::{self, NetworkDebugEvent};
@@ -25,6 +26,7 @@ use tokio::sync::{
     Notify, RwLock,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
+use tokio::time::{Instant, sleep, timeout_at};
 use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
@@ -57,6 +59,81 @@ pub trait SendingService: Send + Sync {
 
 type ChannelMap =
     HashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>;
+
+/// Retries a message, with a backoff wait between attempts.
+///
+/// Before each attempt and after each failure, the sender checks whether its session has closed.
+/// Once it notices closure, the message gets a limited time to finish. Retries and the waits
+/// between them use the same allowance; a retry does not reset it.
+/// Closing the session does not interrupt a send or a backoff wait that was already under way.
+async fn send_with_retry<T, F, Fut>(
+    mut send: F,
+    is_closed: impl Fn() -> bool,
+    mut backoff: impl Backoff,
+    drain_timeout: Duration,
+    peer: RoleKind,
+) -> Result<T, tonic::Status>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, tonic::Status>>,
+{
+    backoff.reset();
+    // Live sessions use only the backoff policy; the drain deadline starts once closure is observed.
+    let mut deadline = None;
+    let mut last_error = None;
+    let deadline_error = |last_error: Option<&tonic::Status>| {
+        let mut message = format!(
+            "message delivery stopped by the {drain_timeout:?} allowance after observing session closure"
+        );
+        if let Some(error) = last_error {
+            message.push_str(&format!("; last RPC error: {error}"));
+        }
+        tonic::Status::deadline_exceeded(message)
+    };
+    loop {
+        // Start the allowance once; retries must not extend it.
+        if deadline.is_none() && is_closed() {
+            deadline = Some(Instant::now() + drain_timeout);
+        }
+        let result = if let Some(deadline) = deadline {
+            // Backoff may have used up the time left for this message.
+            if Instant::now() >= deadline {
+                return Err(deadline_error(last_error.as_ref()));
+            }
+            // Give this attempt whatever remains of the allowance.
+            timeout_at(deadline, send())
+                .await
+                .map_err(|_| deadline_error(last_error.as_ref()))?
+        } else {
+            // The session is open, so this send has no drain deadline.
+            send().await
+        };
+        let error = match result {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        // The session may have closed during the failed RPC, before a drain deadline was set.
+        if deadline.is_none() && is_closed() {
+            deadline = Some(Instant::now() + drain_timeout);
+        }
+        // All gRPC errors are retryable, subject to the existing backoff policy.
+        let Some(delay) = backoff.next_backoff() else {
+            return Err(error);
+        };
+        // No retry can start within the remaining allowance if backoff consumes all of it.
+        if deadline.is_some_and(|deadline| Instant::now() + delay >= deadline) {
+            return Err(deadline_error(Some(&error)));
+        }
+        metrics::METRICS.increment_network_event(NetworkDebugEvent::SendRetry);
+        tracing::debug!(
+            "Network retry for message: {error:?} - Duration {:?} secs. Talking to {peer}.",
+            delay.as_secs()
+        );
+        // Keep the cause of failure in case the next attempt runs out of time.
+        last_error = Some(error);
+        sleep(delay).await;
+    }
+}
 
 /// Records peer completion and wakes receivers waiting for those peers.
 #[derive(Debug)]
@@ -232,6 +309,7 @@ impl GrpcSendingService {
         mut receiver: UnboundedReceiver<SendValueRequest>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
+        drain_timeout: Duration,
         other_role_kind: RoleKind,
         completed_parties: Arc<CompletedParties>,
     ) {
@@ -257,26 +335,15 @@ impl GrpcSendingService {
                     .send_value(value)
                     .await
                     .map(|inner| inner.into_inner())
-                    .map_err(|status| {
-                        // All errors are transient and retryable
-                        backoff::Error::Transient {
-                            err: status,
-                            retry_after: None,
-                        }
-                    })
             };
-
-            let on_network_fail = |e, duration: Duration| {
-                metrics::METRICS.increment_network_event(NetworkDebugEvent::SendRetry);
-                tracing::debug!(
-                    "Network retry for message: {e:?} - Duration {:?} secs. Talking to {other_role_kind}.",
-                    duration.as_secs()
-                );
-            };
-
-            // Single unified retry strategy
-            let res: Result<_, _> =
-                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            let res = send_with_retry(
+                send_fn,
+                || receiver.is_closed(),
+                exponential_backoff.clone(),
+                drain_timeout,
+                other_role_kind,
+            )
+            .await;
             match res {
                 Ok(send_response) => {
                     match send_response.status() {
@@ -374,12 +441,14 @@ impl SendingService for GrpcSendingService {
         // 4. Each session runs one sender task per peer. Track them to reveal tasks that accumulate
         // or fail to finish.
         let task_metrics = metrics::METRICS.track_network_sender_task();
+        let drain_timeout = self.config.get_closed_session_delivery_timeout();
         tokio::spawn(async move {
             let _task_metrics = task_metrics;
             Self::run_network_task(
                 receiver,
                 network_channel,
                 exponential_backoff,
+                drain_timeout,
                 other_role_kind,
                 aborted,
             )
@@ -427,10 +496,263 @@ impl SendingService for GrpcSendingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
+    use crate::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueResponse};
+    use backoff::backoff::{Constant, Stop, Zero};
     use bytes::Bytes;
     use futures_util::poll;
+    use std::cell::Cell;
+    use std::future::{pending, ready};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::role::Role;
+    use tokio::time::{sleep, timeout};
+
+    // Closing the session leaves queued messages a chance to reach the peer.
+    #[tokio::test(start_paused = true)]
+    async fn closed_send_can_deliver_within_deadline() {
+        let result = send_with_retry(
+            || ready(Ok::<_, tonic::Status>(())),
+            || true,
+            Zero {},
+            Duration::from_secs(10),
+            Role::indexed_from_one(1).get_role_kind(),
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    // The peer rejects the first send and accepts the retry. The session is open, so the zero allowance for delivery
+    // after closure must not prevent that retry.
+    #[tokio::test(start_paused = true)]
+    async fn live_send_retries_overload_without_drain_deadline() {
+        let attempts = Cell::new(0);
+        let result = send_with_retry(
+            || {
+                attempts.set(attempts.get() + 1);
+                ready(if attempts.get() == 1 {
+                    Err(tonic::Status::resource_exhausted("overloaded"))
+                } else {
+                    Ok(())
+                })
+            },
+            || false,
+            Zero {},
+            Duration::ZERO,
+            Role::indexed_from_one(1).get_role_kind(),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(attempts.get(), 2);
+    }
+
+    // If the normal retry policy gives up, the caller should see the peer's error.
+    #[tokio::test(start_paused = true)]
+    async fn retry_policy_exhaustion_preserves_rpc_error() {
+        let error = send_with_retry(
+            || {
+                ready(Err::<(), _>(tonic::Status::resource_exhausted(
+                    "overloaded",
+                )))
+            },
+            || false,
+            Stop {},
+            Duration::ZERO,
+            Role::indexed_from_one(1).get_role_kind(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+    }
+
+    // A send starts after the session has closed, but the peer never answers.
+    // The sender must give up when the message's time runs out.
+    #[tokio::test(start_paused = true)]
+    async fn closed_send_deadline_bounds_rpc() {
+        let delivery = send_with_retry(
+            pending::<Result<(), tonic::Status>>,
+            || true,
+            Zero {},
+            Duration::from_millis(20),
+            Role::indexed_from_one(1).get_role_kind(),
+        );
+        let error = timeout(Duration::from_secs(2), delivery)
+            .await
+            .expect("the drain deadline must bound an unresponsive RPC")
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::DeadlineExceeded);
+    }
+
+    // The peer keeps rejecting the message. Each retry uses up part of the same drain deadline; it must not buy the
+    // message more time.
+    #[tokio::test(start_paused = true)]
+    async fn closed_send_deadline_does_not_reset_on_retry() {
+        let delivery = send_with_retry(
+            || {
+                ready(Err::<(), _>(tonic::Status::resource_exhausted(
+                    "overloaded",
+                )))
+            },
+            || true,
+            Constant::new(Duration::from_millis(1)),
+            Duration::from_millis(20),
+            Role::indexed_from_one(1).get_role_kind(),
+        );
+        let error = timeout(Duration::from_secs(2), delivery)
+            .await
+            .expect("repeated rejections must not extend the drain deadline")
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::DeadlineExceeded);
+        assert!(error.message().contains("overloaded"));
+    }
+
+    // The session closes while a send is underway. That send gets to finish, even though there would be no time left
+    // for another attempt.
+    #[tokio::test(start_paused = true)]
+    async fn closure_during_successful_send_does_not_interrupt_it() {
+        let closed = Cell::new(false);
+        let result = send_with_retry(
+            || async {
+                closed.set(true);
+                sleep(Duration::from_millis(20)).await;
+                Ok(())
+            },
+            || closed.get(),
+            Zero {},
+            Duration::ZERO,
+            Role::indexed_from_one(1).get_role_kind(),
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    // The session closes during a failed send. The next retry would be too late, so the sender gives up immediately and
+    // reports why the send failed.
+    #[tokio::test(start_paused = true)]
+    async fn closure_during_failed_send_skips_backoff_beyond_deadline() {
+        let closed = Cell::new(false);
+        let delivery = send_with_retry(
+            || {
+                closed.set(true);
+                ready(Err::<(), _>(tonic::Status::resource_exhausted(
+                    "overloaded",
+                )))
+            },
+            || closed.get(),
+            Constant::new(Duration::from_secs(3600)),
+            Duration::from_secs(10),
+            Role::indexed_from_one(1).get_role_kind(),
+        );
+        tokio::pin!(delivery);
+        assert!(matches!(
+            poll!(&mut delivery),
+            std::task::Poll::Ready(Err(error)) if error.code() == tonic::Code::DeadlineExceeded
+        ));
+    }
+
+    // The session closes during backoff. Once the wait ends, the sender must notice session closure before trying
+    // again. A zero allowance rules out another attempt.
+    #[tokio::test(start_paused = true)]
+    async fn closure_during_backoff_is_checked_before_next_attempt() {
+        let closed = Cell::new(false);
+        let attempts = Cell::new(0);
+        let delivery = send_with_retry(
+            || {
+                attempts.set(attempts.get() + 1);
+                ready(Err::<(), _>(tonic::Status::unavailable("offline")))
+            },
+            || closed.get(),
+            Constant::new(Duration::from_millis(20)),
+            Duration::ZERO,
+            Role::indexed_from_one(1).get_role_kind(),
+        );
+        tokio::pin!(delivery);
+        // Let the first attempt fail and enter backoff before closing the session.
+        assert!(poll!(&mut delivery).is_pending());
+        closed.set(true);
+        let error = timeout(Duration::from_secs(2), delivery)
+            .await
+            .expect("closure must be checked after backoff")
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::DeadlineExceeded);
+        assert_eq!(attempts.get(), 1);
+    }
+
+    // Close the real sending channel with two messages queued. Failure to deliver the first message must not stop the
+    // sender from trying the second.
+    #[tokio::test]
+    async fn closed_network_task_attempts_each_queued_message() {
+        struct OverloadedPeer(Arc<AtomicUsize>);
+
+        #[tonic::async_trait]
+        impl Gnetworking for OverloadedPeer {
+            async fn send_value(
+                &self,
+                _: tonic::Request<SendValueRequest>,
+            ) -> Result<tonic::Response<SendValueResponse>, tonic::Status> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(tonic::Status::resource_exhausted("overloaded"))
+            }
+
+            async fn health_check(
+                &self,
+                _: tonic::Request<HealthCheckRequest>,
+            ) -> Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
+                unimplemented!()
+            }
+        }
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let incoming = futures_util::stream::unfold(listener, |listener| async {
+            let connection = listener.accept().await.map(|(stream, _)| stream);
+            Some((connection, listener))
+        });
+        let server = tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(GnetworkingServer::new(OverloadedPeer(Arc::clone(
+                    &attempts,
+                ))))
+                .serve_with_incoming(incoming),
+        );
+        let channel = Channel::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect_timeout(Duration::from_secs(2))
+            .connect()
+            .await
+            .unwrap();
+        let client = GnetworkingClient::with_interceptor(channel, ContextPropagator);
+        let (sender, receiver) = unbounded_channel();
+        sender.send(SendValueRequest::default()).unwrap();
+        sender.send(SendValueRequest::default()).unwrap();
+        drop(sender);
+
+        // A live sender would wait a minute before retrying. A closed sender abandons the
+        // message instead of waiting, and gives the next queued message its own delivery attempt.
+        let backoff = ExponentialBackoff {
+            initial_interval: Duration::from_secs(60),
+            randomization_factor: 0.0,
+            max_elapsed_time: Some(Duration::from_secs(300)),
+            ..Default::default()
+        };
+        let result = timeout(
+            Duration::from_secs(5),
+            GrpcSendingService::run_network_task(
+                receiver,
+                client,
+                backoff,
+                CoreToCoreNetworkConfig::default().get_closed_session_delivery_timeout(),
+                Role::indexed_from_one(1).get_role_kind(),
+                Arc::new(CompletedParties::default()),
+            ),
+        )
+        .await;
+        server.abort();
+        let _ = server.await;
+        result.expect("session closure must prevent the minute-long backoff");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
 
     #[tokio::test]
     async fn completion_wakes_waiters_for_the_completed_peer() {
@@ -550,6 +872,7 @@ mod tests {
             receiver,
             client,
             backoff,
+            CoreToCoreNetworkConfig::default().get_closed_session_delivery_timeout(),
             role_kind,
             Arc::clone(&completed_parties),
         ));
