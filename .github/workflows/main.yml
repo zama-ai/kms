@@ -105,14 +105,30 @@ jobs:
               - 'docs/**'
 
   ############################################################################
+  # Test material shared by the Rust, Wasm and core-client nightly pipelines.
+  ############################################################################
+  generate-test-material:
+    name: main/generate-test-material
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    uses: ./.github/workflows/generate-test-material.yml
+
+  ############################################################################
   # Rust testing pipeline
-  # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
-  # is intentional while we validate the shared rust cache, so every run
-  # exercises and warms it. Tighten with a change filter once that's settled.
+  # Runs on every PR/push after material generation. It exercises and warms
+  # the shared rust cache even when no Rust paths changed.
   ############################################################################
   rust-testing:
     name: main/rust-testing
+    needs: [generate-test-material]
     uses: ./.github/workflows/rust-testing.yml
+    with:
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
@@ -189,13 +205,14 @@ jobs:
       pull-requests: write # Required to create comments on pull requests
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
-    needs: check-changes
+    needs: [check-changes, generate-test-material]
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-nightly-tests == 'true')
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms-core-client'
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
       # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
       # and the docker-tls test which has its own dedicated job.
       # nightly_* and nightly_full_gen_tests_* are intentionally included here.
@@ -333,10 +350,13 @@ jobs:
       contents: read # Required to checkout repository code
     needs:
       - check-changes
+      - generate-test-material
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
+    with:
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     secrets: inherit
 
   ############################################################################
@@ -351,6 +371,7 @@ jobs:
     if: always() && github.event_name == 'schedule'
     needs:
       - check-changes
+      - generate-test-material
       - rust-testing
       - check-docs
       - test-core-client-nightly
