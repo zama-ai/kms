@@ -1126,17 +1126,28 @@ where
         .await
     }
 
-    pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
+    /// Read the context stored under `context_id`, or `None` if no context is stored under it.
+    ///
+    /// A failure to check or to read the storage is an error, so that it is never taken for an
+    /// absent context.
+    pub async fn read_context_info(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<Option<ContextInfo>> {
         let priv_storage = self.private_storage.lock().await;
+        let data_type = PrivDataType::ContextInfo.to_string();
+        if !data_exists(&*priv_storage, &(*context_id).into(), &data_type).await? {
+            return Ok(None);
+        }
         let res = read_context_at_id(&*priv_storage, context_id).await?;
         log_storage_success_optional_variant(
             context_id,
             priv_storage.info(),
-            &PrivDataType::ContextInfo.to_string(),
+            &data_type,
             false,
             None,
         );
-        Ok(res)
+        Ok(Some(res))
     }
 
     /// Read all context info entries from storage.
