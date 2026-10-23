@@ -178,17 +178,16 @@ In the `kms-core` Helm chart, a node without an enclave runs `kms-gen-keys` in
 an init container at each pod start. On those nodes, step 1 runs after the
 upgrade without operator action.
 
-An enclave node does not do step 1 at boot.
+An enclave node does not run `kms-gen-keys` on a normal boot.
 [`init_enclave.sh`](../../docker/core/service/init_enclave.sh) runs
 `kms-gen-keys` with the config that the parent sends. At a normal boot, this is
-the `kms-server` config, which `kms-gen-keys` rejects. In enclave mode, the
-chart sends the `kms-gen-keys` config in the `kmsGenCertAndKeys` job, which
-runs before install, and before each upgrade while `kmsGenCertAndKeys.enabled`
-is `true`. Set `kmsGenCertAndKeys.enabled` to `true` for the upgrade, so that
-this job does step 1. Then set it back to `false`. From chart 1.9.6, the
-job is pinned to this release's core node, preempts that pod, and reuses its enclave slot. The party is down
-until the StatefulSet starts the core again. The job reports success also when step 1 failed, so step 2
-is mandatory. See
+the `kms-server` config, which `kms-gen-keys` rejects. From chart 1.9.7, set
+`kmsGenCertAndKeys.enabled` to `true` for the upgrade. The core pod then serves
+the `kms-gen-keys` config for one enclave boot, and serves the `kms-server`
+config for the next boot. The party is down until that second boot is Ready.
+Set `kmsGenCertAndKeys.enabled` back to `false` afterwards. The core logs the
+keygen run on the `kms-core-enclave-logger` container. The pod still starts the
+server when key generation failed, so step 2 is mandatory. See
 [Upgrade from v0.14 to v0.15](../operations/upgrade-0.14-to-0.15.md#check-the-result)
 for the step 2 checks on an enclave node.
 
