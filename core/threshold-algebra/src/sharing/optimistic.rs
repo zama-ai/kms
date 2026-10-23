@@ -147,7 +147,32 @@ pub fn reconstruct_optimistic<Z: ErrorCorrect>(
     hints: &ReconstructionHints<Z>,
     min_shares: usize,
 ) -> Option<Z> {
-    let optimistic = hints.optimistic()?;
+    match reconstruct_optimistic_outcome(sharing, hints, min_shares) {
+        OptimisticOutcome::Hit(secret) => Some(secret),
+        OptimisticOutcome::Declined | OptimisticOutcome::Inconsistent => None,
+    }
+}
+
+/// Result of the eligibility and polynomial-consistency checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptimisticOutcome<Z> {
+    /// Every share agrees with the reconstructed polynomial.
+    Hit(Z),
+    /// Share count, owners, or available hints prevent an optimistic attempt.
+    Declined,
+    /// Eligible shares disagree with the reconstructed polynomial.
+    Inconsistent,
+}
+
+/// Returns the same result as [`reconstruct_optimistic`], with distinct reasons for rejection.
+pub fn reconstruct_optimistic_outcome<Z: ErrorCorrect>(
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+    min_shares: usize,
+) -> OptimisticOutcome<Z> {
+    let Some(optimistic) = hints.optimistic() else {
+        return OptimisticOutcome::Declined;
+    };
     let eligible = sharing.shares.len() >= min_shares.max(optimistic.interpolation)
         && sharing.shares.len() == hints.parties.len()
         && sharing
@@ -155,10 +180,12 @@ pub fn reconstruct_optimistic<Z: ErrorCorrect>(
             .iter()
             .zip(&hints.parties)
             .all(|(share, party)| share.owner() == *party);
-    if eligible {
-        optimistic.reconstruct(sharing)
-    } else {
-        None
+    if !eligible {
+        return OptimisticOutcome::Declined;
+    }
+    match optimistic.reconstruct(sharing) {
+        Some(secret) => OptimisticOutcome::Hit(secret),
+        None => OptimisticOutcome::Inconsistent,
     }
 }
 
@@ -208,6 +235,33 @@ mod tests {
             wrong = Z::sample(rng);
         }
         sharing.shares[index] = Share::new(share.owner(), wrong);
+    }
+
+    #[test]
+    fn outcome_distinguishes_eligibility_and_inconsistent_shares() {
+        let mut rng = StdRng::seed_from_u64(92);
+        let (secrets, mut values) = sharings::<ResiduePolyF4Z128>(&mut rng, 1, 7, 2);
+        let sharing = &mut values[0];
+        let hints = ReconstructionHints::new(sharing, 2).unwrap();
+        assert_eq!(
+            reconstruct_optimistic_outcome(sharing, &hints, 3),
+            OptimisticOutcome::Hit(secrets[0])
+        );
+        assert_eq!(
+            reconstruct_optimistic_outcome(sharing, &hints, 8),
+            OptimisticOutcome::Declined
+        );
+        corrupt(&mut rng, sharing, 0);
+        assert_eq!(
+            reconstruct_optimistic_outcome(sharing, &hints, 3),
+            OptimisticOutcome::Inconsistent
+        );
+        assert_eq!(reconstruct_optimistic(sharing, &hints, 3), None);
+        sharing.shares.pop();
+        assert_eq!(
+            reconstruct_optimistic_outcome(sharing, &hints, 3),
+            OptimisticOutcome::Declined
+        );
     }
 
     fn check_ring<Z: ErrorCorrect + Sample>() {

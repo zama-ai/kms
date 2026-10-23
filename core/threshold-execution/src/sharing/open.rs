@@ -18,14 +18,14 @@ use crate::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
             send_to_all,
         },
-        constants::ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
+        constants::{OPTIMISTIC_RECONSTRUCTION, ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK},
         runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
 };
 use algebra::{
     error_correction::ReconstructionHints,
     sharing::{
-        optimistic::reconstruct_optimistic,
+        optimistic::{OptimisticOutcome, reconstruct_optimistic_outcome},
         shamir::{
             ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
             reconstruct_w_errors_sync,
@@ -35,6 +35,7 @@ use algebra::{
     structure_traits::ErrorCorrect,
 };
 use error_utils::anyhow_error_and_log;
+use observability::diag_metrics::{DIAG, optimistic_outcome};
 use thread_handles::spawn_compute_bound;
 use threshold_types::{
     network::NetworkMode,
@@ -450,7 +451,8 @@ type ReconsFunc<Z> = fn(
 
 /// Reconstructs a batch of sharings. Each sharing takes
 /// the optimistic path first and goes to `fallback`, the error-correcting
-/// decoder, in the same task if needed. `optimistic_min_shares` is the number of shares a sharing must have
+/// decoder, in the same task if needed. `MPC_OPTIMISTIC_RECONSTRUCTION=false` bypasses the optimistic path.
+/// `optimistic_min_shares` is the number of shares a sharing must have
 /// for the optimistic result to be accepted, i.e. the bar the fallback applies.
 ///
 /// The function returns on the first failure encountered during reconstruction.
@@ -467,10 +469,58 @@ pub fn reconstruct_batch<Z: ErrorCorrect, F>(
 where
     F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
 {
+    reconstruct_batch_counted(
+        "unspecified",
+        sharings,
+        hints,
+        optimistic_min_shares,
+        par_chunk,
+        fallback,
+    )
+}
+
+/// Records optimistic outcomes at `site`, with one aggregate update per Rayon partition.
+pub(crate) fn reconstruct_batch_counted<Z: ErrorCorrect, F>(
+    site: &'static str,
+    sharings: &[ShamirSharings<Z>],
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Option<Vec<Z>>
+where
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    reconstruct_batch_in_mode(
+        ReconstructionMode::from_site(site),
+        sharings,
+        hints,
+        optimistic_min_shares,
+        par_chunk,
+        fallback,
+    )
+}
+
+fn reconstruct_batch_in_mode<Z: ErrorCorrect, F>(
+    mode: ReconstructionMode,
+    sharings: &[ShamirSharings<Z>],
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Option<Vec<Z>>
+where
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
     sharings
         .par_iter()
         .with_min_len(par_chunk.max(1))
-        .map(|sharing| reconstruct_one(sharing, hints, optimistic_min_shares, &fallback))
+        .map_init(
+            || OutcomeTally::new(mode),
+            |tally, sharing| {
+                reconstruct_one(sharing, hints, optimistic_min_shares, &fallback, tally)
+            },
+        )
         .collect()
 }
 
@@ -489,11 +539,116 @@ where
     B: Fn(usize) -> ShamirSharings<Z> + Sync,
     F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
 {
+    reconstruct_batch_with_counted(
+        "unspecified",
+        len,
+        build,
+        hints,
+        optimistic_min_shares,
+        par_chunk,
+        fallback,
+    )
+}
+
+/// Counts outcomes for sharings built on demand, preserving indexed output order.
+pub(crate) fn reconstruct_batch_with_counted<Z: ErrorCorrect, B, F>(
+    site: &'static str,
+    len: usize,
+    build: B,
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Vec<Option<Z>>
+where
+    B: Fn(usize) -> ShamirSharings<Z> + Sync,
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
+    reconstruct_batch_with_in_mode(
+        ReconstructionMode::from_site(site),
+        len,
+        build,
+        hints,
+        optimistic_min_shares,
+        par_chunk,
+        fallback,
+    )
+}
+
+fn reconstruct_batch_with_in_mode<Z: ErrorCorrect, B, F>(
+    mode: ReconstructionMode,
+    len: usize,
+    build: B,
+    hints: &ReconstructionHints<Z>,
+    optimistic_min_shares: usize,
+    par_chunk: usize,
+    fallback: F,
+) -> Vec<Option<Z>>
+where
+    B: Fn(usize) -> ShamirSharings<Z> + Sync,
+    F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
+{
     (0..len)
         .into_par_iter()
         .with_min_len(par_chunk.max(1))
-        .map(|i| reconstruct_one(&build(i), hints, optimistic_min_shares, &fallback))
+        .map_init(
+            || OutcomeTally::new(mode),
+            |tally, i| reconstruct_one(&build(i), hints, optimistic_min_shares, &fallback, tally),
+        )
         .collect()
+}
+
+#[derive(Clone, Copy)]
+struct ReconstructionMode {
+    site: &'static str,
+    optimistic: bool,
+}
+
+impl ReconstructionMode {
+    fn from_site(site: &'static str) -> Self {
+        Self {
+            site,
+            optimistic: *OPTIMISTIC_RECONSTRUCTION,
+        }
+    }
+}
+
+/// Local to a Rayon partition; no shared atomic operation occurs for an individual sharing.
+struct OutcomeTally {
+    mode: ReconstructionMode,
+    hit: u64,
+    declined: u64,
+    inconsistent: u64,
+    failed: u64,
+    disabled: u64,
+}
+
+impl OutcomeTally {
+    fn new(mode: ReconstructionMode) -> Self {
+        Self {
+            mode,
+            hit: 0,
+            declined: 0,
+            inconsistent: 0,
+            failed: 0,
+            disabled: 0,
+        }
+    }
+}
+
+impl Drop for OutcomeTally {
+    fn drop(&mut self) {
+        // Flush also when Option::collect stops early after another partition fails.
+        for (outcome, count) in [
+            (optimistic_outcome::HIT, self.hit),
+            (optimistic_outcome::DECLINED, self.declined),
+            (optimistic_outcome::INCONSISTENT, self.inconsistent),
+            (optimistic_outcome::FAILED, self.failed),
+            (optimistic_outcome::DISABLED, self.disabled),
+        ] {
+            DIAG.increment_optimistic_reconstruct(self.mode.site, outcome, count);
+        }
+    }
 }
 
 /// One sharing of [`reconstruct_batch`]: the optimistic path, then `fallback` if it declined.
@@ -502,11 +657,28 @@ fn reconstruct_one<Z: ErrorCorrect, F>(
     hints: &ReconstructionHints<Z>,
     optimistic_min_shares: usize,
     fallback: &F,
+    tally: &mut OutcomeTally,
 ) -> Option<Z>
 where
     F: Fn(&ShamirSharings<Z>) -> Option<Z> + Sync,
 {
-    reconstruct_optimistic(sharing, hints, optimistic_min_shares).or_else(|| fallback(sharing))
+    if tally.mode.optimistic {
+        match reconstruct_optimistic_outcome(sharing, hints, optimistic_min_shares) {
+            OptimisticOutcome::Hit(secret) => {
+                tally.hit += 1;
+                return Some(secret);
+            }
+            OptimisticOutcome::Declined => tally.declined += 1,
+            OptimisticOutcome::Inconsistent => tally.inconsistent += 1,
+        }
+    } else {
+        tally.disabled += 1;
+    }
+    let result = fallback(sharing);
+    if result.is_none() {
+        tally.failed += 1;
+    }
+    result
 }
 
 /// Helper function of robust reconstructions which collects the shares and tries to reconstruct.
@@ -632,7 +804,8 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
                 // other tasks.
-                let result: Option<Vec<_>> = reconstruct_batch(
+                let result: Option<Vec<_>> = reconstruct_batch_counted(
+                    "robust_open",
                     &locked_sharings,
                     &hints,
                     min_actual_shares,
@@ -1279,6 +1452,146 @@ pub(crate) mod test {
             MaliciousRobustOpenLie::default(),
         )
         .await;
+    }
+
+    #[test]
+    fn test_reconstruct_modes_match_with_corruption_and_erasures() {
+        use super::{
+            ReconstructionMode, reconstruct_batch_in_mode, reconstruct_batch_with_in_mode,
+        };
+        use algebra::error_correction::ReconstructionHints;
+        use algebra::sharing::{shamir::RevealOp, share::Share};
+        use algebra::structure_traits::One;
+
+        type Z = ResiduePolyF4Z128;
+        let mut rng = AesRng::seed_from_u64(192);
+        for degree in [4, 8] {
+            for (erased, errors) in [(0, 0), (0, 1), (2, 0), (2, 1)] {
+                let secrets: Vec<_> = (0..5).map(|_| Z::sample(&mut rng)).collect();
+                let sharings: Vec<_> = secrets
+                    .iter()
+                    .map(|secret| {
+                        let mut sharing =
+                            ShamirSharings::share(&mut rng, *secret, 13, degree).unwrap();
+                        sharing.shares.truncate(13 - erased);
+                        for share in sharing.shares.iter_mut().take(errors) {
+                            *share = Share::new(share.owner(), share.value() + Z::ONE);
+                        }
+                        sharing
+                    })
+                    .collect();
+                let hints = ReconstructionHints::new(&sharings[0], degree).unwrap();
+                let max_errors = (13 - erased - (degree + 1)) / 2;
+                let fallback = |sharing: &ShamirSharings<Z>| {
+                    sharing
+                        .error_reconstruct_with_hints(degree, max_errors, &hints)
+                        .ok()
+                };
+                for optimistic in [false, true] {
+                    let mode = ReconstructionMode {
+                        site: "unspecified",
+                        optimistic,
+                    };
+                    for chunk in [1, 4, 100] {
+                        assert_eq!(
+                            reconstruct_batch_in_mode(
+                                mode,
+                                &sharings,
+                                &hints,
+                                degree + 1,
+                                chunk,
+                                fallback
+                            ),
+                            Some(secrets.clone())
+                        );
+                        assert_eq!(
+                            reconstruct_batch_with_in_mode(
+                                mode,
+                                sharings.len(),
+                                |i| sharings[i].clone(),
+                                &hints,
+                                degree + 1,
+                                chunk,
+                                fallback
+                            ),
+                            secrets.iter().copied().map(Some).collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reconstruct_mode_counts_disabled_and_fallback_outcomes() {
+        use super::{OutcomeTally, ReconstructionMode, reconstruct_one};
+        use algebra::error_correction::ReconstructionHints;
+        use algebra::sharing::{shamir::RevealOp, share::Share};
+        use algebra::structure_traits::One;
+
+        type Z = ResiduePolyF4Z128;
+        let mut rng = AesRng::seed_from_u64(193);
+        let secret = Z::sample(&mut rng);
+        let sharing = ShamirSharings::share(&mut rng, secret, 7, 2).unwrap();
+        let hints = ReconstructionHints::new(&sharing, 2).unwrap();
+        let mut enabled = OutcomeTally::new(ReconstructionMode {
+            site: "unspecified",
+            optimistic: true,
+        });
+        assert_eq!(
+            reconstruct_one(
+                &sharing,
+                &hints,
+                3,
+                &|_| panic!("honest sharing must use the fast path"),
+                &mut enabled
+            ),
+            Some(secret)
+        );
+        let mut corrupted = sharing.clone();
+        let first = &mut corrupted.shares[0];
+        *first = Share::new(first.owner(), first.value() + Z::ONE);
+        let fallback =
+            |sharing: &ShamirSharings<Z>| sharing.error_reconstruct_with_hints(2, 2, &hints).ok();
+        assert_eq!(
+            reconstruct_one(&corrupted, &hints, 3, &fallback, &mut enabled),
+            Some(secret)
+        );
+        assert_eq!(
+            reconstruct_one(&sharing, &hints, 8, &fallback, &mut enabled),
+            Some(secret)
+        );
+        assert_eq!(
+            (
+                enabled.hit,
+                enabled.inconsistent,
+                enabled.declined,
+                enabled.disabled
+            ),
+            (1, 1, 1, 0)
+        );
+
+        let mut disabled = OutcomeTally::new(ReconstructionMode {
+            site: "unspecified",
+            optimistic: false,
+        });
+        assert_eq!(
+            reconstruct_one(&sharing, &hints, 3, &fallback, &mut disabled),
+            Some(secret)
+        );
+        assert_eq!(
+            reconstruct_one(&sharing, &hints, 3, &|_| None, &mut disabled),
+            None
+        );
+        assert_eq!(
+            (
+                disabled.disabled,
+                disabled.failed,
+                disabled.hit,
+                disabled.declined
+            ),
+            (2, 1, 0, 0)
+        );
     }
 
     /// The short-circuiting batch succeeds only when every sharing reconstructs. The eager batch retains

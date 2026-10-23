@@ -93,6 +93,11 @@ cfg_if::cfg_if! {
         pub(crate) static DKG_PRSS_PIPELINE: std::sync::LazyLock<bool> =
             std::sync::LazyLock::new(|| env_bool("MPC_DKG_PRSS_PIPELINE", false));
 
+        /// Try optimistic reconstruction before the decoder. Set false for a same-binary control.
+        /// Env: `MPC_OPTIMISTIC_RECONSTRUCTION` (default true).
+        pub(crate) static OPTIMISTIC_RECONSTRUCTION: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| env_bool("MPC_OPTIMISTIC_RECONSTRUCTION", true));
+
         /// Amount of triples generated in one batch by the orchestrator.
         /// Env: `MPC_DKG_BATCH_SIZE_TRIPLES` (default 10000).
         pub(crate) static BATCH_SIZE_TRIPLES: std::sync::LazyLock<usize> =

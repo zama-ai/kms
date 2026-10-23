@@ -751,6 +751,8 @@ The runner verifies every party's startup settings and records image identities 
 It closes the measurement window before restarting the cores and rejects process resets or fleet changes.
 Producer counters report completed bits and triples; phase timers report elapsed session time, including scheduler delays.
 Nested detail timers separate compute queue delay and echo processing without changing the protocol.
+`MPC_OPTIMISTIC_RECONSTRUCTION=0` provides a same-binary decoder control; the default keeps optimistic reconstruction enabled.
+The control retains prepared hints and batch scheduling. Partition-local outcome counts distinguish disabled calls from unsuccessful optimistic attempts.
 The bandwidth benchmark counts acknowledged payload bytes and uses one interval across its sessions, including setup.
 Its aggregate log marks incomplete runs. Its duration field rounds that common interval up to whole seconds.
 

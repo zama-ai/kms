@@ -6,7 +6,10 @@
 //! [`crate::metrics::CoreMetrics`] so that the bench instrumentation can be reviewed, kept or
 //! dropped as one unit.
 //!
-//! Series (all cheap: atomics, no allocation on the hot path):
+//! These metrics add timing, synchronization, and label-lookup overhead. Compare identical
+//! instrumentation in both arms and measure its overhead before attributing small differences.
+//!
+//! Series:
 //!
 //! - `kms_dkg_phase_duration_microseconds_total{phase}` and
 //!   `kms_dkg_phase_observations_total{phase}` — cumulative wall time and count of each phase of
@@ -14,7 +17,8 @@
 //!   queue and scheduler delays; they do not measure CPU consumption or a critical path.
 //! - `kms_optimistic_reconstruct_total{site,outcome}` — whether the optimistic Shamir
 //!   reconstruction was taken (`hit`), declined on its eligibility check (`declined`), found the
-//!   shares inconsistent (`inconsistent`), or the decoder also failed (`failed`).
+//!   shares inconsistent (`inconsistent`), or the decoder also failed (`failed`). `disabled`
+//!   counts values sent directly to the decoder by the runtime control.
 //! - `kms_c2c_send_rpc_duration_ms{size_bucket}` — histogram of the core-to-core `send_value`
 //!   RPC, from dequeue by the sender task to the peer's ack, by message size.
 //! - `kms_c2c_sender_queued_messages` — messages currently waiting in the per-(session, peer)
@@ -98,6 +102,8 @@ pub mod optimistic_outcome {
     pub const DECLINED: &str = "declined";
     pub const INCONSISTENT: &str = "inconsistent";
     pub const FAILED: &str = "failed";
+    /// The runtime control bypassed the optimistic path.
+    pub const DISABLED: &str = "disabled";
 }
 
 /// Buckets (ms) for the core-to-core RPC histogram: from sub-millisecond acks of hash-sized
@@ -196,6 +202,11 @@ impl DiagMetrics {
         registry
             .register(Box::new(optimistic_reconstruct_counter.clone()))
             .expect("failed to register optimistic reconstruct counter");
+        for site in ["robust_open", "d_values", "unspecified"] {
+            for outcome in ["hit", "declined", "inconsistent", "failed", "disabled"] {
+                optimistic_reconstruct_counter.with_label_values(&[site, outcome]);
+            }
+        }
 
         let c2c_send_rpc_histogram = HistogramVec::new(
             hist_opts(
@@ -633,6 +644,7 @@ mod tests {
             ("thread_pool_cpu_seconds_total", 3),
             ("tcp_segs_total", 3),
             ("net_iface_dropped_total", 1),
+            ("optimistic_reconstruct_total", 15),
         ] {
             let family = families
                 .iter()
@@ -640,10 +652,5 @@ mod tests {
                 .unwrap();
             assert_eq!(family.get_metric().len(), expected, "{suffix}");
         }
-        assert!(
-            !families
-                .iter()
-                .any(|family| family.name().ends_with("optimistic_reconstruct_total"))
-        );
     }
 }

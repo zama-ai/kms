@@ -12,7 +12,7 @@ use crate::constants::DKG_PRSS_PIPELINE;
 use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
-use crate::sharing::open::reconstruct_batch_with;
+use crate::sharing::open::reconstruct_batch_with_counted;
 use crate::{
     communication::broadcast::Broadcast, network_value::BroadcastValue, online::triple::Triple,
     runtime::sessions::small_session::SmallSessionHandles,
@@ -518,10 +518,11 @@ where
     // Reconstruct the `amount` values in parallel: value `i` is reconstructed
     // from share `i` of every party, indexed directly out of the kept per-party
     // vectors. Each sharing is built by the Rayon task that reconstructs it and
-    // dropped right after (see `reconstruct_batch_with`): the optimistic path
+    // dropped right after (see `reconstruct_batch_with_counted`): the optimistic path
     // settles the values whose shares all agree, the decoder the rest.
     spawn_compute_bound(move || {
-        reconstruct_batch_with(
+        reconstruct_batch_with_counted(
+            "d_values",
             amount,
             |i| {
                 let shares = party_vectors
