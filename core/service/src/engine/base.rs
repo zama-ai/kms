@@ -1880,6 +1880,7 @@ pub(crate) mod tests {
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::{
         Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
@@ -1988,7 +1989,7 @@ pub(crate) mod tests {
             vec![SigningSchemeType::Ecdsa256k1],
             vec![SigningSchemeType::Ed25519],
             vec![SigningSchemeType::MlDsa65],
-            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+            ECDSA_AND_MLDSA65.to_vec(),
             vec![
                 SigningSchemeType::Ecdsa256k1,
                 SigningSchemeType::Ed25519,
@@ -2211,11 +2212,10 @@ pub(crate) mod tests {
         let server_key_digest = vec![0xAAu8; 32];
         let public_key_digest = vec![0xBBu8; 32];
         let extra_data = vec![0x09u8, 0x08];
-        let schemes = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         let meta = super::compute_info_standard_keygen_from_digests(
             &sk,
-            &schemes,
+            &ECDSA_AND_MLDSA65,
             &prep_id,
             &key_id,
             server_key_digest.clone(),

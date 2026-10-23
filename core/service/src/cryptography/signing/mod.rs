@@ -570,6 +570,10 @@ pub mod test_support {
     use crate::cryptography::signing::seed::RootSigningSeed;
     use rand::RngCore;
 
+    /// A classical and a post-quantum scheme, for tests that sign under more than one scheme.
+    pub const ECDSA_AND_MLDSA65: [SigningSchemeType; 2] =
+        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
     /// 32 bytes drawn from `rng`, for a backend that takes its key material as a seed.
     pub fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
         let mut s = [0u8; 32];
@@ -627,7 +631,7 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{random_seed, seeded_identity};
+    use super::test_support::{ECDSA_AND_MLDSA65, random_seed, seeded_identity};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -850,7 +854,7 @@ mod tests {
         let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
         assert_eq!(
             SigningSchemeType::resolve_requested(&[ecdsa, mldsa65]).unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
+            ECDSA_AND_MLDSA65.to_vec()
         );
 
         // Duplicates are removed while preserving first-seen order.

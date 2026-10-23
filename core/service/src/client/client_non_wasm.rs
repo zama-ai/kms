@@ -194,6 +194,7 @@ async fn read_all_verf_keys<S: StorageReader>(storage: &S) -> anyhow::Result<Opt
 
 #[cfg(test)]
 mod tests {
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use super::*;
     use crate::cryptography::signatures::{
         NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
@@ -354,7 +355,7 @@ mod tests {
         let client = client_requesting(
             &identity,
             true,
-            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+            &ECDSA_AND_MLDSA65,
         );
 
         let err = verify_with_legacy(
@@ -456,7 +457,7 @@ mod tests {
     #[test]
     fn set_signing_schemes_needs_a_key_for_every_non_ecdsa_scheme() {
         let identity = seeded_identity(21);
-        let composite = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let composite = ECDSA_AND_MLDSA65;
 
         client_for(&identity, &[])
             .set_signing_schemes(&[SigningSchemeType::Ecdsa256k1])
@@ -547,7 +548,7 @@ mod tests {
     fn mixed_party_entries_are_rejected() {
         let identity = seeded_identity(8);
         let other = seeded_identity(9);
-        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let requested = ECDSA_AND_MLDSA65;
         let client = client_requesting(&identity, true, &requested);
 
         // Both lists are signed under the whole requested set, so what is left
@@ -565,7 +566,7 @@ mod tests {
     fn requested_schemes_cannot_be_stripped() {
         let identity = seeded_identity(10);
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let composite = ECDSA_AND_MLDSA65.to_vec();
         // A current node always sends the legacy external signature alongside the
         // list, so every response here carries it.
         let legacy = legacy_external_signature(&identity);

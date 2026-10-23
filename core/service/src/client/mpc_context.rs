@@ -105,7 +105,8 @@ impl Client {
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{
-        NodeSigningIdentity, SigningSchemeType, test_support::seeded_identity,
+        NodeSigningIdentity,
+        test_support::{ECDSA_AND_MLDSA65, seeded_identity},
     };
     use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
@@ -115,9 +116,6 @@ mod tests {
     use kms_grpc::kms::v1::TypedSignature;
     use rand::SeedableRng;
     use threshold_types::rng::AesRng;
-
-    const SCHEMES: [SigningSchemeType; 2] =
-        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
     /// A response confirming `payload`, signed by `identity` the way a node signs it.
     fn response(
@@ -133,7 +131,7 @@ mod tests {
         .eip712_signing_hash(&dummy_domain());
         let signatures = sign_result_entries(
             identity,
-            &SCHEMES,
+            &ECDSA_AND_MLDSA65,
             &DSEP_NEW_CONTEXT,
             &eip712_hash,
             payload,
@@ -149,7 +147,7 @@ mod tests {
     fn new_context_response_matches_the_request() {
         let mut rng = AesRng::seed_from_u64(0xC0DE);
         let identity = seeded_identity(&mut rng);
-        let client = client_knowing(&identity, &SCHEMES);
+        let client = client_knowing(&identity, &ECDSA_AND_MLDSA65);
         let new_context = ContextInfo {
             mpc_nodes: vec![],
             context_id: ContextId::from_bytes([1u8; 32]),
