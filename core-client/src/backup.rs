@@ -43,7 +43,7 @@ pub(crate) async fn do_get_operator_pub_keys(
     }
 
     // Each party runs its own enclave and generates its own backup key, so a key or an enclave
-    // seen for two parties means one party's response was returned for another.
+    // seen for two parties means one party is pretending to be the other.
     let mut seen_keys = HashSet::new();
     let mut seen_enclaves = HashSet::new();
     let mut backup_pks = Vec::with_capacity(core_endpoints.len());
