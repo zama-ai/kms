@@ -67,6 +67,7 @@ use strum::VariantNames;
 use strum_macros::{Display, EnumString};
 use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_types::rng::AesRng;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -1968,11 +1969,6 @@ pub async fn execute_cmd(
 
     // use secure default params if nothing is set
     let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
-    let client_param = match fhe_params {
-        FheParameter::Test => TEST_PARAM,
-        _ => DEFAULT_PARAM,
-    };
-
     // Vector of KMS ethereum addresses
     let mut addr_vec = Vec::new();
 
@@ -2105,7 +2101,7 @@ pub async fn execute_cmd(
                 Client::new_client(
                     client_storage,
                     pub_storage,
-                    &client_param,
+                    &convert_dkg_param(&fhe_params),
                     cc_conf.decryption_mode,
                 )
                 .await?,
@@ -3156,6 +3152,13 @@ fn print_phased_timings(
     );
     tracing::info!("{reconstruction_line}");
     println!("{reconstruction_line}");
+}
+
+pub(crate) fn convert_dkg_param(param: &FheParameter) -> DKGParams {
+    match param {
+        FheParameter::Test => TEST_PARAM,
+        FheParameter::Default => DEFAULT_PARAM,
+    }
 }
 
 #[cfg(test)]
