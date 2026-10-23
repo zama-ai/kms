@@ -1,8 +1,12 @@
 # Configuration for the KMS peers
 # This is used to define the number of peers and their IDs
 kmsPeers:
-  # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
+  # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1.
+  # This is my_id and the pod suffix. The public vault folder is PUB-p<id> unless a prefix is set.
   # id: 1
+  # Optional TLS subject. When set, it is used as-is and is not suffixed with the party id.
+  # It must be a DNS name, because it is the certificate common name and the dialed service name.
+  # name: partner-acme
   # The number of peers managed by the StatefulSets
   count: 1
 
@@ -58,11 +62,18 @@ kmsCore:
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
+    # When true, render no [[threshold.peers]] and skip the 3*t+1 party check.
+    # The server writes no default context and loads only the MPC contexts in its
+    # private storage, which the connector fills from the on-chain ProtocolConfig.
+    # Do not set it on the first deployment of a committee. An empty peersList still
+    # generates peers from kmsPeers.count. See README.md for when it is safe to use.
+    omitPeers: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
     peersList: []
     #  - id: 1
     #    host: kms-core-1
     #    port: 50001
+    #    prefix: PUB-p1
     #    ca_certificate:
     #      pem: |
     #        -----BEGIN CERTIFICATE-----
@@ -167,6 +178,8 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
+      # Folder for this party's public CA and TLS key, for example PUB-p6.
+      # Empty keeps the historical PUB-p<id> path.
       prefix: ""
   privateVault:
     s3:
@@ -312,12 +325,20 @@ grpcHeathProbe:
     tag: v0.4-dev
     pullPolicy: Always
 
-# Used by enclave proxy sidecars
+# Used by enclave proxy sidecars:
+# enclave-config, kms-core-enclave-logger, enclave-web-identity-token.
 socat:
   image:
     name: hub.zama.org/zama-protocol/zama.ai/socat
     tag: v1.8-dev
     pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 runMode: dev
 

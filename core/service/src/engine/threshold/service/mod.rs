@@ -15,16 +15,16 @@ mod kms_impl;
 pub use kms_impl::*;
 
 // Module components
-mod crs_generator;
+pub(crate) mod crs_generator;
 pub(crate) mod epoch_manager;
 // Re-exported so the epoch data type is reachable outside the crate (e.g. the
 // backward-compatibility generators and tests) without exposing the rest of the
 // epoch manager internals.
 pub use epoch_manager::EpochData;
 //mod initiator;
-mod key_generator;
-mod preprocessor;
-mod public_decryptor;
+pub(crate) mod key_generator;
+pub(crate) mod preprocessor;
+pub(crate) mod public_decryptor;
 pub(crate) mod reshare_utils;
 pub mod session;
-mod user_decryptor;
+pub(crate) mod user_decryptor;
