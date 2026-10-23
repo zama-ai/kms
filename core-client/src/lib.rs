@@ -3192,6 +3192,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_node_config_hash() {
+        let hash = "ab".repeat(32);
+        assert_eq!(parse_node_config_hash(&hash).unwrap(), [0xab; 32]);
+        assert_eq!(
+            parse_node_config_hash(&format!("0x{hash}")).unwrap(),
+            [0xab; 32]
+        );
+        assert!(parse_node_config_hash(&"ab".repeat(31)).is_err());
+        assert!(parse_node_config_hash(&"zz".repeat(32)).is_err());
+    }
+
+    #[test]
     fn test_copy_compressed_key_to_original_requires_existing_keyset_id() {
         let err = CmdConfig::try_parse_from([
             "core-client",
