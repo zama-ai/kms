@@ -189,6 +189,16 @@ impl CoreClientConfig {
             None => Ok(dummy_domain()),
         }
     }
+
+    /// The number of responses, and of distinct signers, that a command requires: every
+    /// party when `expect_all` is set, and the majority vote count `num_majority` otherwise.
+    pub fn num_expected_responses(&self, expect_all: bool) -> usize {
+        if expect_all {
+            self.num_parties
+        } else {
+            self.num_majority
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
@@ -2131,11 +2141,7 @@ pub async fn execute_cmd(
         CCCommand::PublicDecrypt(cipher_args) => {
             validate_decrypt_rate_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let EncryptionResult {
                 cipher: ciphertext,
                 ct_format,
@@ -2604,11 +2610,7 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
-                let num_expected_responses = if expect_all_responses {
-                    num_parties
-                } else {
-                    cc_conf.num_majority
-                };
+                let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2633,11 +2635,7 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
-                let num_expected_responses = if expect_all_responses {
-                    num_parties
-                } else {
-                    cc_conf.num_majority
-                };
+                let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2651,11 +2649,7 @@ pub async fn execute_cmd(
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
@@ -2690,11 +2684,7 @@ pub async fn execute_cmd(
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
@@ -2728,11 +2718,7 @@ pub async fn execute_cmd(
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
         }
         CCCommand::PublicDecryptResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
 
             // External-signature verification requires the request's EIP-712 domain
@@ -2788,11 +2774,7 @@ pub async fn execute_cmd(
             vec![(Some(req_id), res)]
         }
         CCCommand::CrsGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &core_endpoints_req,
@@ -2827,11 +2809,7 @@ pub async fn execute_cmd(
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &core_endpoints_req,
@@ -3593,6 +3571,14 @@ mod tests {
         );
         let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(conf.default_domain().unwrap(), dummy_domain());
+    }
+
+    #[test]
+    fn num_expected_responses_picks_all_parties_or_majority() {
+        let toml_str = build_test_toml("threshold", Some(4), 2, 3, &[1, 2, 3, 4]);
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(conf.num_expected_responses(true), 4);
+        assert_eq!(conf.num_expected_responses(false), 2);
     }
 
     #[test]

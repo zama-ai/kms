@@ -125,11 +125,7 @@ pub(crate) async fn do_new_epoch(
     let max_iter = cmd_conf.max_iter;
     // Every configured core must answer below, but the config may list fewer cores than the
     // quorum, so the number of distinct signers is checked against the quorum itself.
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        cc_conf.num_parties
-    } else {
-        cc_conf.num_majority
-    };
+    let num_expected_responses = cc_conf.num_expected_responses(cmd_conf.expect_all_responses);
     anyhow::ensure!(
         core_endpoints.len() >= num_expected_responses,
         "Not enough core endpoints: expected at least {num_expected_responses}, but only have {}",

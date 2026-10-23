@@ -85,11 +85,7 @@ pub(crate) async fn do_keygen(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
+    let num_expected_responses = cc_conf.num_expected_responses(cmd_conf.expect_all_responses);
 
     // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
     // so the request built here and a later (Insecure)KeyGenResult fetch verify
