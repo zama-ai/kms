@@ -265,6 +265,63 @@ args:
 {{- default $kmsCoreNameDefault .Values.kmsGenCertAndKeys.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/*
+Public vault folder of a party: the peer entry's prefix, then this party's
+public vault prefix, then PUB-p<id>.
+Usage: include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix)
+*/}}
+{{- define "kmsPeerPrefix" -}}
+{{- $prefix := printf "PUB-p%d" (int .id) -}}
+{{- if and .root.Values.kmsCore.publicVault.s3.prefix (eq (int .id) (.root.Values.kmsPeers.id | default 0 | int)) -}}
+{{- $prefix = .root.Values.kmsCore.publicVault.s3.prefix -}}
+{{- end -}}
+{{- if .prefix -}}
+{{- $prefix = .prefix -}}
+{{- end -}}
+{{- $prefix -}}
+{{- end -}}
+
+{{/*
+This party's own peersList entry, as JSON ("{}" when absent).
+*/}}
+{{- define "kmsOwnPeer" -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $own := dict -}}
+{{- range .Values.kmsCore.thresholdMode.peersList -}}
+{{- if eq (int .id) $ownID -}}
+{{- $own = . -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $own -}}
+{{- end -}}
+
+{{/*
+Public vault folder of this party, for its TLS certificate and key:
+publicVault.s3.prefix, else PUB-p<id>. Fails if its peersList entry sets
+another prefix, because the core storage and the vault config use only
+publicVault.s3.prefix while peers and clients read the entry.
+*/}}
+{{- define "kmsOwnPrefix" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- $ownID := include "kmsPeersStartID" . | int -}}
+{{- $prefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%d" $ownID) -}}
+{{- if and $own.prefix (ne $own.prefix $prefix) -}}
+{{- fail (printf "peersList entry %d has prefix %q but this party's public vault folder is %q; set kmsCore.publicVault.s3.prefix to %q" $ownID $own.prefix $prefix $own.prefix) -}}
+{{- end -}}
+{{- $prefix -}}
+{{- end -}}
+
+{{/*
+TLS subject of this party. Fails if kmsPeers.name differs from the host of
+this party's peersList entry, since peers check the certificate against it.
+*/}}
+{{- define "kmsCheckPeerName" -}}
+{{- $own := include "kmsOwnPeer" . | fromJson -}}
+{{- if and .Values.kmsPeers.name $own.host (ne .Values.kmsPeers.name $own.host) -}}
+{{- fail (printf "kmsPeers.name %q must match the host %q of peersList entry %d" .Values.kmsPeers.name $own.host (include "kmsPeersStartID" . | int)) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "kmsCoreInitEnvVars" -}}
 export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
@@ -300,7 +357,7 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- if not $.Values.kmsCore.thresholdMode.omitPeers }}
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-{{- $peerPrefix := .prefix | default (printf "PUB-p%d" (int .id)) }}
+{{- $peerPrefix := include "kmsPeerPrefix" (dict "root" $ "id" .id "prefix" .prefix) }}
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
 CERT_PATH="{{ $peerPrefix }}/CACert/cert.pem"
@@ -340,11 +397,7 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- $idText := "" -}}
-{{- if .Values.kmsPeers.id -}}
-{{- $idText = .Values.kmsPeers.id | toString -}}
-{{- end -}}
-{{- $ownPrefix := .Values.kmsCore.publicVault.s3.prefix | default (printf "PUB-p%s" $idText) }}
+{{- $ownPrefix := include "kmsOwnPrefix" . }}
 {{- if $.Values.kmsCore.thresholdMode.omitPeers }}
 # omitPeers skips the peer loop, but the server still needs its own certificate.
 {{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
