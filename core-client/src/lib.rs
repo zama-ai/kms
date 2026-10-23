@@ -224,6 +224,11 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     // may exceed `conf.cores.len()` when the client only communicates with a subset.
     let num_parties = conf.num_parties;
 
+    if num_parties == 0 {
+        return Err(ValidationError::new("Number of Parties Error")
+            .with_message("Number of parties must be greater than 0.".into()));
+    }
+
     if conf.cores.len() > num_parties {
         return Err(ValidationError::new("Core Count Error").with_message(
             format!(

@@ -2151,7 +2151,7 @@ async fn wait_for_copy_to_original(
             priv_prefix.as_deref(),
         )?;
         let priv_storage = &priv_storage;
-        // Spend at most 20 seconds waiting
+        // Spend at most 80 seconds waiting (20 seconds per party)
         let res: anyhow::Result<()> = retry_loop!(
             || async move {
                 let keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(

@@ -767,17 +767,13 @@ pub(crate) async fn do_preproc(
 
     let responses =
         get_preproc_keygen_responses(core_endpoints, req_id, max_iter, insecure).await?;
-    let mut signers = Vec::with_capacity(responses.len());
-    for response in &responses {
-        // this part also verifies the signature
-        signers.push(internal_client.process_preproc_response(
-            &req_id,
-            &domain,
-            response,
-            extra_data.clone(),
-        )?);
-    }
-    ensure_distinct_signers(&format!("preprocessing {req_id}"), &signers, num_parties)?;
+    check_preproc_responses(
+        internal_client,
+        &req_id,
+        &SigVerificationMaterial { domain, extra_data },
+        &responses,
+        num_parties,
+    )?;
 
     Ok(req_id)
 }
@@ -850,16 +846,13 @@ pub(crate) async fn do_partial_preproc(
     }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter, false).await?;
-    let mut signers = Vec::with_capacity(responses.len());
-    for response in &responses {
-        signers.push(internal_client.process_preproc_response(
-            &req_id,
-            &domain,
-            response,
-            extra_data.clone(),
-        )?);
-    }
-    ensure_distinct_signers(&format!("preprocessing {req_id}"), &signers, num_parties)?;
+    check_preproc_responses(
+        internal_client,
+        &req_id,
+        &SigVerificationMaterial { domain, extra_data },
+        &responses,
+        num_parties,
+    )?;
 
     Ok(req_id)
 }
