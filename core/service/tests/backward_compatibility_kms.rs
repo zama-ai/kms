@@ -12,14 +12,14 @@ use backward_compatibility::{
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
     KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
-    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
-    OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
-    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
-    TransferableCustodianRecoveryOutputTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
+    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest,
+    NewMpcContextSignedPayloadTest, NodeInfoTest, OperatorBackupOutputTest,
+    PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TransferableCustodianRecoveryOutputTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPrivateEncKeyTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionTest,
     UserDecSignedPayloadTest, VerfKeySetTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
@@ -69,8 +69,8 @@ use kms_lib::{
         base::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
             KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-            PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
-            UserDecSignedPayload,
+            NewMpcContextSignedPayload, PrepKeygenSignedPayload, PublicDecSignedPayload,
+            StoredEip712Domain, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -1597,6 +1597,33 @@ fn test_stored_scheme_signature(
     }
 }
 
+fn test_new_mpc_context_signed_payload(
+    dir: &Path,
+    test: &NewMpcContextSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: NewMpcContextSignedPayload =
+        load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = NewMpcContextSignedPayload {
+        previous_context_id: ContextId::from_bytes(test.previous_context_id),
+        new_context_id: ContextId::from_bytes(test.new_context_id),
+        node_config_hash: test.node_config_hash,
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid NewMpcContextSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_prep_keygen_signed_payload(
     dir: &Path,
     test: &PrepKeygenSignedPayloadTest,
@@ -1954,6 +1981,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::StoredTypedSignature(test) => {
                 test_stored_scheme_signature(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::NewMpcContextSignedPayload(test) => {
+                test_new_mpc_context_signed_payload(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::PrepKeygenSignedPayload(test) => {
                 test_prep_keygen_signed_payload(test_dir.as_ref(), test, format).into()

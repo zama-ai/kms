@@ -288,7 +288,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     async fn new_mpc_context(
         &self,
         request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+    ) -> Result<Response<kms_grpc::kms::v1::NewMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
         self.context_manager
             .new_mpc_context(request)

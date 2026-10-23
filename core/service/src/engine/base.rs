@@ -20,7 +20,9 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_versioned, serialize_hash_element};
+use kms_grpc::ContextId;
 use kms_grpc::RequestId;
+use kms_grpc::kms;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
     TypedSignature, UserDecryptionResponsePayload,
@@ -31,8 +33,8 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
-    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
-    PublicDecryptVerification,
+    ContextCreationConfirmation, CrsgenVerification, FheDecompressionUpgradeKey,
+    KeygenVerification, PrepKeygenVerification, PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use rand_chacha::ChaCha20Rng;
@@ -82,6 +84,8 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 /// Domain separator for public decryption operations
 pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+/// Domain separator for creating a context
+pub const DSEP_NEW_CONTEXT: DomainSep = *b"CREA_CTX";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
@@ -366,6 +370,82 @@ pub(crate) fn preproc_payload(prep_id: &RequestId, extra_data: &[u8]) -> PrepKey
         prep_id: *prep_id,
         extra_data: extra_data.to_vec(),
     }
+}
+
+/// The result payload that every non-ECDSA scheme signs for a context creation.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum NewMpcContextSignedPayloadVersions {
+    V0(NewMpcContextSignedPayload),
+}
+
+/// The confirmation that a context has been created, in the form non-ECDSA schemes sign it.
+///
+/// The fields are those of the `ContextCreationConfirmation` EIP-712 struct, in the same order.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(NewMpcContextSignedPayloadVersions)]
+pub struct NewMpcContextSignedPayload {
+    pub previous_context_id: ContextId,
+    pub new_context_id: ContextId,
+    pub node_config_hash: [u8; 32],
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for NewMpcContextSignedPayload {
+    const NAME: &'static str = "NewMpcContextSignedPayload";
+}
+
+impl TryFrom<kms::v1::NewMpcContextPayload> for NewMpcContextSignedPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::NewMpcContextPayload) -> Result<Self, Self::Error> {
+        let previous_context_id = value
+            .previous_context_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing previous_context_id"))?
+            .try_into()?;
+        let new_context_id = value
+            .new_context_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing new_context_id"))?
+            .try_into()?;
+        let node_config_hash: [u8; 32] = value
+            .node_config_hash
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("node_config_hash must be 32 bytes"))?;
+        Ok(NewMpcContextSignedPayload {
+            previous_context_id,
+            new_context_id,
+            node_config_hash,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl From<&NewMpcContextSignedPayload> for kms::v1::NewMpcContextPayload {
+    fn from(value: &NewMpcContextSignedPayload) -> Self {
+        kms::v1::NewMpcContextPayload {
+            previous_context_id: Some(value.previous_context_id.into()),
+            new_context_id: Some(value.new_context_id.into()),
+            node_config_hash: value.node_config_hash.to_vec(),
+            extra_data: value.extra_data.clone(),
+        }
+    }
+}
+
+/// Build the EIP-712 struct signed for a context creation.
+pub fn context_creation_sol_type(
+    payload: &NewMpcContextSignedPayload,
+) -> ContextCreationConfirmation {
+    ContextCreationConfirmation::new(
+        &payload.previous_context_id,
+        &payload.new_context_id,
+        payload.node_config_hash.into(),
+        payload.extra_data.clone(),
+    )
 }
 
 /// What every non-ECDSA scheme signs for a CRS result.
@@ -1812,6 +1892,7 @@ pub(crate) mod tests {
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::{
         Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
@@ -1920,7 +2001,7 @@ pub(crate) mod tests {
             vec![SigningSchemeType::Ecdsa256k1],
             vec![SigningSchemeType::Ed25519],
             vec![SigningSchemeType::MlDsa65],
-            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+            ECDSA_AND_MLDSA65.to_vec(),
             vec![
                 SigningSchemeType::Ecdsa256k1,
                 SigningSchemeType::Ed25519,
@@ -2143,11 +2224,10 @@ pub(crate) mod tests {
         let server_key_digest = vec![0xAAu8; 32];
         let public_key_digest = vec![0xBBu8; 32];
         let extra_data = vec![0x09u8, 0x08];
-        let schemes = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         let meta = super::compute_info_standard_keygen_from_digests(
             &sk,
-            &schemes,
+            &ECDSA_AND_MLDSA65,
             &prep_id,
             &key_id,
             server_key_digest.clone(),
@@ -2171,14 +2251,15 @@ pub(crate) mod tests {
             &extra_data,
         );
 
-        assert_eq!(inner.signatures.len(), schemes.len());
+        assert_eq!(inner.signatures.len(), ECDSA_AND_MLDSA65.len());
         for stored in &inner.signatures {
             match stored.scheme {
                 SigningSchemeType::Ecdsa256k1 => {
                     assert_eq!(stored.signature, inner.external_signature);
                 }
                 scheme => {
-                    let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
+                    let signed =
+                        scheme_bound_preimage(&ECDSA_AND_MLDSA65, &expected_payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {

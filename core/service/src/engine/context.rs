@@ -1026,7 +1026,8 @@ mod tests {
         let (_verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
         let storage = storage_with_signing_key(&sk).await;
 
-        context.verify(&storage).await.unwrap();
+        // A node that is not part of the context gets no role in it.
+        assert_eq!(context.verify(&storage).await.unwrap(), None);
     }
 
     #[tokio::test]

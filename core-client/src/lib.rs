@@ -895,11 +895,34 @@ pub struct ContextPath {
     pub input_path: PathBuf,
 }
 
+#[derive(Debug, Args, Clone)]
+pub struct SerializedNewMpcContextParameters {
+    /// Input file holding the safe serialized `ContextInfo` of the new context.
+    #[clap(long)]
+    pub input_path: PathBuf,
+    /// The context that was active when the new context was defined.
+    /// Defaults to the ID of the new context if not specified.
+    #[clap(long)]
+    pub previous_context_id: Option<ContextId>,
+    /// The 32-byte `nodeConfigHash` of the new context, as a hex string, optionally starting
+    /// with "0x".
+    #[clap(long, value_parser = parse_node_config_hash)]
+    pub node_config_hash: [u8; 32],
+}
+
+/// Parse a 32-byte hex string, optionally starting with "0x", as a `nodeConfigHash`.
+fn parse_node_config_hash(arg: &str) -> Result<[u8; 32], String> {
+    let bytes = parse_hex(arg).map_err(|e| e.to_string())?;
+    bytes.try_into().map_err(|bytes: Vec<u8>| {
+        format!("the node config hash must be 32 bytes, got {}", bytes.len())
+    })
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum NewMpcContextParameters {
     /// Safe Serialized version of the struct ContextInfo
     /// stored in a file.
-    SerializedContextPath(ContextPath),
+    SerializedContextPath(SerializedNewMpcContextParameters),
     ContextToml(ContextPath),
 }
 
@@ -2931,9 +2954,19 @@ pub async fn execute_cmd(
             res
         }
         CCCommand::NewMpcContext(context_param) => match context_param {
-            NewMpcContextParameters::SerializedContextPath(context_path) => {
-                let ctx_id =
-                    do_new_mpc_context(&core_endpoints_req, &context_path.input_path).await?;
+            NewMpcContextParameters::SerializedContextPath(params) => {
+                let ctx_id = do_new_mpc_context(
+                    internal_client
+                        .as_ref()
+                        .expect("NewMpcContext requires a KMS client"),
+                    &core_endpoints_req,
+                    &cc_conf,
+                    &params.input_path,
+                    params.previous_context_id,
+                    params.node_config_hash,
+                    Vec::new(),
+                )
+                .await?;
                 vec![(
                     Some(ctx_id.into()),
                     "new mpc context created from serialized context".to_string(),
@@ -3156,6 +3189,18 @@ mod tests {
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
         assert!(parse_hex("Ox01").is_err()); // leading O (letter) instead of 0 (digit)
+    }
+
+    #[test]
+    fn test_parse_node_config_hash() {
+        let hash = "ab".repeat(32);
+        assert_eq!(parse_node_config_hash(&hash).unwrap(), [0xab; 32]);
+        assert_eq!(
+            parse_node_config_hash(&format!("0x{hash}")).unwrap(),
+            [0xab; 32]
+        );
+        assert!(parse_node_config_hash(&"ab".repeat(31)).is_err());
+        assert!(parse_node_config_hash(&"zz".repeat(32)).is_err());
     }
 
     #[test]

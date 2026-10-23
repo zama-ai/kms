@@ -687,10 +687,60 @@ message CustodianContext {
 }
 
 // Request to create a new KMS context.
-// If the active_context may be empty, then the new_context must be the first context
-// in the chain of contexts.
+// The KMS signs a ContextCreationConfirmation for the new context,
+// see `NewMpcContextResponse`.
 message NewMpcContextRequest {
-  MpcContext new_context = 2;
+  // The new context
+  MpcContext new_context = 1;
+
+  // The ID of the context that was active on the canonical ProtocolConfig contract
+  // when the new context was defined. It is signed as `previousContextId`.
+  RequestId previous_context_id = 2;
+
+  // The 32-byte hash keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)),
+  // computed by the caller from the NewKmsContext event. It is signed as `nodeConfigHash`.
+  // The KMS does not recompute this hash and signs the given value.
+  bytes node_config_hash = 3;
+
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 4;
+
+  // Extra meta data used in the signature
+  bytes extra_data = 5;
+
+  // The signature schemes to include in the response `signatures` field.
+  repeated SigningSchemeType signing_schemes = 6;
+}
+
+// The fields of the ContextCreationConfirmation signed for a new context:
+// struct ContextCreationConfirmation {
+//     uint256 previousContextId;
+//     uint256 newContextId;
+//     bytes32 nodeConfigHash;
+//     bytes extraData;
+// }
+message NewMpcContextPayload {
+  // The ID of the context that was active when the new context was defined.
+  RequestId previous_context_id = 1;
+
+  // The ID of the new context.
+  RequestId new_context_id = 2;
+
+  // keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds)) of the new context.
+  // Exactly 32 bytes.
+  bytes node_config_hash = 3;
+
+  // Extra meta data used in the signature
+  bytes extra_data = 4;
+}
+
+message NewMpcContextResponse {
+  // The payload signed as part of the context creation
+  NewMpcContextPayload payload = 1;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 2;
 }
 
 // Request to destroy the MPC context.

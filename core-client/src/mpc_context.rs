@@ -1,25 +1,24 @@
+use crate::CoreClientConfig;
 use kms_grpc::{
-    identifiers::ContextId,
-    kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
+    identifiers::ContextId, kms::v1::DestroyMpcContextRequest,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
+};
+use kms_lib::{
+    client::client_wasm::Client, consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo,
 };
 #[cfg(feature = "testing")]
 use kms_lib::{
     conf::{CoreConfig, init_conf},
     engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
 };
-use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 use crate::CoreConf;
 #[cfg(feature = "testing")]
-use crate::{
-    CoreClientConfig,
-    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
-};
+use crate::s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys};
 
 #[cfg(feature = "testing")]
 pub async fn create_test_context_info_from_core_config(
@@ -222,40 +221,55 @@ pub async fn create_test_context_info_from_core_config(
     Ok(new_context)
 }
 
+/// Create the context stored at `new_context_path` on every core, and check that each core
+/// confirms its creation.
+///
+/// `previous_context_id` defaults to the ID of the new context if not specified.
 pub(crate) async fn do_new_mpc_context(
+    internal_client: &Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    context_path: &std::path::Path,
+    cc_conf: &CoreClientConfig,
+    new_context_path: &std::path::Path,
+    previous_context_id: Option<ContextId>,
+    node_config_hash: [u8; 32],
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<ContextId> {
     // note that we use the BufReader from std instead of tokio
     // because the one from tokio does not implement std::io::Read
-    let file = std::fs::File::open(context_path)?;
+    let file = std::fs::File::open(new_context_path)?;
     let mut buf_reader = std::io::BufReader::new(file);
 
     let new_context: ContextInfo = safe_deserialize(&mut buf_reader, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize context info from file: {}", e))?;
-    let context_id = new_context.context_id;
+    let new_context_id = new_context.context_id;
+    // For the first context, the previous context ID is the new one.
+    let previous_context_id = previous_context_id.unwrap_or(new_context_id);
+    let domain = cc_conf.default_domain()?;
+    let request = internal_client.new_mpc_context_request(
+        new_context,
+        &previous_context_id,
+        node_config_hash,
+        &domain,
+        extra_data,
+    )?;
 
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
-        let new_context_cloned = new_context.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context_cloned.try_into().map_err(|e| {
-                        tonic::Status::internal(format!(
-                            "Failed to convert context info to proto: {e}"
-                        ))
-                    })?),
-                }))
-                .await
-        });
+        let req_cloned = request.clone();
+        req_tasks.spawn(async move { cur_client.new_mpc_context(req_cloned).await });
     }
+    let mut signers = HashSet::new();
     while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
+        let response = inner??.into_inner();
+        let party_id = internal_client.process_new_mpc_context_response(&response, &request)?;
+        anyhow::ensure!(
+            signers.insert(party_id),
+            "party {party_id} confirmed the creation of context {new_context_id} more than once"
+        );
     }
 
-    Ok(context_id)
+    Ok(new_context_id)
 }
 
 pub(crate) async fn do_destroy_mpc_context(

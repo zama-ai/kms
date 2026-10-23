@@ -1001,6 +1001,7 @@ fn validate_custodian_messages(
 mod tests {
     use super::*;
     use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES};
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         consts::DEFAULT_MPC_CONTEXT,
@@ -1059,10 +1060,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(8);
         let (ecdsa, _) = gen_sig_keys(&mut rng);
         let ecdsa_only = VerfKeySet::ecdsa_only(ecdsa);
-        let without_mldsa87 = seeded_verf_key_set(
-            &mut rng,
-            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
-        );
+        let without_mldsa87 = seeded_verf_key_set(&mut rng, &ECDSA_AND_MLDSA65);
         for weak in [ecdsa_only, without_mldsa87] {
             let request = recovery_request_naming(&mut rng, &weak);
             assert!(

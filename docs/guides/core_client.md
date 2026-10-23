@@ -763,9 +763,18 @@ A new MPC context can be created from a serialized context file or a TOML contex
 For Nitro Enclave deployments, the context must include at least one trusted PCR value set. The PCR allowlist may be empty for non-enclave and mocked-enclave deployments.
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file> --node-config-hash <NODE_CONFIG_HASH> [--previous-context-id <PREVIOUS_CONTEXT_ID>]
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>
 ```
+
+Required arguments of `serialized-context-path`:
+ - `--input-path <path-to-context-file>`: the file that holds the safe-serialized `ContextInfo` of the new context.
+ - `--node-config-hash <NODE_CONFIG_HASH>`: the hex-encoded 32-byte `nodeConfigHash` of the new context.
+
+Optional argument of `serialized-context-path`:
+ - `--previous-context-id <PREVIOUS_CONTEXT_ID>`: the context that was active when the new context was defined. The default is the ID of the new context, as for the first context.
+
+Every core confirms the creation with a signature that the client verifies. A repeated command for the same context is confirmed again.
 
 #### Destroying an MPC Context
 

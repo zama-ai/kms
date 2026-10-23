@@ -8,7 +8,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group};
 use kms_grpc::kms::v1::CiphertextFormat;
 use kms_lib::{
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::signatures::SigningSchemeType,
+    cryptography::signatures::{SigningSchemeType, test_support::ECDSA_AND_MLDSA65},
     engine::{
         base::{
             deserialize_to_low_level,
@@ -97,7 +97,7 @@ fn signing_cases() -> Vec<(&'static str, SignInput)> {
     let ecdsa = [SigningSchemeType::Ecdsa256k1];
     let ed25519 = [SigningSchemeType::Ed25519];
     let mldsa = [SigningSchemeType::MlDsa65];
-    let combined = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+    let combined = ECDSA_AND_MLDSA65;
     vec![
         ("ecdsa/u64/b1", SignInput::new(1, false, &ecdsa)),
         ("ed25519/u64/b1", SignInput::new(1, false, &ed25519)),

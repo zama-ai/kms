@@ -1,7 +1,11 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::{DSEP_PUBLIC_DECRYPTION, retrieve_parameters};
+use crate::engine::base::{
+    DSEP_PUBLIC_DECRYPTION, NewMpcContextSignedPayload, retrieve_parameters,
+};
+use crate::engine::context::ContextInfo;
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::{MetricedError, sanity_check_extra_data};
+use crate::vault::storage::StorageReader;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -19,7 +23,8 @@ use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcContextRequest, NewMpcEpochRequest,
+    PreviousEpochInfo,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{KeyId, RequestId};
@@ -31,12 +36,14 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use observability::metrics_names::{
-    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
+use threshold_types::role::Role;
 
 /// Trusted client-side configuration used to validate public decryption server responses.
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
@@ -1147,26 +1154,138 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     })
 }
 
+/// A validated and parsed `NewMpcContext` request, whose new context has been checked against this
+/// node.
+#[derive(Debug)]
+pub(crate) struct VerifiedNewMpcContextRequest {
+    /// The context to create.
+    pub new_context: ContextInfo,
+    /// The role of this node in `new_context`, or `None` if it is not part of it.
+    pub my_role: Option<Role>,
+    /// The context that was active when the new context was defined. Equal to the ID of
+    /// `new_context` for the first context.
+    pub previous_context_id: ContextId,
+    /// The `nodeConfigHash` of the new context, signed as given.
+    pub node_config_hash: [u8; 32],
+    /// The EIP-712 domain the confirmation is signed under.
+    pub domain: Eip712Domain,
+    /// Extra data bound into the signatures and echoed back in the response.
+    pub extra_data: Vec<u8>,
+    /// The schemes to sign the confirmation under.
+    pub signing_schemes: Vec<SigningSchemeType>,
+}
+
+impl VerifiedNewMpcContextRequest {
+    /// The confirmation signed for this request, in the form non-ECDSA schemes sign it.
+    pub fn signed_payload(&self) -> NewMpcContextSignedPayload {
+        NewMpcContextSignedPayload {
+            previous_context_id: self.previous_context_id,
+            new_context_id: self.new_context.context_id,
+            node_config_hash: self.node_config_hash,
+            extra_data: self.extra_data.clone(),
+        }
+    }
+}
+
+/// Validate a `NewMpcContext` request, and check its new context against this node, whose signing
+/// key is read from `private_storage`.
+///
+/// A malformed request fails with `InvalidArgument`. A new context that fails
+/// [`ContextInfo::verify`] fails with `FailedPrecondition`.
+pub(crate) async fn validate_new_mpc_context_request<S: StorageReader>(
+    req: NewMpcContextRequest,
+    private_storage: &S,
+    require_pcr_allowlist: bool,
+) -> Result<VerifiedNewMpcContextRequest, MetricedError> {
+    let mut verified = unpack_new_mpc_context_req(req, require_pcr_allowlist).map_err(|e| {
+        MetricedError::new(
+            OP_NEW_MPC_CONTEXT,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })?;
+    verified.my_role = verified
+        .new_context
+        .verify(private_storage)
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(verified.new_context.context_id.into()),
+                e,
+                tonic::Code::FailedPrecondition,
+            )
+        })?;
+    Ok(verified)
+}
+
+/// Parse a `NewMpcContext` request. The role of this node is left unset, since it needs the new
+/// context to be verified against this node.
+fn unpack_new_mpc_context_req(
+    req: NewMpcContextRequest,
+    require_pcr_allowlist: bool,
+) -> anyhow::Result<VerifiedNewMpcContextRequest> {
+    let new_context = req
+        .new_context
+        .ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
+    let new_context = ContextInfo::try_from(new_context)?;
+    anyhow::ensure!(
+        !require_pcr_allowlist || !new_context.pcr_values.is_empty(),
+        "PCR values are required for context {} in enclave deployments",
+        new_context.context_id()
+    );
+    let previous_context_id: ContextId =
+        parse_optional_grpc_request_id(&req.previous_context_id, RequestIdParsingErr::Context)?;
+    let node_config_hash: [u8; 32] = req.node_config_hash.as_slice().try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "node_config_hash must be 32 bytes, got {}",
+            req.node_config_hash.len()
+        )
+    })?;
+    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(VerifiedNewMpcContextRequest {
+        new_context,
+        my_role: None,
+        previous_context_id,
+        node_config_hash,
+        domain,
+        extra_data: req.extra_data,
+        signing_schemes,
+    })
+}
+
+/// Check `context` against this node, whose signing key is read from `private_storage`: it must
+/// carry PCR values if `require_pcr_allowlist` is set, and pass [`ContextInfo::verify`].
+///
+/// Returns the role of this node in `context`, or `None` if it is not part of it.
+pub(crate) async fn verify_context_and_extract_my_role<S: StorageReader>(
+    context: &ContextInfo,
+    private_storage: &S,
+    require_pcr_allowlist: bool,
+) -> anyhow::Result<Option<Role>> {
+    anyhow::ensure!(
+        !require_pcr_allowlist || !context.pcr_values.is_empty(),
+        "PCR values are required for context {} in enclave deployments",
+        context.context_id()
+    );
+    context.verify(private_storage).await
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{
+        ContextId, ContextInfo, NewMpcContextRequest, NewMpcContextSignedPayload, Role,
+        validate_new_mpc_context_request,
+    };
     use crate::cryptography::signing::VerfKeySet;
     use crate::cryptography::signing::composite::{
         sign_result_entries, wire_scheme_bound_preimage,
     };
-    use alloy_dyn_abi::Eip712Domain;
-    use kms_grpc::{
-        RequestId,
-        kms::v1::{
-            self, NewMpcEpochRequest, PreviousEpochInfo, PublicDecryptionRequest,
-            PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
-            TypedPlaintext, UserDecryptionRequest,
-        },
-        rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
-    };
-    use rand::SeedableRng;
-    use std::collections::HashMap;
-    use threshold_types::rng::AesRng;
-
+    use crate::engine::context::{NodeInfo, SchemeDigests, SoftwareVersion};
+    use crate::vault::storage::{ram::RamStorage, store_versioned_at_request_id};
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
@@ -1190,6 +1309,20 @@ mod tests {
             },
         },
     };
+    use alloy_dyn_abi::Eip712Domain;
+    use kms_grpc::rpc_types::PrivDataType;
+    use kms_grpc::{
+        RequestId,
+        kms::v1::{
+            self, NewMpcEpochRequest, PreviousEpochInfo, PublicDecryptionRequest,
+            PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
+            TypedPlaintext, UserDecryptionRequest,
+        },
+        rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
+    };
+    use rand::SeedableRng;
+    use std::collections::HashMap;
+    use threshold_types::rng::AesRng;
 
     use super::{
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
@@ -2447,6 +2580,130 @@ mod tests {
                 .expect_err("unknown signing scheme must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
+    }
+
+    /// `validate_new_mpc_context_request` parses every field of a `NewMpcContext` request.
+    /// It rejects a request without a new context, a previous context ID or a domain, with a
+    /// hash that is not 32 bytes, naming an unknown scheme, with an inconsistent context, or without
+    /// PCR values when they are required.
+    #[tokio::test]
+    async fn test_validate_new_mpc_context_request() {
+        let mut rng = AesRng::seed_from_u64(0xC0DE);
+        let (verification_key, sk) = gen_sig_keys(&mut rng);
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &derive_request_id("signing_key").unwrap(),
+            &sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let context_id = ContextId::from_bytes([1u8; 32]);
+        let previous_context_id = ContextId::from_bytes([2u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let valid = NewMpcContextRequest {
+            new_context: Some(new_context.clone().try_into().unwrap()),
+            previous_context_id: Some(previous_context_id.into()),
+            node_config_hash: vec![0xab; 32],
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            extra_data: vec![1, 2],
+            signing_schemes: vec![v1::SigningSchemeType::Mldsa87 as i32],
+        };
+
+        let verified = validate_new_mpc_context_request(valid.clone(), &storage, false)
+            .await
+            .unwrap();
+        assert_eq!(verified.new_context, new_context);
+        assert_eq!(verified.my_role, Some(Role::indexed_from_one(1)));
+        assert_eq!(verified.previous_context_id, previous_context_id);
+        assert_eq!(verified.node_config_hash, [0xab; 32]);
+        assert_eq!(verified.domain, dummy_domain());
+        assert_eq!(verified.extra_data, vec![1, 2]);
+        assert_eq!(verified.signing_schemes, vec![SigningSchemeType::MlDsa87]);
+        assert_eq!(
+            verified.signed_payload(),
+            NewMpcContextSignedPayload {
+                previous_context_id,
+                new_context_id: context_id,
+                node_config_hash: [0xab; 32],
+                extra_data: vec![1, 2],
+            }
+        );
+
+        let invalid = [
+            NewMpcContextRequest {
+                new_context: None,
+                ..valid.clone()
+            },
+            NewMpcContextRequest {
+                previous_context_id: None,
+                ..valid.clone()
+            },
+            NewMpcContextRequest {
+                node_config_hash: vec![0xab; 31],
+                ..valid.clone()
+            },
+            NewMpcContextRequest {
+                domain: None,
+                ..valid.clone()
+            },
+            NewMpcContextRequest {
+                signing_schemes: vec![9999],
+                ..valid.clone()
+            },
+        ];
+        for req in invalid {
+            let err = validate_new_mpc_context_request(req, &storage, false)
+                .await
+                .expect_err("an invalid request must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // A well-formed request whose context fails the checks against this node: a single node
+        // context must have threshold 0.
+        let inconsistent = NewMpcContextRequest {
+            new_context: Some(
+                ContextInfo {
+                    threshold: 1,
+                    ..new_context.clone()
+                }
+                .try_into()
+                .unwrap(),
+            ),
+            ..valid.clone()
+        };
+        let err = validate_new_mpc_context_request(inconsistent, &storage, false)
+            .await
+            .expect_err("an inconsistent context must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // Without PCR values, the context is rejected when they are required.
+        let err = validate_new_mpc_context_request(valid, &storage, true)
+            .await
+            .expect_err("a context without PCR values must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
     #[test]

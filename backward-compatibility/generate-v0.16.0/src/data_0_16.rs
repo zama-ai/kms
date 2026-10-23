@@ -38,8 +38,8 @@ use kms_0_16_0::cryptography::{
 };
 use kms_0_16_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
-    KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
-    PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
+    KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, NewMpcContextSignedPayload,
+    PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
 };
 use kms_0_16_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_16_0::engine::context::{
@@ -111,8 +111,9 @@ use backward_compatibility::{
     CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianSetupMessageTest, InternalRecoveryRequestTest,
     KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest,
-    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
-    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
+    KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest,
+    NewMpcContextSignedPayloadTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
+    PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
@@ -670,6 +671,16 @@ const STORED_SCHEME_SIGNATURE_TEST: StoredTypedSignatureTest = StoredTypedSignat
     ]),
     signature: Cow::Borrowed(&[9, 8, 7, 6, 5, 4, 3, 2, 1]),
 };
+
+// KMS test — the payload non-ECDSA schemes sign for a context creation.
+const NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST: NewMpcContextSignedPayloadTest =
+    NewMpcContextSignedPayloadTest {
+        test_filename: Cow::Borrowed("new_mpc_context_signed_payload"),
+        previous_context_id: [0x33; 32],
+        new_context_id: [0x34; 32],
+        node_config_hash: [0x35; 32],
+        extra_data: Cow::Borrowed(&[0x27, 0x28, 0x29]),
+    };
 
 // KMS test — the payload non-ECDSA schemes sign for a preprocessing result.
 const PREP_KEYGEN_SIGNED_PAYLOAD_TEST: PrepKeygenSignedPayloadTest = PrepKeygenSignedPayloadTest {
@@ -1869,6 +1880,29 @@ impl KmsV0_16_0 {
         TestMetadataKMS::StoredTypedSignature(STORED_SCHEME_SIGNATURE_TEST)
     }
 
+    /// `NewMpcContextSignedPayload` was introduced in v0.16.0 as the form
+    /// non-ECDSA schemes sign for a context creation.
+    fn gen_new_mpc_context_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = NewMpcContextSignedPayload {
+            previous_context_id: kms_grpc_0_16_0::ContextId::from_bytes(
+                NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST.previous_context_id,
+            ),
+            new_context_id: kms_grpc_0_16_0::ContextId::from_bytes(
+                NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST.new_context_id,
+            ),
+            node_config_hash: NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST.node_config_hash,
+            extra_data: NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::NewMpcContextSignedPayload(NEW_MPC_CONTEXT_SIGNED_PAYLOAD_TEST)
+    }
+
     /// `PrepKeygenSignedPayload` was introduced in v0.16.0 as the canonical form
     /// non-ECDSA schemes sign for a preprocessing result.
     fn gen_prep_keygen_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
@@ -2274,6 +2308,7 @@ impl KMSCoreVersion for V0_16_0 {
             KmsV0_16_0::gen_internal_cus_rec_out(&dir),
             KmsV0_16_0::gen_operator_backup_output(&dir),
             KmsV0_16_0::gen_stored_scheme_signature(&dir),
+            KmsV0_16_0::gen_new_mpc_context_signed_payload(&dir),
             KmsV0_16_0::gen_prep_keygen_signed_payload(&dir),
             KmsV0_16_0::gen_keygen_signed_payload(&dir),
             KmsV0_16_0::gen_crs_signed_payload(&dir),

@@ -3350,6 +3350,21 @@
     (
         kms_core_version_min: "0.16.0",
         kms_core_module: "kms",
+        metadata: NewMpcContextSignedPayload((
+            test_filename: "new_mpc_context_signed_payload",
+            previous_context_id: (51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51),
+            new_context_id: (52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52),
+            node_config_hash: (53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53, 53),
+            extra_data: [
+                39,
+                40,
+                41,
+            ],
+        )),
+    ),
+    (
+        kms_core_version_min: "0.16.0",
+        kms_core_module: "kms",
         metadata: PrepKeygenSignedPayload((
             test_filename: "prep_keygen_signed_payload",
             state: 700,

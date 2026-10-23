@@ -10,7 +10,7 @@ pub trait ContextManager {
     async fn new_mpc_context(
         &self,
         request: Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError>;
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError>;
 
     async fn destroy_mpc_context(
         &self,

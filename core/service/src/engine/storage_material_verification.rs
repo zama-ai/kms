@@ -1338,6 +1338,7 @@ mod tests {
     use crate::backup::operator::RecoveryValidationMaterial;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use crate::cryptography::signatures::{
         RootSigningSeed, gen_sig_keys, test_support::seeded_identity,
     };
@@ -2201,11 +2202,10 @@ mod tests {
         let domain = crate::dummy_domain();
         let prep_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
-        let schemes = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
             &identity,
-            &schemes,
+            &ECDSA_AND_MLDSA65,
             &prep_id,
             &key_id,
             vec![0x11; 32],

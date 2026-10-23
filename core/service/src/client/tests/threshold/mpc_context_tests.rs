@@ -1,14 +1,17 @@
 use kms_grpc::{
     RequestId,
-    kms::v1::DestroyMpcContextRequest,
+    kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest, NewMpcContextResponse},
+    kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{PrivDataType, PubDataType},
 };
 use rand::SeedableRng;
+use std::collections::{HashMap, HashSet};
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 use crate::{
     client::tests::threshold::public_decryption_tests::{
@@ -18,8 +21,8 @@ use crate::{
         DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
-    cryptography::signatures::PublicSigKey,
-    engine::context::SchemeDigests,
+    cryptography::signatures::{PublicSigKey, test_support::ECDSA_AND_MLDSA65},
+    engine::context::{ContextInfo, SchemeDigests, SoftwareVersion},
     testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
     vault::storage::{
@@ -124,24 +127,70 @@ async fn do_context_switch(
     let new_context_id = *new_context.context_id();
     println!("got new context: {:?}", new_context);
 
-    {
-        let req = internal_client
-            .new_mpc_context_request(new_context)
-            .unwrap();
+    // The confirmations are signed under a post-quantum scheme as well. The decryptions below run
+    // with the client's original schemes.
+    let original_schemes = internal_client.signing_schemes().to_vec();
+    internal_client
+        .set_signing_schemes(&ECDSA_AND_MLDSA65)
+        .unwrap();
+    let request = internal_client
+        .new_mpc_context_request(
+            new_context.clone(),
+            &previous_context_id,
+            [0xab; 32],
+            &crate::dummy_domain(),
+            vec![1, 2, 3],
+        )
+        .unwrap();
 
-        let mut req_tasks = JoinSet::new();
-        for client in kms_clients.values() {
-            let req_clone = req.clone();
-            let mut client = client.clone();
-            req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
-        }
-
-        let mut req_response_vec = Vec::new();
-        while let Some(inner) = req_tasks.join_next().await {
-            req_response_vec.push(inner.unwrap().unwrap().into_inner());
-        }
-        assert_eq!(req_response_vec.len(), kms_clients.len());
+    // A malformed request is refused by every party, and stores nothing.
+    let malformed = NewMpcContextRequest {
+        node_config_hash: vec![0xab; 31], // Bad node config hash
+        ..request.clone()
+    };
+    for response in new_mpc_context_at_all_parties(&kms_clients, &malformed).await {
+        assert_eq!(response.unwrap_err().code(), tonic::Code::InvalidArgument);
     }
+    for storage in &all_private_storage {
+        assert!(read_context_at_id(storage, &new_context_id).await.is_err());
+    }
+
+    // Every party confirms the creation of the context, and confirms it again when the request is
+    // repeated.
+    for _round in 0..2 {
+        let mut signers = HashSet::new();
+        for response in new_mpc_context_at_all_parties(&kms_clients, &request).await {
+            let party_id = internal_client
+                .process_new_mpc_context_response(&response.unwrap(), &request)
+                .unwrap();
+            assert!(signers.insert(party_id));
+        }
+        assert_eq!(signers.len(), kms_clients.len());
+    }
+
+    // A different context under the same ID is refused by every party.
+    let conflicting_context = ContextInfo {
+        software_version: SoftwareVersion {
+            patch: new_context.software_version.patch + 1,
+            ..new_context.software_version.clone()
+        },
+        ..new_context
+    };
+    let conflicting = internal_client
+        .new_mpc_context_request(
+            conflicting_context,
+            &previous_context_id,
+            [0xab; 32],
+            &crate::dummy_domain(),
+            vec![1, 2, 3],
+        )
+        .unwrap();
+    for response in new_mpc_context_at_all_parties(&kms_clients, &conflicting).await {
+        assert_eq!(response.unwrap_err().code(), tonic::Code::AlreadyExists);
+    }
+    internal_client
+        .set_signing_schemes(&original_schemes)
+        .unwrap();
 
     // Every party stores the context it registers. That is the only observable effect of the
     // switch here, because a context that owns no epoch serves no request.
@@ -333,4 +382,23 @@ async fn test_destroy_only_context_is_rejected_4p() {
     for (_, server) in kms_servers {
         server.assert_shutdown().await;
     }
+}
+
+/// Sends `request` to every party, and returns their answers.
+async fn new_mpc_context_at_all_parties(
+    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    request: &NewMpcContextRequest,
+) -> Vec<Result<NewMpcContextResponse, tonic::Status>> {
+    let mut req_tasks = JoinSet::new();
+    for client in kms_clients.values() {
+        let request = request.clone();
+        let mut client = client.clone();
+        req_tasks.spawn(async move {
+            client
+                .new_mpc_context(request)
+                .await
+                .map(tonic::Response::into_inner)
+        });
+    }
+    req_tasks.join_all().await
 }

@@ -8,12 +8,18 @@ use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
+use crate::cryptography::signing::composite::sign_result_entries;
+use crate::engine::base::{
+    DSEP_NEW_CONTEXT, context_creation_sol_type, stored_scheme_signatures_to_proto,
+};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
-    RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
+    RequestIdParsingErr, VerifiedNewMpcContextRequest, parse_grpc_request_id,
+    parse_optional_grpc_request_id, validate_new_mpc_context_request,
+    verify_context_and_extract_my_role,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,
@@ -29,14 +35,15 @@ use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
+use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
+use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
@@ -76,37 +83,77 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Validate a `NewMpcContext` request, including its new context.
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
         require_pcr_allowlist: bool,
-    ) -> anyhow::Result<(Option<Role>, ContextInfo)> {
-        // first verify that the context is valid
-        let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
-
-        let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
-        let new_context = ContextInfo::try_from(new_context)?;
-        // verify new context
-        let my_role = self
-            .verify_context_and_extract_my_role(&new_context, require_pcr_allowlist)
-            .await?;
-
-        Ok((my_role, new_context))
-    }
-
-    async fn verify_context_and_extract_my_role(
-        &self,
-        context: &ContextInfo,
-        require_pcr_allowlist: bool,
-    ) -> anyhow::Result<Option<Role>> {
-        anyhow::ensure!(
-            !require_pcr_allowlist || !context.pcr_values.is_empty(),
-            "PCR values are required for context {} in enclave deployments",
-            context.context_id()
-        );
+    ) -> Result<VerifiedNewMpcContextRequest, MetricedError> {
         let private_storage = Arc::clone(&self.crypto_storage.private_storage);
         let guarded_priv_storage = private_storage.lock().await;
-        context.verify(&(*guarded_priv_storage)).await
+        validate_new_mpc_context_request(
+            request.into_inner(),
+            &(*guarded_priv_storage),
+            require_pcr_allowlist,
+        )
+        .await
+    }
+
+    /// Sign the `ContextCreationConfirmation` of `verified` under every requested scheme.
+    fn confirm_new_mpc_context(
+        &self,
+        verified: &VerifiedNewMpcContextRequest,
+    ) -> Result<NewMpcContextResponse, MetricedError> {
+        let context_id: RequestId = verified.new_context.context_id.into();
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            OP_NEW_MPC_CONTEXT,
+            Some(context_id),
+        )?;
+        let payload = verified.signed_payload();
+        let eip712_hash = context_creation_sol_type(&payload).eip712_signing_hash(&verified.domain);
+        let signatures = sign_result_entries(
+            &identity,
+            &verified.signing_schemes,
+            &DSEP_NEW_CONTEXT,
+            &eip712_hash,
+            &payload,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(context_id),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        Ok(NewMpcContextResponse {
+            payload: Some((&payload).into()),
+            signatures: stored_scheme_signatures_to_proto(&signatures),
+        })
+    }
+
+    /// Confirm again a context that is already stored as `stored_context`.
+    /// A different context under the same ID is refused.
+    fn confirm_existing_mpc_context(
+        &self,
+        verified: &VerifiedNewMpcContextRequest,
+        stored_context: &ContextInfo,
+    ) -> Result<NewMpcContextResponse, MetricedError> {
+        if *stored_context != verified.new_context {
+            return Err(MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(verified.new_context.context_id.into()),
+                anyhow::anyhow!("A different context with the same ID already exists"),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+        tracing::warn!(
+            context_id = %verified.new_context.context_id,
+            "MPC context already exists; confirming its creation again"
+        );
+        self.confirm_new_mpc_context(verified)
     }
 
     async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -808,42 +855,48 @@ where
     async fn new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
-        let (_my_role, new_context) = self
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
+        let verified = self
             .inner
             .verify_and_extract_new_mpc_context(request, false)
-            .await
-            .map_err(|e| {
-                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
-            })?;
+            .await?;
+        let new_context = &verified.new_context;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // Check if the context already exists
-        if self
+        if let Some(stored_context) = self
             .inner
             .crypto_storage
             .read_context_info(new_context.context_id())
             .await
-            .is_ok()
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(new_context.context_id.into()),
+                    e,
+                    tonic::Code::Internal,
+                )
+            })?
         {
-            return Err(MetricedError::new(
-                OP_NEW_MPC_CONTEXT,
-                Some((*new_context.context_id()).into()),
-                anyhow::anyhow!("Context already exists"),
-                tonic::Code::AlreadyExists,
-            ));
+            let response = self
+                .inner
+                .confirm_existing_mpc_context(&verified, &stored_context)?;
+            self.cache.write().await.insert(*new_context.context_id());
+            return Ok(Response::new(response));
         }
+
+        // Sign first, so that a signing failure stores nothing.
+        let response = self.inner.confirm_new_mpc_context(&verified)?;
 
         let storage_error = match self
             .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
+            .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
             .await
         {
             Ok(()) => None,
             Err(error) => {
-                if !context_write_persisted(&self.inner.crypto_storage, &new_context, &error).await
-                {
+                if !context_write_persisted(&self.inner.crypto_storage, new_context, &error).await {
                     return Err(MetricedError::new(
                         OP_NEW_MPC_CONTEXT,
                         Some((*new_context.context_id()).into()),
@@ -883,7 +936,7 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(response))
     }
 
     async fn destroy_mpc_context(
@@ -1064,11 +1117,16 @@ where
 
         let mut loaded_count = 0;
         for context in &contexts {
-            let my_role = match self
-                .inner
-                .verify_context_and_extract_my_role(context, self.require_pcr_allowlist)
+            let verified_role = {
+                let private_storage = self.inner.crypto_storage.private_storage.lock().await;
+                verify_context_and_extract_my_role(
+                    context,
+                    &(*private_storage),
+                    self.require_pcr_allowlist,
+                )
                 .await
-            {
+            };
+            let my_role = match verified_role {
                 Ok(role) => role,
                 Err(e) => {
                     tracing::warn!(
@@ -1192,10 +1250,10 @@ async fn context_write_persisted<
 ) -> bool {
     match error {
         StorageError::Backup => true,
-        StorageError::Purging => crypto_storage
-            .read_context_info(context.context_id())
-            .await
-            .is_ok_and(|stored| stored == *context),
+        StorageError::Purging => matches!(
+            crypto_storage.read_context_info(context.context_id()).await,
+            Ok(Some(stored)) if stored == *context
+        ),
         _ => false,
     }
 }
@@ -1239,40 +1297,66 @@ where
     async fn new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
-        let (my_role, new_context) = self
+    ) -> Result<tonic::Response<NewMpcContextResponse>, MetricedError> {
+        let verified = self
             .inner
             .verify_and_extract_new_mpc_context(request, self.require_pcr_allowlist)
-            .await
-            .map_err(|e| {
-                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
-            })?;
+            .await?;
+        let new_context = &verified.new_context;
+        let my_role = verified.my_role;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // First check if the context already exists
-        if self
+        let stored_context = self
             .inner
             .crypto_storage
             .read_context_info(new_context.context_id())
             .await
-            .is_ok()
-            || self
-                .session_maker
-                .context_exists(new_context.context_id())
-                .await
-        {
-            return Err(MetricedError::new(
-                OP_NEW_MPC_CONTEXT,
-                Some(new_context.context_id.into()),
-                anyhow::anyhow!("Context with ID already exists"),
-                tonic::Code::AlreadyExists,
-            ));
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(new_context.context_id.into()),
+                    e,
+                    tonic::Code::Internal,
+                )
+            })?;
+        let in_session_maker = self
+            .session_maker
+            .context_exists(new_context.context_id())
+            .await;
+        match (stored_context, in_session_maker) {
+            (None, false) => {
+                // The context does not exist anywhere
+            }
+            (Some(stored_context), true) => {
+                let response = self
+                    .inner
+                    .confirm_existing_mpc_context(&verified, &stored_context)?;
+                return Ok(Response::new(response));
+            }
+            // Only a fully created context is confirmed again, otherwise we fail
+            (stored_context, in_session_maker) => {
+                return Err(MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some(new_context.context_id.into()),
+                    anyhow::anyhow!(
+                        "Context with ID already exists, but only partially \
+                         (in storage: {}, in session maker: {in_session_maker})",
+                        stored_context.is_some()
+                    ),
+                    tonic::Code::AlreadyExists,
+                ));
+            }
         }
+
+        // Sign first, so that a signing failure stores nothing.
+        let response = self.inner.confirm_new_mpc_context(&verified)?;
+
         atomic_update_context(
             &self.session_maker,
             &self.inner.crypto_storage,
             my_role,
-            &new_context,
+            new_context,
         )
         .await
         .map_err(|e| {
@@ -1294,7 +1378,7 @@ where
             "Created MPC context"
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(response))
     }
 
     async fn destroy_mpc_context(
@@ -1476,6 +1560,7 @@ mod tests {
             signing::SigningSchemeType,
         },
         engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
+        testing::helpers::new_mpc_context_request,
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1496,7 +1581,6 @@ mod tests {
         identifiers::ContextId,
         kms::v1::{
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
-            NewMpcContextRequest,
         },
         rpc_types::{KMSType, PrivDataType},
     };
@@ -1649,9 +1733,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -1683,15 +1765,6 @@ mod tests {
                     .get(&SigningSchemeType::Ecdsa256k1),
                 Some(verification_key.verf_key_id().as_slice())
             );
-        }
-        // Try to make a context with the same context ID (should fail)
-        {
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
-            let response = context_manager.new_mpc_context(request).await;
-            // Should fail since the same ID is used
-            assert!(response.is_err());
         }
 
         // Seed some private data under an epoch in the same storage. Nothing links it to the
@@ -1738,9 +1811,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(2, context_manager.session_maker.context_count().await);
 
@@ -1820,13 +1891,10 @@ mod tests {
         };
 
         let rejected_context_id = ContextId::from_bytes([30u8; 32]);
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(
-                make_context(rejected_context_id, vec![])
-                    .try_into()
-                    .unwrap(),
-            ),
-        });
+        let request = Request::new(new_mpc_context_request(make_context(
+            rejected_context_id,
+            vec![],
+        )));
         let error = context_manager
             .new_mpc_context(request)
             .await
@@ -1852,13 +1920,10 @@ mod tests {
             pcr1: vec![1u8; 48],
             pcr2: vec![2u8; 48],
         }];
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(
-                make_context(accepted_context_id, pcr_values)
-                    .try_into()
-                    .unwrap(),
-            ),
-        });
+        let request = Request::new(new_mpc_context_request(make_context(
+            accepted_context_id,
+            pcr_values,
+        )));
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(context_manager.session_maker.context_count().await, 1);
     }
@@ -1898,12 +1963,19 @@ mod tests {
             false,
             Arc::new(TaskTracker::new()),
         );
-        let request_a = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
-        let request_b = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        // The two requests carry different contexts under the same ID, so only one of them can be
+        // created; an identical request would only be confirmed again.
+        let different_context = ContextInfo {
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 2,
+                patch: 0,
+                tag: None,
+            },
+            ..new_context.clone()
+        };
+        let request_a = Request::new(new_mpc_context_request(new_context));
+        let request_b = Request::new(new_mpc_context_request(different_context));
 
         let (result_a, result_b) = tokio::join!(
             context_manager.new_mpc_context(request_a),
@@ -1954,9 +2026,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
 
         // create the context manager and store the new context
         {
@@ -2074,9 +2144,7 @@ mod tests {
                 make_context(context_without_pcr_id, vec![]),
                 make_context(context_with_pcr_id, pcr_values),
             ] {
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(context));
                 context_manager.new_mpc_context(request).await.unwrap();
             }
         }
@@ -2165,9 +2233,7 @@ mod tests {
                     threshold: 0,
                     pcr_values: vec![],
                 };
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(new_context));
                 context_manager.new_mpc_context(request).await.unwrap();
             }
 
@@ -2257,9 +2323,7 @@ mod tests {
                     pcr_values: vec![],
                 };
 
-                let request = Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context.try_into().unwrap()),
-                });
+                let request = Request::new(new_mpc_context_request(new_context));
 
                 context_manager.new_mpc_context(request).await.unwrap();
             }
@@ -2382,9 +2446,7 @@ mod tests {
                 false,
                 Arc::new(TaskTracker::new()),
             );
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
+            let request = Request::new(new_mpc_context_request(new_context));
             context_manager.new_mpc_context(request).await.unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
         }
@@ -3302,9 +3364,7 @@ mod tests {
         );
 
         // Create a new context
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.clone().try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
         let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
@@ -3324,13 +3384,6 @@ mod tests {
                 .unwrap();
             assert_eq!(*stored_context.context_id(), context_id);
         }
-
-        // Try to create the same context with the same context ID which is not allowed (should fail)
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
-        let response = context_manager.new_mpc_context(request).await;
-        assert!(response.is_err());
 
         // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
         // remaining context, so the target must not be the only one in storage.
@@ -3356,9 +3409,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
@@ -3434,9 +3485,7 @@ mod tests {
         assert!(!result.unwrap());
 
         // Create a new context
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(new_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Now mpc_context_exists_and_consistent should return true
@@ -3470,9 +3519,7 @@ mod tests {
             threshold: 0,
             pcr_values: vec![],
         };
-        let request = Request::new(NewMpcContextRequest {
-            new_context: Some(keeper_context.try_into().unwrap()),
-        });
+        let request = Request::new(new_mpc_context_request(keeper_context));
         context_manager.new_mpc_context(request).await.unwrap();
 
         // Destroy the context
@@ -3537,9 +3584,7 @@ mod tests {
                 pcr_values: vec![],
             };
 
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(new_context.try_into().unwrap()),
-            });
+            let request = Request::new(new_mpc_context_request(new_context));
             context_manager.new_mpc_context(request).await.unwrap();
         }
 

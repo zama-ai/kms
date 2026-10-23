@@ -1,4 +1,5 @@
 use super::*;
+use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
 use crate::{
     cryptography::signatures::{RootSigningSeed, SigningSchemeType},
     cryptography::signing::identity::NodeSigningIdentity,
@@ -456,7 +457,6 @@ async fn copy_compressed_key_to_original_signs_under_every_requested_scheme() {
         sk.clone(),
         RootSigningSeed::random(&mut AesRng::seed_from_u64(201)),
     );
-    let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
     crypto_storage
         .copy_compressed_key_to_original(
@@ -465,7 +465,7 @@ async fn copy_compressed_key_to_original_signs_under_every_requested_scheme() {
             &old_key_id,
             &epoch_id,
             &identity,
-            &requested,
+            &ECDSA_AND_MLDSA65,
             &domain,
             meta_store.clone(),
         )
@@ -485,7 +485,7 @@ async fn copy_compressed_key_to_original_signs_under_every_requested_scheme() {
             .iter()
             .map(|entry| entry.scheme)
             .collect::<Vec<_>>(),
-        requested.to_vec(),
+        ECDSA_AND_MLDSA65.to_vec(),
         "the re-signed record must name every requested scheme, in canonical order"
     );
 }
