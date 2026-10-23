@@ -1141,4 +1141,176 @@ mod tests {
             .contains(UNKNOWN_PARTY)
         );
     }
+
+    /// Checks that two distinct signers meet a quorum of 2, and that one signer counted twice
+    /// does not.
+    fn assert_replayed_signer_rejected(signer_1: (u32, Address), signer_2: (u32, Address)) {
+        assert_ne!(signer_1, signer_2);
+        ensure_distinct_signers("keygen", &[signer_1, signer_2], 2).unwrap();
+        let err = ensure_distinct_signers("keygen", &[signer_1, signer_1], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Returns the keyset of the central test fixture: the compressed keyset, its compact
+    /// public key, and the server key that the compressed keyset decompresses to.
+    async fn test_keyset() -> (CompressedXofKeySet, tfhe::CompactPublicKey, ServerKey) {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let key_id = &TEST_CENTRAL_KEY_ID;
+        ensure_central_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            key_id,
+            &OTHER_CENTRAL_TEST_ID,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let key_id = RequestId::from_str(&key_id.to_string()).unwrap();
+        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
+            &pub_storage,
+            &key_id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+        let public_key: tfhe::CompactPublicKey = read_versioned_at_request_id(
+            &pub_storage,
+            &key_id,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let (_, server_key) = compressed_keyset.decompress().into_raw_parts();
+        (compressed_keyset, public_key, server_key)
+    }
+
+    /// An uncompressed keyset signature verifies as the party that signed the server key and
+    /// public key digests. It fails for a client that does not know that party, and for
+    /// another key ID.
+    #[tokio::test]
+    async fn test_uncompressed_keyset_signatures() {
+        let (_, public_key, server_key) = test_keyset().await;
+        let mut rng = AesRng::seed_from_u64(0x5EED);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let client = client_knowing(verf_key.clone());
+        let key_id = RequestId::from_str(&TEST_CENTRAL_KEY_ID.to_string()).unwrap();
+        let other_key_id = RequestId::from_str(&OTHER_CENTRAL_TEST_ID.to_string()).unwrap();
+        let prep_id = &INSECURE_PREPROCESSING_ID;
+
+        let sol_struct = KeygenVerification::new_uncompressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap(),
+            hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap(),
+            default_extra_data(),
+        );
+        let sig = compute_eip712_signature(&sig_key, &sol_struct, &dummy_domain()).unwrap();
+        let check = |client: &Client, key_id: &RequestId| {
+            check_uncompressed_keyset_signatures(
+                client,
+                &public_key,
+                &server_key,
+                prep_id,
+                key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &dummy_domain(),
+                default_extra_data(),
+            )
+        };
+
+        assert_eq!(check(&client, &key_id).unwrap(), (1, verf_key.address()));
+
+        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
+        let err = check(&stranger, &key_id).unwrap_err().to_string();
+        assert!(err.contains(UNKNOWN_PARTY), "unexpected error: {err}");
+
+        assert!(check(&client, &other_key_id).is_err());
+    }
+
+    /// Every keygen response verifies on its own, so one party's response returned twice must
+    /// not count as two signers. This holds for both keyset layouts.
+    #[tokio::test]
+    async fn test_keyset_responses_reject_replayed_signer() {
+        let (compressed_keyset, public_key, server_key) = test_keyset().await;
+        let mut rng = AesRng::seed_from_u64(0x2E91A7);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let key_id = RequestId::from_str(&TEST_CENTRAL_KEY_ID.to_string()).unwrap();
+        let prep_id = &INSECURE_PREPROCESSING_ID;
+        let domain = dummy_domain();
+        let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+
+        let uncompressed = KeygenVerification::new_uncompressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap(),
+            public_key_digest.clone(),
+            default_extra_data(),
+        );
+        let uncompressed_signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &uncompressed, &domain).unwrap();
+            check_uncompressed_keyset_signatures(
+                &client,
+                &public_key,
+                &server_key,
+                prep_id,
+                &key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        assert_replayed_signer_rejected(
+            uncompressed_signer(&sig_key_1),
+            uncompressed_signer(&sig_key_2),
+        );
+
+        let compressed = KeygenVerification::new_compressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap(),
+            public_key_digest,
+            default_extra_data(),
+        );
+        let compressed_signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &compressed, &domain).unwrap();
+            check_compressed_keyset_signatures(
+                &client,
+                &compressed_keyset,
+                &public_key,
+                prep_id,
+                &key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        assert_replayed_signer_rejected(
+            compressed_signer(&sig_key_1),
+            compressed_signer(&sig_key_2),
+        );
+    }
 }

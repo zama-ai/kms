@@ -669,4 +669,75 @@ mod tests {
             .to_string();
         assert!(err.contains("the CRS supports"), "unexpected error: {err}");
     }
+
+    /// Every CRS gen response verifies on its own, so one party's response returned twice
+    /// must not count as two signers.
+    #[tokio::test]
+    async fn test_crsgen_responses_reject_replayed_signer() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let crs_id = &TEST_CENTRAL_CRS_ID;
+        ensure_central_crs_exists(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            crs_id,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let crs: CompactPkeCrs = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let mut rng = AesRng::seed_from_u64(0xC125);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let domain = crate::dummy_domain();
+        let sol_struct = CrsgenVerification::new(
+            crs_id,
+            max_num_bits_from_crs(&crs),
+            hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap(),
+            default_extra_data(),
+        );
+        let signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &sol_struct, &domain).unwrap();
+            check_crsgen_signatures(
+                &client,
+                &crs,
+                crs_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        let (signer_1, signer_2) = (signer(&sig_key_1), signer(&sig_key_2));
+        assert_ne!(signer_1, signer_2);
+
+        ensure_distinct_signers("CRS gen", &[signer_1, signer_2], 2).unwrap();
+        let err = ensure_distinct_signers("CRS gen", &[signer_1, signer_1], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
+    }
 }
