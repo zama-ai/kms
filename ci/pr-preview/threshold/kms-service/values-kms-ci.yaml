@@ -38,10 +38,15 @@ kmsCore:
     enabled: false
   nodeSelector:
     karpenter.sh/nodepool: kms-bench-spot-64
-    # To bound CPU to the enclave's 52 cores on the same c7a family, pin a
-    # ~52-vCPU on-demand node instead. Uncomment (and ensure a nodepool can
-    # actually provision it — the spot-64 pool above may not):
-    # node.kubernetes.io/instance-type: c7a.13xlarge
+    # Pin the party nodes to the enclave node group's instance type (tkms-infra
+    # enclaveNodeGroup.instanceType), so the non-enclave preview is the enclave
+    # one minus the enclave and the vsock tunnel: 64 vCPU / 128 GiB, 25 Gbps
+    # NIC, one party per node. Karpenter only honours this if the pool's
+    # requirements allow the type — check with
+    #   kubectl get nodepool kms-bench-spot-64 -o yaml
+    # (instance-family / instance-size / capacity-type requirements); pods stay
+    # Pending otherwise. Capacity type stays whatever the pool offers (spot).
+    node.kubernetes.io/instance-type: c7a.16xlarge
   affinity:
     # One party per host, matching the enclave's podAntiAffinity.
     podAntiAffinity:
