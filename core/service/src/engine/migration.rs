@@ -400,7 +400,7 @@ where
 }
 
 /// Parse the migration config into a map of context IDs to epoch IDs, ensuring that each epoch ID is unique and each context ID is unique.
-/// Also validates that the default context ID and default epoch ID are present in the migration config.
+/// Also validates that the default context ID, if listed, contains the default epoch ID.
 fn parse_migration_map(
     migration_config: &MigrationConfig,
 ) -> anyhow::Result<std::collections::HashMap<ContextId, Vec<EpochId>>> {
@@ -432,20 +432,25 @@ fn parse_migration_map(
         }
         context_to_epoch_map.insert(context_id, cur_epochs);
     }
-    match context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT) {
-        Some(default) => {
-            if !default.contains(&DEFAULT_EPOCH_ID) {
-                anyhow::bail!(
-                    "Default epoch ID {} should be part of the migration config for default context ID {}",
-                    *DEFAULT_EPOCH_ID,
-                    *DEFAULT_MPC_CONTEXT
-                );
-            }
-        }
-        None => anyhow::bail!(
-            "Default context ID {} should be part of the migration config",
+    // kms-init always creates the default epoch under the default context, so a default context
+    // without it is an operator error.
+    if seen_epochs.contains(&*DEFAULT_EPOCH_ID)
+        && !context_to_epoch_map.contains_key(&*DEFAULT_MPC_CONTEXT)
+    {
+        anyhow::bail!(
+            "Default epoch ID {} must belong to default context ID {}",
+            *DEFAULT_EPOCH_ID,
             *DEFAULT_MPC_CONTEXT
-        ),
+        );
+    }
+    if let Some(context_id) = context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT)
+        && !context_id.contains(&DEFAULT_EPOCH_ID)
+    {
+        anyhow::bail!(
+            "Default context ID {} must contain the default epoch ID {}",
+            *DEFAULT_MPC_CONTEXT,
+            *DEFAULT_EPOCH_ID
+        );
     }
     Ok(context_to_epoch_map)
 }
@@ -2685,30 +2690,36 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_migration_map_missing_default_context() {
-        // Only a non-default context is present.
+    fn test_parse_migration_map_without_default_context() {
+        // A party that joined through a later context has no default context to list.
+        let mut rng = AesRng::seed_from_u64(1);
+        let context_id = ContextId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
+        let config = migration_config(vec![(context_id.to_string(), vec![epoch_id.to_string()])]);
+
+        let map = parse_migration_map(&config).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&context_id).unwrap(), &vec![epoch_id]);
+    }
+
+    #[test]
+    fn test_parse_migration_map_default_context_without_default_epoch() {
+        // A listed default context must contain the default epoch.
+        let epoch_id = EpochId::new_random(&mut AesRng::seed_from_u64(2));
         let config = migration_config(vec![(
-            LEGACY_DEFAULT_MPC_CONTEXT.to_string(),
-            vec![LEGACY_DEFAULT_EPOCH_ID.to_string()],
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![epoch_id.to_string()],
         )]);
 
         let err = parse_migration_map(&config).unwrap_err().to_string();
         assert!(
-            err.contains("Default context ID"),
+            err.contains("must contain the default epoch ID"),
             "unexpected error: {err}"
         );
-    }
-
-    #[test]
-    fn test_parse_migration_map_missing_default_epoch() {
-        // Default context present, but it does not list the default epoch.
-        let config = migration_config(vec![(
-            DEFAULT_MPC_CONTEXT.to_string(),
-            vec![LEGACY_DEFAULT_EPOCH_ID.to_string()],
-        )]);
-
-        let err = parse_migration_map(&config).unwrap_err().to_string();
-        assert!(err.contains("Default epoch ID"), "unexpected error: {err}");
+        assert!(
+            err.contains(&DEFAULT_EPOCH_ID.to_string()),
+            "error should name the default epoch: {err}"
+        );
     }
 
     #[test]
@@ -2863,6 +2874,62 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_without_default_epoch() {
+        let mut storage = RamStorage::new();
+        // A party rebuilt and onboarded through later contexts holds PRSS only for those contexts'
+        // epochs, and none for the default epoch.
+        let mut rng = AesRng::seed_from_u64(4);
+        let (context_a, epoch_a) = (
+            ContextId::new_random(&mut rng),
+            EpochId::new_random(&mut rng),
+        );
+        let (context_b, epoch_b) = (
+            ContextId::new_random(&mut rng),
+            EpochId::new_random(&mut rng),
+        );
+        store_combined_prss_at_epoch(&mut storage, &epoch_a, 13, 4).await;
+        store_combined_prss_at_epoch(&mut storage, &epoch_b, 13, 4).await;
+
+        let config = migration_config(vec![
+            (context_a.to_string(), vec![epoch_a.to_string()]),
+            (context_b.to_string(), vec![epoch_b.to_string()]),
+        ]);
+        threshold_prss_to_epoch(&mut storage, &config)
+            .await
+            .unwrap();
+
+        for (context_id, epoch_id) in [(context_a, epoch_a), (context_b, epoch_b)] {
+            let epoch: EpochData = read_versioned_at_request_id(
+                &storage,
+                &epoch_id.into(),
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(epoch.context_id, context_id);
+        }
+        assert!(
+            !storage
+                .data_exists(
+                    &(*DEFAULT_EPOCH_ID).into(),
+                    &PrivDataType::EpochData.to_string()
+                )
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .data_exists(
+                    &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+                    #[expect(deprecated)]
+                    &PrivDataType::PrssSetupCombined.to_string()
+                )
+                .await
+                .unwrap()
         );
     }
 

@@ -380,7 +380,7 @@ Crypto provider should exist at this point"
             ) {
                 Ok(_) => return Ok(()),
                 Err(e) => {
-                    tracing::error!(
+                    tracing::debug!(
                         "attestation validation failed for context {}: {}",
                         candidate.context_id,
                         e
