@@ -2239,14 +2239,15 @@ pub(crate) mod tests {
             &extra_data,
         );
 
-        assert_eq!(inner.signatures.len(), schemes.len());
+        assert_eq!(inner.signatures.len(), ECDSA_AND_MLDSA65.len());
         for stored in &inner.signatures {
             match stored.scheme {
                 SigningSchemeType::Ecdsa256k1 => {
                     assert_eq!(stored.signature, inner.external_signature);
                 }
                 scheme => {
-                    let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
+                    let signed =
+                        scheme_bound_preimage(&ECDSA_AND_MLDSA65, &expected_payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {

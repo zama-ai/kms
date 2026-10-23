@@ -485,7 +485,7 @@ async fn copy_compressed_key_to_original_signs_under_every_requested_scheme() {
             .iter()
             .map(|entry| entry.scheme)
             .collect::<Vec<_>>(),
-        requested.to_vec(),
+        ECDSA_AND_MLDSA65.to_vec(),
         "the re-signed record must name every requested scheme, in canonical order"
     );
 }

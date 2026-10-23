@@ -194,8 +194,8 @@ async fn read_all_verf_keys<S: StorageReader>(storage: &S) -> anyhow::Result<Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use super::*;
+    use crate::cryptography::signatures::test_support::ECDSA_AND_MLDSA65;
     use crate::cryptography::signatures::{
         NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
     };
@@ -352,11 +352,7 @@ mod tests {
     #[test]
     fn the_legacy_fallback_does_not_satisfy_a_post_quantum_request() {
         let identity = seeded_identity(13);
-        let client = client_requesting(
-            &identity,
-            true,
-            &ECDSA_AND_MLDSA65,
-        );
+        let client = client_requesting(&identity, true, &ECDSA_AND_MLDSA65);
 
         let err = verify_with_legacy(
             &client,
