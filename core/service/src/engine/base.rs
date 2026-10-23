@@ -20,7 +20,9 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_versioned, serialize_hash_element};
+use kms_grpc::EpochId;
 use kms_grpc::RequestId;
+use kms_grpc::kms;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
     TypedSignature, UserDecryptionResponsePayload,
@@ -82,6 +84,8 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 /// Domain separator for public decryption operations
 pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+/// Domain separator for destroying an epoch
+pub const DSEP_DESTROY_EPOCH: DomainSep = *b"DSTY_EPO";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
@@ -252,6 +256,53 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     Ok(RequestId::from_str(&res_hex)?)
 }
 
+/// The result payload that every non-ECDSA scheme signs for an epoch destruction.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum DestroyMpcEpochSignedPayloadVersions {
+    V0(DestroyMpcEpochSignedPayload),
+}
+
+/// The confirmation that an epoch no longer exists, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(DestroyMpcEpochSignedPayloadVersions)]
+pub struct DestroyMpcEpochSignedPayload {
+    pub epoch_id: EpochId,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for DestroyMpcEpochSignedPayload {
+    const NAME: &'static str = "DestroyMpcEpochSignedPayload";
+}
+
+impl TryFrom<kms::v1::DestroyMpcEpochPayload> for DestroyMpcEpochSignedPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(value: kms::v1::DestroyMpcEpochPayload) -> Result<Self, Self::Error> {
+        let epoch_id = value
+            .epoch_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing epoch_id"))?
+            .try_into()?;
+        Ok(DestroyMpcEpochSignedPayload {
+            epoch_id,
+            extra_data: value.extra_data,
+        })
+    }
+}
+
+impl From<&DestroyMpcEpochSignedPayload> for kms::v1::DestroyMpcEpochPayload {
+    fn from(value: &DestroyMpcEpochSignedPayload) -> Self {
+        kms::v1::DestroyMpcEpochPayload {
+            epoch_id: Some(value.epoch_id.into()),
+            extra_data: value.extra_data.clone(),
+        }
+    }
+}
+
 /// The result payload that every non-ECDSA scheme signs for a preprocessing
 /// result.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -260,6 +311,11 @@ pub enum PrepKeygenSignedPayloadVersions {
 }
 
 /// The preprocessing result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(PrepKeygenSignedPayloadVersions)]
 pub struct PrepKeygenSignedPayload {
@@ -278,6 +334,11 @@ pub enum KeygenSignedPayloadVersions {
 }
 
 /// The keygen result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeygenSignedPayloadVersions)]
 pub struct KeygenSignedPayload {
@@ -299,6 +360,11 @@ pub enum CrsSignedPayloadVersions {
 }
 
 /// The CRS generation result, in the form non-ECDSA schemes sign it.
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Signatures over it are stored, and re-verified after upgrades and
+/// rollbacks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsSignedPayloadVersions)]
 pub struct CrsSignedPayload {
@@ -341,6 +407,10 @@ pub enum PublicDecSignedPayloadVersions {
 /// The public decryption result, in the form non-ECDSA schemes sign it.
 ///
 /// `response_bytes` are the serialized [`PublicDecryptionResponsePayload`].
+///
+/// WARNING: the non-ECDSA signatures cover the exact encoding of this struct, including its version
+/// and its `Named::NAME`. Any change to it, even through a new version, makes signatures over the
+/// old encoding fail to verify. Align with the smart contract team before changing it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(PublicDecSignedPayloadVersions)]
 pub struct PublicDecSignedPayload {

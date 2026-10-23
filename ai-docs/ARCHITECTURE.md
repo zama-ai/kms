@@ -320,6 +320,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   instead, and covers the material of every request. `DestroyMpcContext` takes
   a stable snapshot of the context's registered epochs and erases their secret
   shares before it forgets the context and removes its TLS trust-root references.
+  `DestroyMpcEpoch` validates the whole request before deleting anything, and
+  returns a signature over the epoch ID confirming that it no longer exists. An
+  epoch that is already absent, or never existed, is confirmed too, so a repeated
+  call succeeds.
 
   A trust root remains if another live context uses it. This order leaves no
   usable key shares after the party set retires. The kms-connector is the source

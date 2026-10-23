@@ -1147,12 +1147,49 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     })
 }
 
+/// A validated and parsed `DestroyMpcEpoch` request.
+#[derive(Debug)]
+pub struct VerifiedDestroy<Id> {
+    /// The epoch to destroy.
+    pub id: Id,
+    /// The EIP-712 domain the confirmation is signed under.
+    pub domain: Eip712Domain,
+    /// Extra data bound into the signatures and echoed back in the response.
+    pub extra_data: Vec<u8>,
+    /// The schemes to sign the confirmation under.
+    pub signing_schemes: Vec<SigningSchemeType>,
+}
+
+/// A validated and parsed `DestroyMpcEpoch` request.
+pub type VerifiedDestroyMpcEpoch = VerifiedDestroy<EpochId>;
+
+/// Parse a `DestroyMpcEpochRequest` from its fields.
+pub(crate) fn unpack_destroy_req<'a, Id: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    id: &'a Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+    domain: Option<&kms_grpc::kms::v1::Eip712DomainMsg>,
+    extra_data: &[u8],
+    signing_schemes: &[i32],
+) -> anyhow::Result<VerifiedDestroy<Id>> {
+    let id: Id = parse_optional_grpc_request_id(id, id_type)?;
+    let domain = optional_protobuf_to_alloy_domain(domain)?;
+    let signing_schemes = SigningSchemeType::resolve_requested(signing_schemes)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(VerifiedDestroy {
+        id,
+        domain,
+        extra_data: extra_data.to_vec(),
+        signing_schemes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::cryptography::signing::VerfKeySet;
     use crate::cryptography::signing::composite::{
         sign_result_entries, wire_scheme_bound_preimage,
     };
+    use crate::engine::validation::{VerifiedDestroyMpcEpoch, unpack_destroy_req};
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
         RequestId,
@@ -2447,6 +2484,40 @@ mod tests {
                 .expect_err("unknown signing scheme must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
+    }
+
+    /// `unpack_destroy_req` parses the fields of a `DestroyMpcEpoch` request, and rejects a request
+    /// without an ID or a domain, or naming an unknown scheme.
+    #[test]
+    fn test_unpack_destroy_req() {
+        let epoch_id: kms_grpc::EpochId = derive_request_id("unpack_destroy_req").unwrap().into();
+        let proto_id: Option<v1::RequestId> = Some(epoch_id.into());
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let ecdsa = [v1::SigningSchemeType::Ecdsa256k1 as i32];
+        let mldsa87 = [v1::SigningSchemeType::Mldsa87 as i32];
+        let unpack = |id: &Option<v1::RequestId>,
+                      domain: Option<&v1::Eip712DomainMsg>,
+                      schemes: &[i32]|
+         -> anyhow::Result<VerifiedDestroyMpcEpoch> {
+            unpack_destroy_req(id, RequestIdParsingErr::Epoch, domain, &[1, 2], schemes)
+        };
+
+        let verified = unpack(&proto_id, Some(&domain), &mldsa87).unwrap();
+        assert_eq!(verified.id, epoch_id);
+        assert_eq!(verified.domain, dummy_domain());
+        assert_eq!(verified.extra_data, vec![1, 2]);
+        assert_eq!(verified.signing_schemes, vec![SigningSchemeType::MlDsa87]);
+
+        // No requested scheme means ECDSA.
+        let verified = unpack(&proto_id, Some(&domain), &[]).unwrap();
+        assert_eq!(
+            verified.signing_schemes,
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        assert!(unpack(&None, Some(&domain), &ecdsa).is_err());
+        assert!(unpack(&proto_id, None, &ecdsa).is_err());
+        assert!(unpack(&proto_id, Some(&domain), &[9999]).is_err());
     }
 
     #[test]

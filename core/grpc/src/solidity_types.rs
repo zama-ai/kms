@@ -1,9 +1,9 @@
 //! Solidity types used in EIP-712 signing and verification.
-//! WARNING: any changes to these structures is a breaking change.
+//! WARNING: any changes to these structures is a breaking change. Align with the smart contract
+//! team before changing any of them, since the contracts verify signatures over them.
 
+use crate::{EpochId, RequestId};
 use alloy_primitives::U256;
-
-use crate::RequestId;
 
 alloy_sol_types::sol! {
     struct UserDecryptResponseVerification {
@@ -88,6 +88,24 @@ impl PrepKeygenVerification {
     pub fn new(preproc_id: &RequestId, extra_data: Vec<u8>) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            extraData: extra_data.into(),
+        }
+    }
+}
+
+alloy_sol_types::sol! {
+    struct EpochDestructionVerification {
+        /// @notice The ID of the destroyed epoch.
+        uint256 destroyedEpochId;
+        /// @notice Extra data for client-specific context.
+        bytes extraData;
+    }
+}
+
+impl EpochDestructionVerification {
+    pub fn new(epoch_id: &EpochId, extra_data: Vec<u8>) -> Self {
+        Self {
+            destroyedEpochId: U256::from_be_slice(epoch_id.as_bytes()),
             extraData: extra_data.into(),
         }
     }

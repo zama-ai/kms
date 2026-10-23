@@ -8,13 +8,16 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::PubDataType,
+    rpc_types::{PubDataType, alloy_to_protobuf_domain},
 };
 use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use tfhe::zk::CompactPkeCrs;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -494,23 +497,42 @@ pub(crate) async fn do_new_epoch(
 }
 
 pub(crate) async fn do_destroy_mpc_epoch(
+    internal_client: &Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    cc_conf: &CoreClientConfig,
     epoch_id: &EpochId,
 ) -> anyhow::Result<()> {
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`), consistent with
+    // the keygen/CRS commands.
+    let domain = cc_conf.default_domain()?;
+    let extra_data = Vec::new();
+    // Request exactly the schemes the client verifies against, so every one of them is checked.
+    let request = DestroyMpcEpochRequest {
+        epoch_id: Some((*epoch_id).into()),
+        domain: Some(alloy_to_protobuf_domain(&domain)?),
+        extra_data: extra_data.clone(),
+        signing_schemes: internal_client.signing_schemes_proto(),
+    };
+
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
-        let epoch_cloned = (*epoch_id).into();
-        req_tasks.spawn(async move {
-            cur_client
-                .destroy_mpc_epoch(DestroyMpcEpochRequest {
-                    epoch_id: Some(epoch_cloned),
-                })
-                .await
-        });
+        let req_cloned = request.clone();
+        req_tasks.spawn(async move { cur_client.destroy_mpc_epoch(req_cloned).await });
     }
+    let mut signers = HashSet::new();
     while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
+        let response = inner??.into_inner();
+        let party_id = internal_client.process_destroy_mpc_epoch_response(
+            &response,
+            epoch_id,
+            &extra_data,
+            &domain,
+        )?;
+        anyhow::ensure!(
+            signers.insert(party_id),
+            "party {party_id} confirmed the destruction of epoch {epoch_id} more than once"
+        );
     }
 
     Ok(())

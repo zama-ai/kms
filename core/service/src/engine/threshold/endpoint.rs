@@ -362,7 +362,7 @@ where
     async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<DestroyMpcEpochResponse>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_EPOCH);
         Ok(self.epoch_manager.destroy_mpc_epoch(request).await?)
     }
