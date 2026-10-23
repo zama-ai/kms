@@ -57,8 +57,15 @@
 # Workflow inputs (workflow_dispatch)
 # -------------------------------------
 #   old_image_tag          (string, required)
-#                            Baseline KMS Core image tag for initial deploy from
-#                            the legacy, pre-split repositories.
+#                            Baseline KMS Core image tag for the initial deploy,
+#                            from the repositories that old_image_repository
+#                            selects.
+#   old_image_repository   (choice insecure|legacy, default legacy)
+#                            Repositories for the old side, as for
+#                            new_image_repository. The baseline runs insecure
+#                            key-gen, which only insecure builds support:
+#                            legacy works for releases before the split (up to
+#                            v0.14.x). For v0.15 and later, use insecure.
 #   new_image_tag          (string, required)
 #                            Target KMS Core image tag, from the repositories
 #                            that new_image_repository selects (ignored if
@@ -88,10 +95,15 @@
 #                            Enable core-client tracing logs.
 #   build                  (boolean, default false)
 #                            If true, build new images via docker-build.yml and use
-#                            that tag as NEW; kms_branch applies to the build.
-#   kms_branch             (string, optional)
-#                            Branch to build from when build=true; also used with
-#                            new_kms_chart_version=repository for chart checkout.
+#                            that tag as NEW. The build always uses the ref the
+#                            workflow is dispatched from (docker-build.yml takes
+#                            no ref). To test another branch, run docker-build on
+#                            it and pass its tag as new_image_tag with build=false.
+#   kms_branch             (string, optional, default: the dispatched ref)
+#                            Branch whose chart, scripts and Argo YAMLs the run
+#                            checks out when new_kms_chart_version=repository.
+#                            Does not select what build=true builds: with
+#                            build=true it must be empty or the dispatched ref.
 #   fhe_params             (choice Default|Test, default Test)
 #                            FHE parameters for preprocessing and keygen in Argo.
 #   old_kms_chart_version  (string, default 1.5.1)
@@ -139,6 +151,14 @@ on:
         description: 'Old (baseline) KMS Core image tag'
         required: true
         type: string
+      old_image_repository:
+        description: 'Repositories for the old side: legacy (pre-split repositories, releases up to v0.14.x) or insecure (split *-insecure repositories, needed for v0.15+ because the baseline runs insecure key-gen).'
+        required: true
+        default: 'legacy'
+        type: choice
+        options:
+          - legacy
+          - insecure
       new_image_tag:
         description: 'New KMS Core image tag to roll out'
         required: true
@@ -166,7 +186,7 @@ on:
         default: false
         type: boolean
       kms_branch:
-        description: 'KMS branch to build from (only used when build=true)'
+        description: 'Branch whose chart, scripts and Argo YAMLs are checked out when new_kms_chart_version=repository (default: the dispatched ref). Does NOT select what build=true builds; with build=true leave it empty or set it to the dispatched ref.'
         required: false
         type: string
       fhe_params:
@@ -229,7 +249,9 @@ jobs:
   # Only runs when build=true to create the "new" image
   ############################################################################
   docker-build:
-    if: inputs.build == true
+    # Skipped when kms_branch names another ref: docker-build.yml always builds the
+    # dispatched ref. "Determine image tags" then fails the run with the reason.
+    if: inputs.build == true && (inputs.kms_branch == '' || inputs.kms_branch == github.ref_name)
     name: rolling-upgrade/docker-build
     permissions:
       actions: read # Required to read workflow run information
@@ -260,9 +282,11 @@ jobs:
       TLS: 'true'
       NAMESPACE: 'kms-ci'
       PATH_SUFFIX: 'kms-enclave-ci'
-      OLD_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
-      OLD_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
-      OLD_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
+      # Each side comes from the pre-split repositories (release tags up to
+      # v0.14.x) or from the split *-insecure repositories.
+      OLD_KMS_CORE_IMAGE_NAME: ${{ inputs.old_image_repository == 'insecure' && 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure' || 'hub.zama.org/ghcr/zama-ai/kms/core-service' }}
+      OLD_KMS_CORE_CLIENT_IMAGE_NAME: ${{ inputs.old_image_repository == 'insecure' && 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure' || 'hub.zama.org/ghcr/zama-ai/kms/core-client' }}
+      OLD_KMS_CORE_ENCLAVE_IMAGE_NAME: ${{ inputs.old_image_repository == 'insecure' && 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave' }}
       # The new side comes from the split *-insecure repositories (nightly and
       # branch builds) or from the pre-split repositories (release tags).
       NEW_KMS_CORE_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-service' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure' }}
@@ -289,8 +313,16 @@ jobs:
           INPUT_TEST_PROFILE: ${{ inputs.test_profile }}
           INPUT_BUILD: ${{ inputs.build }}
           INPUT_NEW_REPOSITORY: ${{ inputs.new_image_repository }}
+          INPUT_OLD_REPOSITORY: ${{ inputs.old_image_repository }}
+          INPUT_KMS_BRANCH: ${{ inputs.kms_branch }}
+          DISPATCHED_REF: ${{ github.ref_name }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
+
+          if [[ "${INPUT_BUILD}" == "true" && -n "${INPUT_KMS_BRANCH}" && "${INPUT_KMS_BRANCH}" != "${DISPATCHED_REF}" ]]; then
+            echo "ERROR: build=true builds the dispatched ref (${DISPATCHED_REF}), not kms_branch (${INPUT_KMS_BRANCH}). Run docker-build on ${INPUT_KMS_BRANCH} and pass its tag as new_image_tag with build=false, or dispatch this workflow from ${INPUT_KMS_BRANCH}."
+            exit 1
+          fi
 
           if [[ "${INPUT_BUILD}" == "true" && "${INPUT_NEW_REPOSITORY}" == "legacy" ]]; then
             echo "ERROR: build=true pushes the new images to the insecure repositories. Set new_image_repository=insecure, or set build=false to roll out a release tag from the legacy repositories."
@@ -335,7 +367,7 @@ jobs:
             fi
           fi
 
-          echo "Old image tag:         ${OLD_TAG}"
+          echo "Old image tag:         ${OLD_TAG} (${INPUT_OLD_REPOSITORY} repositories, e.g. ${OLD_KMS_CORE_ENCLAVE_IMAGE_NAME})"
           echo "New image tag:         ${NEW_TAG} (${INPUT_NEW_REPOSITORY} repositories, e.g. ${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME})"
           echo "Core-client (harness): ${CLIENT_IMAGE_NAME}:${CLIENT_TAG}"
 
@@ -521,7 +553,8 @@ jobs:
           # The generated key-id is reused by the mixed-state decrypt runs below.
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/baseline-workflow.yaml
-          sed -i "s|core-client-insecure:<client-version>|core-client:<client-version>|g" /tmp/baseline-workflow.yaml
+          # The harness comes from the old side's repositories (old_image_repository).
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${OLD_KMS_CORE_CLIENT_IMAGE_NAME}:<client-version>|g" /tmp/baseline-workflow.yaml
           # Baseline pins the core-client (<client-version>) to OLD too, so the
           # test harness matches the all-old cluster; <version> is the displayed
           # server version, also OLD while the whole cluster is old. (The mixed-

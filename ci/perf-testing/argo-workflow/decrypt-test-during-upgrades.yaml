@@ -80,7 +80,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
                   value: "Default"
           - name: user-decrypt-euint64-req1
@@ -93,7 +93,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
                   value: "Default"
           - name: public-decrypt-euint64-req10
@@ -106,7 +106,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 10"
                 - name: fhe-params
                   value: "Default"
           - name: user-decrypt-euint64-req10
@@ -119,7 +119,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 10"
                 - name: fhe-params
                   value: "Default"
 

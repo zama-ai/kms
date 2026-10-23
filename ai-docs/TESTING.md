@@ -1,9 +1,0 @@
-- If tests exist, update or add tests when changing behavior.
-- Never break existing tests intentionally.
-- Run tests before suggesting that work is complete. Specifically run tests that are not gated by `slow_tests` in the files you have modified.
-- Every public (`pub`) item must have at least one positive ("sunshine") unit test.
-- Every public (`pub`) item should also have negative tests.
-- Changes to production code must not reduce test coverage.
-- Prefer reusable scaffolding and stubs over large, duplicative per-test setup/teardown.
-- Refactoring existing tests to use new scaffolding or stubs is welcome when it reduces duplication.
-- Threshold tests boot from fixture material. The fixture holds the default epoch (an `EpochData` entry with a PRSS setup) for each party; `TestMaterialSpec::basic` includes it, and `with_prss()` adds it to a signing-only spec. A server never creates an epoch at boot, so a test that needs a fresh epoch requests it through `new_mpc_epoch`.

@@ -1,26 +1,7 @@
-# Git rules
+# Git
 
-## Branch naming
-
-Branch names for new PRs must take the form:
-
-```
-<your name>/<type>/<issue-number>/<issue description>
-```
-
-where `<type>` is the conventional-commit type, `<issue-number>` is the GitHub issue number, and `<issue description>` is a short description. Example: `tore/feat/423/zk-grpc-handles`.
-
-## Commit messages and PR titles
-
-Commit messages and PR titles must use the form:
-
-```
-<type>(<component>): <short summary>
-```
-
-Append `!` after `<type>` to flag a breaking change. Example: `feat!(grpc): change decryption api`.
-
-## Workflow rules
-
-- Always ensure your branch is up to date with `main` before making changes.
-- Do NOT force-push after your PR has received an initial human review.
+- New PR branches: `<name>/<type>/<issue-number>/<short-description>`, e.g. `tore/feat/423/zk-grpc-handles`.
+- Commits and PR titles: `<type>(<component>): <summary>`, where `<type>` is a Conventional Commits type.
+- Mark a breaking change with `!` directly after `<type>`, before the scope: `feat!(grpc): change decryption api`. This differs from the Conventional Commits form `feat(grpc)!:`.
+- Bring the branch up to date with `main` before changes.
+- Never force-push after the PR's initial human review.
