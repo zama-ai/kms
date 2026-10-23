@@ -122,8 +122,10 @@ jobs:
     name: performance-testing
     permissions:
       actions: read # Required to resolve the current job URL for Slack reports
+      id-token: write # Required for Tailscale OIDC
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
+    environment: preview-env
     env:
       DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
       TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
@@ -186,10 +188,10 @@ jobs:
       # TOOLING SETUP
       # ======================================================================
       - name: Setup tailscale
-        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          oauth-client-id: ${{ secrets.TS_KMS_CI_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_KMS_CI_OAUTH_AUDIENCE }}
           tags: tag:kms-ci
 
       - name: Setup helm
