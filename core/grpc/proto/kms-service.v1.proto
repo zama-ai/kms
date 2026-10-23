@@ -390,6 +390,9 @@ service CoreServiceEndpoint {
   // and returns a freshly signed confirmation. A call with a different `new_context` under an existing 
   // `context_id` fails with `AlreadyExists`.
   //
+  // A repeated call is matched on `new_context` only. The KMS does not store `previous_context_id`,
+  // `node_config_hash`, `domain` or `extra_data`, so a repeated call signs the values that it carries, also when
+  // they differ from an earlier call.
   // # Parameters
   // * `new_context` - The new MPC context.
   // * `previous_context_id` - The context active on the canonical ProtocolConfig contract when the new context
@@ -416,6 +419,14 @@ service CoreServiceEndpoint {
   // * `domain` must be present.
   // ## Post-condition:
   // * The `context_id` in `new_context` now represents a new MPC context.
+  //
+  // # Errors
+  // * `InvalidArgument` - The request is malformed, a required PCR allowlist is empty, or this node cannot sign
+  //   under a scheme in `signing_schemes`. Nothing is stored.
+  // * `FailedPrecondition` - `new_context` fails the checks against this node, for example on its threshold or its
+  //   party IDs, or this node holds no signing key. Nothing is stored.
+  // * `AlreadyExists` - A different context, or a partially created one, exists under the same `context_id`.
+  // * `Internal` - The storage cannot be read or written. The call can be retried.
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.NewMpcContextResponse);
 
   // Destroys an MPC context and the epochs associated with it by removing them from memory and storage.

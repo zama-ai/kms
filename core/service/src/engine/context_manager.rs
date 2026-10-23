@@ -29,7 +29,7 @@ use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, StorageError, data_exists};
 use crate::vault::storage::{
     StorageExt, delete_context_at_id, delete_custodian_context_at_id,
-    read_custodian_context_anchor, store_context_at_id,
+    read_context_at_id, read_custodian_context_anchor, store_context_at_id,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -135,7 +135,7 @@ where
     }
 
     /// Confirm again a context that is already stored as `stored_context`.
-    /// A different context under the same ID isrefused.
+    /// A different context under the same ID is refused.
     fn confirm_existing_mpc_context(
         &self,
         verified: &VerifiedNewMpcContextRequest,
@@ -154,6 +154,37 @@ where
             "MPC context already exists; confirming its creation again"
         );
         self.confirm_new_mpc_context(verified)
+    }
+
+    /// Read the context stored under `context_id`, or `None` if no context is stored under it.
+    ///
+    /// A failure to check or to read the storage is an error, so that it is never taken for an
+    /// absent context.
+    async fn read_stored_mpc_cread_context_infoontext(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<Option<ContextInfo>, MetricedError> {
+        let internal = |e: anyhow::Error| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some((*context_id).into()),
+                e,
+                tonic::Code::Internal,
+            )
+        };
+        let private_storage = Arc::clone(&self.crypto_storage.private_storage);
+        let guarded_priv_storage = private_storage.lock().await;
+        let exists = guarded_priv_storage
+            .data_exists(&(*context_id).into(), &PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| internal(anyhow::anyhow!("Failed to check if context exists: {e}")))?;
+        if !exists {
+            return Ok(None);
+        }
+        read_context_at_id(&*guarded_priv_storage, context_id)
+            .await
+            .map(Some)
+            .map_err(|e| internal(anyhow::anyhow!("Failed to read the stored context: {e}")))
     }
 
     async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -864,11 +895,10 @@ where
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // Check if the context already exists
-        if let Ok(stored_context) = self
+        if let Some(stored_context) = self
             .inner
-            .crypto_storage
-            .read_context_info(new_context.context_id())
-            .await
+            .read_stored_mpc_context(new_context.context_id())
+            .await?
         {
             let response = self
                 .inner
@@ -1300,10 +1330,8 @@ where
         // First check if the context already exists
         let stored_context = self
             .inner
-            .crypto_storage
-            .read_context_info(new_context.context_id())
-            .await
-            .ok();
+            .read_stored_mpc_context(new_context.context_id())
+            .await?;
         let in_session_maker = self
             .session_maker
             .context_exists(new_context.context_id())

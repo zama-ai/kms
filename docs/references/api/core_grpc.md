@@ -897,7 +897,7 @@ struct ContextCreationConfirmation {
 }
 ```
 
-The request is validated, and the confirmation signed, before anything is stored. An invalid request, or a scheme that the party cannot sign with, fails with `InvalidArgument` and stores nothing.
+The request is validated, and the confirmation signed, before anything is stored. An invalid request, or a scheme that the party cannot sign with, fails with `InvalidArgument` and stores nothing. A `new_context` that fails the checks against the party fails with `FailedPrecondition` and stores nothing. A storage failure fails with `Internal`, and the call can be retried.
 The call is idempotent, because no other call returns the confirmation. A repeated request with an identical `new_context` stores nothing, and the party signs the confirmation again.
 A different `new_context` under an existing context ID fails with `AlreadyExists`.
 </details>

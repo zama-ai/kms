@@ -1189,32 +1189,52 @@ impl VerifiedNewMpcContextRequest {
 
 /// Validate a `NewMpcContext` request, and check its new context against this node, whose signing
 /// key is read from `private_storage`.
+///
+/// A malformed request fails with `InvalidArgument`. A new context that fails
+/// [`ContextInfo::verify`] fails with `FailedPrecondition`.
 pub(crate) async fn validate_new_mpc_context_request<S: StorageReader>(
     req: NewMpcContextRequest,
     private_storage: &S,
     require_pcr_allowlist: bool,
 ) -> Result<VerifiedNewMpcContextRequest, MetricedError> {
-    unpack_new_mpc_context_req(req, private_storage, require_pcr_allowlist)
+    let mut verified = unpack_new_mpc_context_req(req, require_pcr_allowlist).map_err(|e| {
+        MetricedError::new(
+            OP_NEW_MPC_CONTEXT,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })?;
+    verified.my_role = verified
+        .new_context
+        .verify(private_storage)
         .await
         .map_err(|e| {
             MetricedError::new(
                 OP_NEW_MPC_CONTEXT,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
+                Some(verified.new_context.context_id.into()),
+                e,
+                tonic::Code::FailedPrecondition,
             )
-        })
+        })?;
+    Ok(verified)
 }
 
-async fn unpack_new_mpc_context_req<S: StorageReader>(
+/// Parse a `NewMpcContext` request. The role of this node is left unset, since it needs the new
+/// context to be verified against this node.
+fn unpack_new_mpc_context_req(
     req: NewMpcContextRequest,
-    private_storage: &S,
     require_pcr_allowlist: bool,
 ) -> anyhow::Result<VerifiedNewMpcContextRequest> {
     let new_context = req
         .new_context
         .ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
     let new_context = ContextInfo::try_from(new_context)?;
+    anyhow::ensure!(
+        !require_pcr_allowlist || !new_context.pcr_values.is_empty(),
+        "PCR values are required for context {} in enclave deployments",
+        new_context.context_id()
+    );
     let previous_context_id: ContextId =
         parse_optional_grpc_request_id(&req.previous_context_id, RequestIdParsingErr::Context)?;
     let node_config_hash: [u8; 32] = req.node_config_hash.as_slice().try_into().map_err(|_| {
@@ -1226,12 +1246,9 @@ async fn unpack_new_mpc_context_req<S: StorageReader>(
     let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
     let signing_schemes = SigningSchemeType::resolve_requested(&req.signing_schemes)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let my_role =
-        verify_context_and_extract_my_role(&new_context, private_storage, require_pcr_allowlist)
-            .await?;
     Ok(VerifiedNewMpcContextRequest {
         new_context,
-        my_role,
+        my_role: None,
         previous_context_id,
         node_config_hash,
         domain,
@@ -2635,11 +2652,6 @@ mod tests {
             }
         );
 
-        // A single node context must have threshold 0.
-        let inconsistent_context = ContextInfo {
-            threshold: 1,
-            ..new_context.clone()
-        };
         let invalid = [
             NewMpcContextRequest {
                 new_context: None,
@@ -2661,10 +2673,6 @@ mod tests {
                 signing_schemes: vec![9999],
                 ..valid.clone()
             },
-            NewMpcContextRequest {
-                new_context: Some(inconsistent_context.try_into().unwrap()),
-                ..valid.clone()
-            },
         ];
         for req in invalid {
             let err = validate_new_mpc_context_request(req, &storage, false)
@@ -2672,6 +2680,24 @@ mod tests {
                 .expect_err("an invalid request must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
+
+        // A well-formed request whose context fails the checks against this node: a single node
+        // context must have threshold 0.
+        let inconsistent = NewMpcContextRequest {
+            new_context: Some(
+                ContextInfo {
+                    threshold: 1,
+                    ..new_context.clone()
+                }
+                .try_into()
+                .unwrap(),
+            ),
+            ..valid.clone()
+        };
+        let err = validate_new_mpc_context_request(inconsistent, &storage, false)
+            .await
+            .expect_err("an inconsistent context must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
 
         // Without PCR values, the context is rejected when they are required.
         let err = validate_new_mpc_context_request(valid, &storage, true)
