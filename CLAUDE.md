@@ -1,3 +1,10 @@
 All agent instructions for this repository live in [AGENTS.md](AGENTS.md).
 
-Read [AGENTS.md](AGENTS.md) in full before making any code, configuration, or documentation change, or before answering a question that requires understanding repo conventions (architecture, testing, git/PR flow, dependencies, review). It is short and links to topic-specific rules under [ai-docs/](ai-docs/).
+The index and shared rule files are imported below. Read task-relevant sections of [ARCHITECTURE.md](ai-docs/ARCHITECTURE.md), and [COMMANDS.md](ai-docs/COMMANDS.md), when the triggers in AGENTS.md apply.
+
+@AGENTS.md
+@ai-docs/EDITING.md
+@ai-docs/PROSE.md
+@ai-docs/GIT.md
+@ai-docs/DEPENDENCIES.md
+@ai-docs/SAFETY.md

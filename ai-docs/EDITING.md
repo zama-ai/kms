@@ -1,62 +1,61 @@
 # Editing rules
 
-Rules for changing code, config, or docs in this repo. Tight by design — read every line.
+## Process and scope
 
-## Process
+- Inspect exports, immediate callers, and shared helpers (`util`-named files) before adding code.
+- State your assumptions. If unsure, inspect first, then ask your human; do not guess. Stop and name confusion instead of pushing through.
+- Explain major changes before implementing them. Use the smallest diff; avoid unrelated cleanup, reformatting, refactors of working code, and single-use abstractions. No large rewrites or copy-paste outside test code.
+- Match repository structure and established style. When two patterns conflict, follow the more recent, better-tested one, explain why, and flag the other.
+- Crypto, MPC, serialization, consensus, compatibility, or security-sensitive code: preserve existing behavior, including wire formats, parameter choices, and transcript and hash inputs. Changes here require an explicit design decision from your human.
+- Alert your human before removing a working feature, and when an architecture or protocol-flow change needs a parallel tech-spec PR.
+- Update affected docs and rustdoc. When CLI code or configuration changes, update the docs (`.md`) and deployment configs (`.yml`, `.toml`) to match. Update [ARCHITECTURE.md](./ARCHITECTURE.md) only when its map or invariants change. Report errors in docs you read.
+- Preserve correct comments; document every `pub` item. Follow [PROSE.md](./PROSE.md).
+- Self-review per [Review](#review). Report changes, verification, and remaining work accurately: "completed" and "tests pass" must be literally true.
+- Prefer `git mv` for moves.
 
-- State assumptions; if unsure, inspect first, then ask. Don't guess.
-- Explain major changes before implementing. Stop and name confusion rather than push through.
-- Before adding code, read exports, immediate callers, and shared utilities — "looks orthogonal" is dangerous.
-- On finish: summarize what's done, verified, and left. "Completed" / "tests pass" must be literal — never silently skip.
-- Update all affected docs, including function rustdoc and the relevant section of [ARCHITECTURE.md](./ARCHITECTURE.md).
-- If you spot errors in any doc you read, tell your human.
-- Architecture or protocol-flow changes → alert human that a parallel PR is needed in the tech-spec repo.
-- Always self-review per [REVIEW.md](./REVIEW.md).
+## Errors
 
-## Scope of changes
+- Validate early, at the boundary. Never panic on bad or adversarial input.
+- Attach tracing context where an error is constructed; the log line alone must identify where and why it failed.
+- Panic on invariant bugs. Explain why `panic!` / `expect` cannot fire in correct execution unless obvious.
+- Prefer descriptive `expect` over `unwrap`; tests may use `unwrap`.
+- Use strong types at module and service boundaries (`enum`, `Duration`, `Url`, `PathBuf`, `IpAddr`, …), parsed at the edge. Public errors are typed (e.g. `thiserror`) and actionable; no `anyhow::Error` across crate boundaries.
 
-- Smallest diff that solves the task. No extra features, no abstractions for single-use code, no drive-by cleanup or reformatting, no refactors of working code.
-- **Crypto / MPC / serialization / consensus / compat / security-sensitive code: preserve existing behavior — wire formats, parameter choices, transcript/hash inputs.** Changes here require an explicit design decision from your human.
-- No large rewrites or copy-paste except in test code.
-- Match existing style. If two patterns contradict, pick the more recent/tested one, explain why, flag the other.
-- Respect folder structure ([ARCHITECTURE.md](./ARCHITECTURE.md)). Reuse helpers from `util`-named files instead of duplicating.
-- Prefer `git mv` over `mv` to preserve history.
+## Compatibility and API
 
-## Comments and docs
+- Keep core-to-core communication ([gnetworking.proto](../core/threshold-networking/protos/gnetworking.proto) and the MPC messages it carries) compatible: a core released from `main` after your change must still talk to a core from the previous release. See the upgrade assumptions in [ARCHITECTURE.md](./ARCHITECTURE.md#deployment-invariants).
+- Preserve backward compatibility. Version all non-test data in public, private, and backup storage with `tfhe-versionable`.
+- Before changing persisted types, read the [compatibility guide](../docs/developer/backward_compatibility.md) and [harness overview](./ARCHITECTURE.md#backward-compatibility).
+- Before designing a storage migration, establish the required rollback behavior with your human.
+- Modifying or removing existing gRPC fields, or changing their data format, is breaking: alert your human for infra and downstream tracking.
+- Service API or gRPC return-data changes also require matching `core-client` changes and a breaking-change marker ([GIT.md](./GIT.md)).
 
-- Preserve existing comments unless wrong. Update comments adjacent to changed code if they'd become inaccurate.
-- Every `pub` item needs a rustdoc comment.
-- What a comment says, and how it is worded: follow [PROSE.md](./PROSE.md). In particular, comments explain *why*, never narrate your change.
+## Review
 
-## Removing features
+- Review the task's diff; exclude changes merged from `main`.
+- Check analogous paths for matching changes: `purge_crs_data` ↔ `purge_key_data`, `*_threshold` ↔ `*_centralized`, S3 ↔ filesystem storage.
+- Check for deadlocks, livelocks, TOCTOU, and other concurrency issues, especially around the locks and lifecycle leases in [ARCHITECTURE.md](./ARCHITECTURE.md).
+- Remove code that the change made dead.
+- Use one name per concept across the touched files.
+- Check comments for the common failures: narrating the change, commenting trivial code, and comments the change made stale.
+- Check the [PR checklist](../.github/PULL_REQUEST_TEMPLATE.md); flag applicable items you cannot verify.
+- Apply the [trust summary](./ARCHITECTURE.md#communication-interfaces-and-trust-model) in every review. Read the [trust model and exclusions](../docs/explanations/trust_model.md) before reporting a security finding. For security review, also cross-reference [OWASP ASVS](https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/OWASP_Application_Security_Verification_Standard_5.0.0_en.pdf) and the [MPC pitfalls](https://mpcsec.org/SKILL.md).
 
-- Removing a working feature/function → explicitly notify your human.
+## Verification
 
-## Error handling
+- Update or add tests when you change behavior. Never break existing tests intentionally.
+- Every `pub` item needs at least one positive test; critical code also needs negative tests. Reject trivial or redundant tests. Changes to production code must not reduce coverage.
+- Prefer reusable scaffolding and stubs over duplicated per-test setup. Moving existing tests onto shared scaffolding is an allowed exception to the smallest-diff rule.
+- Run affected tests, including non-`slow_tests` tests in modified files, before reporting completion.
 
-- Validate early. Don't defer checks.
-- Bad input / adversarial errors: log with enough detail that the log line alone identifies where and why. Never panic on these.
-- Construct-time tracing — attach context where the error is built, not where it's received.
-- Bugs (unreachable branches, OOB on known-size vec, etc.) should panic.
-- Every `panic!` / `expect` needs a comment explaining why it can't fire in correct execution, unless obvious from context.
-- Prefer `expect("descriptive message")` over bare `unwrap()`. Tests may `unwrap()` for brevity.
+For code, dependency, or build changes, also run:
 
-## Backward compatibility
-
-- Always preserve backward compatibility. Any non-test data persisted to public/private/backup storage must be versioned with `tfhe-versionable`. Before touching a persisted type, read [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md) and follow the freeze-and-replay harness in [ARCHITECTURE.md](./ARCHITECTURE.md) "Backward compatibility".
-
-## gRPC and service API changes
-
-- Any modify/remove/data-format change to existing gRPC fields is breaking → alert human (infra + downstream tracking).
-- Changes to the KMS service API or gRPC return data → also update the `core-client` crate and mark the change breaking.
-- See "gRPC surface" in [ARCHITECTURE.md](./ARCHITECTURE.md).
-
-## Build verification
-
-Run after any change; must be clean:
-
-```
+```sh
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+When a doc states behavior, names, or commands, verify each against the code or Makefile.
+For documentation-only changes, check the diff, links, and consistency; Cargo checks are unnecessary.
+Disclose narrower checks, failures, and checks not run. See [COMMANDS.md](./COMMANDS.md) for test features and compatibility traps.

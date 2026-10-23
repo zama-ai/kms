@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -266,6 +266,44 @@ class RunnerTests(TemporaryWorkingDirectory):
 
 
 class DiagnosticTests(TemporaryWorkingDirectory):
+    @patch.object(diagnostics, "kube_json")
+    @patch.object(diagnostics, "best_effort", return_value=result("captured\n"))
+    def test_core_restart_capture_uses_enclave_container(self, command, pods):
+        pods.return_value = {
+            "items": [{
+                "metadata": {"name": "pod"},
+                # The logger is a native sidecar, so the API reports it with the init containers.
+                "status": {
+                    "containerStatuses": [{"name": "kms-core-enclave", "restartCount": 1}],
+                    "initContainerStatuses": [
+                        {"name": "kms-core-enclave-logger", "restartCount": 0},
+                    ],
+                },
+            }]
+        }
+        diagnostics.finish_core("ns", Path("restarts"), diagnostics.time.monotonic() + 270)
+        commands = [call.args[0] for call in command.call_args_list]
+        previous = next(args for args in commands if "--previous" in args)
+        self.assertEqual(previous[-2:], ["-c", "kms-core-enclave"])
+        self.assertLess(commands.index(previous), next(i for i, args in enumerate(commands) if "describe" in args))
+        enclave = next(args for args in commands if "exec" in args)
+        self.assertEqual(enclave[enclave.index("-c") + 1], "kms-core-enclave")
+        self.assertEqual(enclave[-2:], ["nitro-cli", "describe-enclaves"])
+        self.assertEqual(Path("restarts/pod-describe-enclaves.txt").read_text(), "captured\n")
+
+    @patch.object(diagnostics, "kube_json")
+    @patch.object(diagnostics, "best_effort", return_value=result("captured\n"))
+    def test_core_restart_capture_skips_enclave_state_without_enclave(self, command, pods):
+        pods.return_value = {
+            "items": [{
+                "metadata": {"name": "pod"},
+                "status": {"containerStatuses": [{"name": "kms-core", "restartCount": 0}]},
+            }]
+        }
+        diagnostics.finish_core("ns", Path("restarts"), diagnostics.time.monotonic() + 270)
+        self.assertFalse(any("exec" in call.args[0] for call in command.call_args_list))
+        self.assertFalse(Path("restarts/pod-describe-enclaves.txt").exists())
+
     def test_network_phase_rejects_paths_before_collection(self):
         for phase in ("../outside", "/tmp/outside", "nested/phase", ".", "..", ""):
             with (
@@ -506,24 +544,35 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         self.assertEqual(rows[1][7:], [False, 0, "", "", ""])
         self.assertIn("\tfalse\t", common.tsv(rows[1]))
 
+    @patch.object(diagnostics, "finish_core")
     @patch.object(diagnostics, "finish")
     @patch.object(diagnostics, "stop_samplers")
     @patch.object(diagnostics, "start_sampler", side_effect=["cpu", OSError("start failed")])
     @patch.object(diagnostics, "best_effort", return_value=result())
-    def test_controller_finalizes_after_partial_start(self, command, start, stop, finish):
+    def test_controller_finalizes_after_partial_start(
+        self, command, start, stop, finish, finish_core
+    ):
         with self.assertRaises(OSError):
             diagnostics.sample("ns", Path("diagnostics"))
-        stop.assert_called_once_with(["cpu"])
-        finish.assert_called_once_with("ns", Path("diagnostics"))
+        stop.assert_called_once_with(["cpu"], timeout=10)
+        finish.assert_called_once_with("ns", Path("diagnostics"), ANY)
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"), ANY)
+        self.assertEqual(
+            finish.call_args.args[2] - finish_core.call_args.args[2],
+            diagnostics.ENA_FINALIZATION_RESERVE,
+        )
 
+    @patch.object(diagnostics, "finish_core")
     @patch.object(diagnostics, "finish")
     @patch.object(diagnostics, "stop_samplers")
-    @patch.object(diagnostics, "start_sampler", side_effect=["cpu", "metrics", "placement"])
+    @patch.object(
+        diagnostics, "start_sampler", side_effect=["cpu", "metrics", "placement"]
+    )
     @patch.object(diagnostics, "best_effort", return_value=result())
     @patch.object(diagnostics, "kube_json", return_value={})
     @patch.object(diagnostics.time, "sleep", side_effect=KeyboardInterrupt())
     def test_controller_stops_all_samplers_on_cancellation(
-        self, sleep, kube, command, start, stop, finish
+        self, sleep, kube, command, start, stop, finish, finish_core
     ):
         with self.assertRaises(KeyboardInterrupt):
             diagnostics.sample("ns", Path("diagnostics"))
@@ -535,8 +584,84 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                 "core-cpu-samples.log",
             ),
         )
-        stop.assert_called_once_with(["cpu", "metrics", "placement"])
-        finish.assert_called_once_with("ns", Path("diagnostics"))
+        self.assertEqual(start.call_count, 3)
+        stop.assert_called_once_with(["cpu", "metrics", "placement"], timeout=10)
+        finish.assert_called_once_with("ns", Path("diagnostics"), ANY)
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"), ANY)
+        self.assertEqual(
+            finish.call_args.args[2] - finish_core.call_args.args[2],
+            diagnostics.ENA_FINALIZATION_RESERVE,
+        )
+
+    def test_core_lifecycle_records_restarts_and_last_termination(self):
+        pods = {
+            "items": [
+                {
+                    "metadata": {"name": "kms-core-4-core-4"},
+                    "status": {
+                        "containerStatuses": [
+                            {
+                                "name": "kms-core-enclave",
+                                "ready": True,
+                                "restartCount": 1,
+                                "state": {"running": {"startedAt": "t2"}},
+                                "lastState": {
+                                    "terminated": {
+                                        "reason": "Error",
+                                        "exitCode": 137,
+                                        "startedAt": "t0",
+                                        "finishedAt": "t1",
+                                    }
+                                },
+                            },
+                        ],
+                        "initContainerStatuses": [
+                            {"name": "kms-core-enclave-logger", "state": {}},
+                        ],
+                    },
+                },
+                {"metadata": {"name": "pending"}, "status": {}},
+            ]
+        }
+        self.assertEqual(
+            diagnostics.core_lifecycle_rows(pods, "now"),
+            [
+                ["now", "kms-core-4-core-4", "kms-core-enclave", True, 1, "t2", "", "Error", 137, "t0", "t1"],
+                ["now", "kms-core-4-core-4", "kms-core-enclave-logger", False, 0, "", "", "", "", "", ""],
+            ],
+        )
+
+    def test_core_lifecycle_records_current_termination_before_restart(self):
+        pods = {
+            "items": [{
+                "metadata": {"name": "pod"},
+                "status": {"containerStatuses": [{
+                    "name": "kms-core",
+                    "state": {"terminated": {
+                        "reason": "OOMKilled", "exitCode": 137,
+                        "startedAt": "t1", "finishedAt": "t2",
+                    }},
+                    "lastState": {"terminated": {"reason": "Error", "exitCode": 1}},
+                }]},
+            }]
+        }
+        self.assertEqual(
+            diagnostics.core_lifecycle_rows(pods, "now"),
+            [["now", "pod", "kms-core", False, 0, "", "", "OOMKilled", 137, "t1", "t2"]],
+        )
+
+    @patch.object(diagnostics, "best_effort", return_value=result("captured"))
+    @patch.object(diagnostics.time, "monotonic", return_value=99)
+    def test_final_capture_respects_deadline(self, clock, command):
+        self.assertEqual(
+            diagnostics.capture_before_deadline("ns", ["get", "pods"], 100), "captured"
+        )
+        self.assertIn("--request-timeout=1.000s", command.call_args.args[0])
+        self.assertEqual(command.call_args.kwargs["timeout"], 1 + diagnostics.KUBECTL_GRACE)
+        self.assertEqual(
+            diagnostics.capture_before_deadline("ns", ["get", "pods"], 99), None
+        )
+        self.assertEqual(command.call_count, 1)
 
 
 class ProcessTests(unittest.TestCase):

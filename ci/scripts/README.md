@@ -252,9 +252,10 @@ Dispatch inputs:
 | Input | Meaning |
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
+| `old_image_repository` | Repositories for the old side: `legacy` (default; pre-split repositories, releases up to `v0.14.x`) or `insecure`. The baseline runs insecure key-gen, which production builds lack, so a `v0.15+` old side needs `insecure` |
 | `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
 | `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold`. Set it to test with a custom core-client build, e.g. one with more logs to debug an upgrade problem |
-| `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
+| `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart). A `v0.15+` old side needs chart `1.9.x` or later; the `old_kms_chart_version` default `1.5.1` only suits a `legacy` old side |
 | `tkms_infra_chart_version` | TKMS Infra Helm chart version (default `0.3.2`) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in batch 1 / batch 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
@@ -262,7 +263,8 @@ Dispatch inputs:
 | `restart_parties` | After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From batch 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
-| `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |
+| `build` | Build the new images from the dispatched ref and use them instead of `new_image_tag`. To test another branch, run `docker-build` on it and pass its tag as `new_image_tag` |
+| `kms_branch` | Branch whose chart, scripts and Argo YAMLs are checked out when `new_kms_chart_version=repository` (default: the dispatched ref). It does not select what `build=true` builds: with `build=true`, the run fails unless it is empty or the dispatched ref |
 
 **`test_profile=decrypt`** (default): plain public + user decrypt correctness on the
 mixed cluster with random request-IDs. Every task must pass; the job fails on any
@@ -293,8 +295,8 @@ A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On 
 
 #### Core-client compatibility
 
-The Argo command strings target the **`v0.13.x` and `v0.14.x` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x`). The baseline pins the client to `old_image_tag`, so `old_image_tag` can be a `v0.13.x` or a `v0.14.x` tag.
-A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. Its replacement (`--rate`/`--duration`) does not fail the command when a request gets too few responses, so it cannot replace the `-a` correctness check. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client, which is compatible when `old_image_tag` is a `v0.13.x` or `v0.14.x` tag. Do not set `core_client_image_tag` to a main or `build=true` tag.
+The Argo command strings work with the **`v0.13.x`, `v0.14.x` and `v0.15+` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x` and later). The baseline pins the client to `old_image_tag`.
+The decrypt steps send one request with `--batch-size N` ciphertexts, an option that all these clients have (`--num-requests` was removed in `v0.15`). They do not use rate mode (`--rate`/`--duration`), because it does not fail the command when a request gets too few responses. In single-request mode, `-a` fails the command unless all parties respond. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client.
 The `prss-threshold` profile is `v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config). Its probes pass `--request-id`, which no released core-client supports, so it also needs an explicit `core_client_image_tag`. The workflow fails at the start if either condition is not met.
 
 ### Debugging
