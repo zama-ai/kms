@@ -8,15 +8,13 @@ Rules and expectations for AI coding agents working in this repository. This fil
 
 ## Topic files
 
-- [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md) — system architecture, workspace layout, gRPC surface, backup, backward-compatibility subsystem. Read before any change that touches service structure, persisted types, or protocol flows.
-- [EDITING.md](./ai-docs/EDITING.md) — rules for making changes: scope, comments, error handling, backward compatibility, gRPC/API changes, build verification, and general process (when to explain, ask, alert, update docs).
+- [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md) — trust summary, code map, and cross-module invariants. Read the code map and task-relevant sections before changing service structure, persisted types, storage, or protocol flows. Apply the trust summary in every review; read the linked trust model before security review.
+- [EDITING.md](./ai-docs/EDITING.md) — rules for every change: process and scope, error handling, compatibility and gRPC changes, review checklist, tests, and the required fmt/clippy checks. Read before making any change or reviewing one.
 - [PROSE.md](./ai-docs/PROSE.md) — how to write prose: code comments and rustdoc, markdown files, GitHub issues and PR text, and chat replies to your human. Read before you write any of them.
-- [COMMANDS.md](./ai-docs/COMMANDS.md) — build, test, lint, backward-compatibility, docker-compose, and client commands in one place.
-- [TESTING.md](./ai-docs/TESTING.md) — test requirements and conventions.
-- [GIT.md](./ai-docs/GIT.md) — branch naming, commit messages, branch-sync and force-push rules.
-- [REVIEW.md](./ai-docs/REVIEW.md) — how to review your own work, a commit, or an entire branch / pull request.
-- [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md) — rules for adding or updating dependencies.
-- [SAFETY.md](./ai-docs/SAFETY.md) — safety / destructive-action rules.
+- [COMMANDS.md](./ai-docs/COMMANDS.md) — test selection, feature flags, backward-compatibility targets, and pointers for compose, test material, the client, and LFS. Read before running tests or Makefile targets.
+- [GIT.md](./ai-docs/GIT.md) — branch names, commit and PR title format, branch sync, force-push. Read before naming a branch or writing a commit message or PR title.
+- [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md) — rules for adding or updating dependencies. Read before changing `[dependencies]` in any `Cargo.toml`, or `Cargo.lock`.
+- [SAFETY.md](./ai-docs/SAFETY.md) — secrets and destructive actions. Read before deleting files or data, force-pushing, running migrations, or starting a large refactor.
 
 ## Other useful entry points
 
