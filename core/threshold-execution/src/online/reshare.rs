@@ -669,7 +669,7 @@ where
 
             // Send the masked shares to parties in set 2
             // except myself if I am in both sets
-            let values_to_send = NetworkValue::VecRingValue(vj.clone()).to_network();
+            let values_to_send = NetworkValue::VecRingValue(vj.clone()).to_network()?;
             for party in two_sets_session.get_all_sorted_roles() {
                 if party.is_set2() && party != &two_sets_session.my_role() {
                     two_sets_session
