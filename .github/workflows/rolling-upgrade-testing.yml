@@ -315,7 +315,6 @@ jobs:
           INPUT_BUILD: ${{ inputs.build }}
           INPUT_NEW_REPOSITORY: ${{ inputs.new_image_repository }}
           INPUT_OLD_REPOSITORY: ${{ inputs.old_image_repository }}
-          INPUT_OLD_CHART_VERSION: ${{ inputs.old_kms_chart_version }}
           INPUT_KMS_BRANCH: ${{ inputs.kms_branch }}
           DISPATCHED_REF: ${{ github.ref_name }}
         run: |
@@ -328,11 +327,6 @@ jobs:
 
           if [[ "${INPUT_BUILD}" == "true" && "${INPUT_NEW_REPOSITORY}" == "legacy" ]]; then
             echo "ERROR: build=true pushes the new images to the insecure repositories. Set new_image_repository=insecure, or set build=false to roll out a release tag from the legacy repositories."
-            exit 1
-          fi
-
-          if [[ "${INPUT_OLD_REPOSITORY}" == "insecure" && "${INPUT_OLD_CHART_VERSION}" == 1.5.* ]]; then
-            echo "ERROR: old_image_repository=insecure means a v0.15+ old side, which needs kms chart 1.9.x or later, got old_kms_chart_version=${INPUT_OLD_CHART_VERSION}. Set old_kms_chart_version to the chart that shipped with old_image_tag."
             exit 1
           fi
 
