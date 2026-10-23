@@ -342,7 +342,8 @@ where
 /// - num_parties as number of parties
 /// - degree as the degree of the sharing (i.e. the corruption threshold)
 /// - threshold as the threshold of maximum corruptions
-/// - num_bots as the number of known Bot contributions
+/// - num_bots as the number of known Bot contributions. A Bot counts as a party heard from but has no
+///   share in `sharing`: it is an erasure, not an error the decoder still has to find.
 /// - sharing as the indexed shares of the parties
 ///
 ///  Returns either the result or None if there are not enough shares to do reconstruction yet
@@ -380,8 +381,14 @@ where
         }
     } else if degree + 2 * threshold < num_parties {
         if num_heard_from > degree + threshold {
-            let r: usize = num_heard_from - (degree + threshold + 1);
-            let opened_poly = Z::error_correct_with_hints(sharing, degree, r, hints);
+            let num_shares = sharing.shares.len();
+            // We need degree + threshold + 1 shares to validate reconstruction.
+            if num_shares <= degree + threshold {
+                return Ok(None);
+            }
+            // Compute the maximum number of errors that can be corrected given the number of shares present.
+            let max_errors = num_shares - (degree + threshold + 1);
+            let opened_poly = Z::error_correct_with_hints(sharing, degree, max_errors, hints);
             if let Ok(opened_poly) = opened_poly {
                 if opened_poly.deg() <= degree {
                     //Check how many shares lie on the polynomial
@@ -561,6 +568,65 @@ mod tests {
                 .unwrap();
 
         assert_eq!(opened, secret);
+    }
+
+    /// The weak asynchronous branch with known Bots (Figure 72, step 4): a Bot counts towards the values heard
+    /// from but has no share in the word, so the error budget must apply to the shares present.
+    #[test]
+    fn test_async_reconstruct_with_known_bots() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let secret = ResiduePolyF4::<Z128>::from_scalar(Wrapping(23));
+        // (n, t, wrong shares among the honest-looking ones); party n is the known Bot, degree = t.
+        for (num_parties, threshold, wrong) in [(4, 1, 0), (13, 4, 0), (13, 4, 3)] {
+            let degree = threshold;
+            // The weak branch: degree + 2t < n <= degree + 3t.
+            assert!(degree + 2 * threshold < num_parties && num_parties <= degree + 3 * threshold);
+            let sharings =
+                ShamirSharings::<ResiduePolyF4<Z128>>::share(&mut rng, secret, num_parties, degree)
+                    .unwrap();
+            let mut shares = sharings.shares[..num_parties - 1].to_vec();
+            for share in shares.iter_mut().take(wrong) {
+                *share = Share::new(
+                    share.owner(),
+                    share.value() + <ResiduePolyF4<Z128> as crate::structure_traits::One>::ONE,
+                );
+            }
+            let sharing = ShamirSharings::create(shares);
+            let hints = ReconstructionHints::new(&sharing, degree).unwrap();
+            // All n values heard from: n - 1 shares and one Bot.
+            let opened =
+                reconstruct_w_errors_async(num_parties, degree, threshold, 1, &sharing, &hints)
+                    .unwrap();
+            assert_eq!(
+                opened,
+                Some(secret),
+                "n={num_parties} t={threshold} wrong={wrong}"
+            );
+        }
+
+        // n = 4, t = 1: two honest shares and the Bot are heard from (3 > degree + t), but only two shares can
+        // lie on any polynomial, not more than degree + t: no output yet.
+        let sharings =
+            ShamirSharings::<ResiduePolyF4<Z128>>::share(&mut rng, secret, 4, 1).unwrap();
+        let two = ShamirSharings::create(sharings.shares[..2].to_vec());
+        let hints = ReconstructionHints::new(&two, 1).unwrap();
+        assert_eq!(
+            reconstruct_w_errors_async(4, 1, 1, 1, &two, &hints).unwrap(),
+            None
+        );
+        // Three shares of which one is wrong, plus the Bot (two corrupt parties, beyond t): the budget is zero
+        // and only two shares lie on the interpolated line, so nothing is output.
+        let mut shares = sharings.shares[..3].to_vec();
+        shares[0] = Share::new(
+            shares[0].owner(),
+            shares[0].value() + <ResiduePolyF4<Z128> as crate::structure_traits::One>::ONE,
+        );
+        let faulty = ShamirSharings::create(shares);
+        let hints = ReconstructionHints::new(&faulty, 1).unwrap();
+        assert_eq!(
+            reconstruct_w_errors_async(4, 1, 1, 1, &faulty, &hints).unwrap(),
+            None
+        );
     }
 
     #[test]

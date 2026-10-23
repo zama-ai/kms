@@ -239,7 +239,7 @@ impl RobustOpen for SecureRobustOpen {
                         session
                             .network()
                             .send(
-                                NetworkValue::VecRingValue(values).to_network(),
+                                NetworkValue::VecRingValue(values).to_network()?,
                                 &receiver_role,
                             )
                             .await?;
@@ -328,7 +328,7 @@ impl RobustOpen for SecureRobustOpen {
                     session
                         .network()
                         .send(
-                            NetworkValue::VecRingValue(shares).to_network(),
+                            NetworkValue::VecRingValue(shares).to_network()?,
                             &output_party,
                         )
                         .await?;

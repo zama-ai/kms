@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 use super::CompletedParties;
 use crate::clock::{AtomicDuration, AtomicInstant};
 use crate::ggen::SendValueRequest;
-use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
@@ -345,17 +344,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
     async fn get_num_byte_sent(&self) -> usize {
         self.num_byte_sent.load(Ordering::Relaxed)
-    }
-
-    async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
-        if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
-            Ok(*num_byte_received)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Couldn't find session {} in the NETWORK_RECEIVED_MEASUREMENT",
-                self.session_id
-            )))
-        }
     }
 }
 
