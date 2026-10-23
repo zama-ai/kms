@@ -33,8 +33,8 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
-    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
-    PublicDecryptVerification,
+    ContextCreationConfirmation, CrsgenVerification, FheDecompressionUpgradeKey,
+    KeygenVerification, PrepKeygenVerification, PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use rand_chacha::ChaCha20Rng;
@@ -434,6 +434,18 @@ impl From<&NewMpcContextSignedPayload> for kms::v1::NewMpcContextPayload {
             extra_data: value.extra_data.clone(),
         }
     }
+}
+
+/// Build the EIP-712 struct signed for a context creation.
+pub fn context_creation_sol_type(
+    payload: &NewMpcContextSignedPayload,
+) -> ContextCreationConfirmation {
+    ContextCreationConfirmation::new(
+        &payload.previous_context_id,
+        &payload.new_context_id,
+        payload.node_config_hash.into(),
+        payload.extra_data.clone(),
+    )
 }
 
 /// What every non-ECDSA scheme signs for a CRS result.

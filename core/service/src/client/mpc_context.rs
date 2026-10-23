@@ -1,7 +1,7 @@
 use crate::{
     client::client_wasm::Client,
     engine::{
-        base::{DSEP_NEW_CONTEXT, NewMpcContextSignedPayload},
+        base::{DSEP_NEW_CONTEXT, NewMpcContextSignedPayload, context_creation_sol_type},
         context::ContextInfo,
     },
 };
@@ -13,7 +13,6 @@ use kms_grpc::{
         NewMpcContextResponse,
     },
     rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain},
-    solidity_types::ContextCreationConfirmation,
 };
 
 impl Client {
@@ -72,12 +71,7 @@ impl Client {
             &response.signatures,
             // A context creation response has no deprecated `external_signature`.
             &[],
-            &ContextCreationConfirmation::new(
-                &expected.previous_context_id,
-                &expected.new_context_id,
-                expected.node_config_hash.into(),
-                expected.extra_data.clone(),
-            ),
+            &context_creation_sol_type(&expected),
             &domain,
             &DSEP_NEW_CONTEXT,
             &expected,
@@ -122,13 +116,7 @@ mod tests {
         identity: &NodeSigningIdentity,
         payload: &NewMpcContextSignedPayload,
     ) -> NewMpcContextResponse {
-        let eip712_hash = ContextCreationConfirmation::new(
-            &payload.previous_context_id,
-            &payload.new_context_id,
-            payload.node_config_hash.into(),
-            payload.extra_data.clone(),
-        )
-        .eip712_signing_hash(&dummy_domain());
+        let eip712_hash = context_creation_sol_type(payload).eip712_signing_hash(&dummy_domain());
         let signatures = sign_result_entries(
             identity,
             &ECDSA_AND_MLDSA65,

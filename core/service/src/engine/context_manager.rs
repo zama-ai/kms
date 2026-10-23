@@ -9,7 +9,9 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::cryptography::signing::composite::sign_result_entries;
-use crate::engine::base::{DSEP_NEW_CONTEXT, stored_scheme_signatures_to_proto};
+use crate::engine::base::{
+    DSEP_NEW_CONTEXT, context_creation_sol_type, stored_scheme_signatures_to_proto,
+};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -33,7 +35,6 @@ use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
-use alloy_primitives::B256;
 use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::RequestId;
@@ -44,7 +45,6 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms::v1::{Empty, NewMpcContextResponse};
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::solidity_types::ContextCreationConfirmation;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
@@ -83,30 +83,20 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    /// Validate a `NewMpcContext` request, including its new context, and check that this node can
-    /// sign the confirmation under every requested scheme, before anything is stored.
+    /// Validate a `NewMpcContext` request, including its new context.
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
         require_pcr_allowlist: bool,
     ) -> Result<VerifiedNewMpcContextRequest, MetricedError> {
-        let verified = {
-            let private_storage = Arc::clone(&self.crypto_storage.private_storage);
-            let guarded_priv_storage = private_storage.lock().await;
-            validate_new_mpc_context_request(
-                request.into_inner(),
-                &(*guarded_priv_storage),
-                require_pcr_allowlist,
-            )
-            .await?
-        };
-        signing_identity_for(
-            &self.base_kms,
-            &verified.signing_schemes,
-            OP_NEW_MPC_CONTEXT,
-            Some(verified.new_context.context_id.into()),
-        )?;
-        Ok(verified)
+        let private_storage = Arc::clone(&self.crypto_storage.private_storage);
+        let guarded_priv_storage = private_storage.lock().await;
+        validate_new_mpc_context_request(
+            request.into_inner(),
+            &(*guarded_priv_storage),
+            require_pcr_allowlist,
+        )
+        .await
     }
 
     /// Sign the `ContextCreationConfirmation` of `verified` under every requested scheme.
@@ -121,14 +111,8 @@ where
             OP_NEW_MPC_CONTEXT,
             Some(context_id),
         )?;
-        let eip712_hash = ContextCreationConfirmation::new(
-            &verified.previous_context_id,
-            &verified.new_context.context_id,
-            B256::from(verified.node_config_hash),
-            verified.extra_data.clone(),
-        )
-        .eip712_signing_hash(&verified.domain);
         let payload = verified.signed_payload();
+        let eip712_hash = context_creation_sol_type(&payload).eip712_signing_hash(&verified.domain);
         let signatures = sign_result_entries(
             &identity,
             &verified.signing_schemes,
@@ -150,15 +134,26 @@ where
         })
     }
 
-    async fn verify_context_and_extract_my_role(
+    /// Confirm again a context that is already stored as `stored_context`.
+    /// A different context under the same ID isrefused.
+    fn confirm_existing_mpc_context(
         &self,
-        context: &ContextInfo,
-        require_pcr_allowlist: bool,
-    ) -> anyhow::Result<Option<Role>> {
-        let private_storage = Arc::clone(&self.crypto_storage.private_storage);
-        let guarded_priv_storage = private_storage.lock().await;
-        verify_context_and_extract_my_role(context, &(*guarded_priv_storage), require_pcr_allowlist)
-            .await
+        verified: &VerifiedNewMpcContextRequest,
+        stored_context: &ContextInfo,
+    ) -> Result<NewMpcContextResponse, MetricedError> {
+        if *stored_context != verified.new_context {
+            return Err(MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(verified.new_context.context_id.into()),
+                anyhow::anyhow!("A different context with the same ID already exists"),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+        tracing::warn!(
+            context_id = %verified.new_context.context_id,
+            "MPC context already exists; confirming its creation again"
+        );
+        self.confirm_new_mpc_context(verified)
     }
 
     async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -875,21 +870,9 @@ where
             .read_context_info(new_context.context_id())
             .await
         {
-            // A context is stored under `new_context.context_id()`
-            // Ensure its content matches what is given in this request
-            if stored_context != verified.new_context {
-                return Err(MetricedError::new(
-                    OP_NEW_MPC_CONTEXT,
-                    Some(verified.new_context.context_id.into()),
-                    anyhow::anyhow!("A different context with the same ID already exists"),
-                    tonic::Code::AlreadyExists,
-                ));
-            }
-            tracing::warn!(
-                context_id = %verified.new_context.context_id,
-                "MPC context already exists; confirming its creation again"
-            );
-            let response = self.inner.confirm_new_mpc_context(&verified)?;
+            let response = self
+                .inner
+                .confirm_existing_mpc_context(&verified, &stored_context)?;
             return Ok(Response::new(response));
         }
 
@@ -1125,11 +1108,16 @@ where
 
         let mut loaded_count = 0;
         for context in &contexts {
-            let my_role = match self
-                .inner
-                .verify_context_and_extract_my_role(context, self.require_pcr_allowlist)
+            let verified_role = {
+                let private_storage = self.inner.crypto_storage.private_storage.lock().await;
+                verify_context_and_extract_my_role(
+                    context,
+                    &(*private_storage),
+                    self.require_pcr_allowlist,
+                )
                 .await
-            {
+            };
+            let my_role = match verified_role {
                 Ok(role) => role,
                 Err(e) => {
                     tracing::warn!(
@@ -1325,21 +1313,9 @@ where
                 // The context does not exist anywhere
             }
             (Some(stored_context), true) => {
-                // A context is stored under `new_context.context_id()`
-                // Ensure its content matches what is given in this request
-                if stored_context != verified.new_context {
-                    return Err(MetricedError::new(
-                        OP_NEW_MPC_CONTEXT,
-                        Some(verified.new_context.context_id.into()),
-                        anyhow::anyhow!("A different context with the same ID already exists"),
-                        tonic::Code::AlreadyExists,
-                    ));
-                }
-                tracing::warn!(
-                    context_id = %verified.new_context.context_id,
-                    "MPC context already exists; confirming its creation again"
-                );
-                let response = self.inner.confirm_new_mpc_context(&verified)?;
+                let response = self
+                    .inner
+                    .confirm_existing_mpc_context(&verified, &stored_context)?;
                 return Ok(Response::new(response));
             }
             // Only a fully created context is confirmed again, otherwise we fail
@@ -1741,7 +1717,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(new_mpc_context_request(new_context.clone()));
+        let request = Request::new(new_mpc_context_request(new_context));
         let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
         let context_manager = ThresholdContextManager::new(
             base_kms,
@@ -1773,27 +1749,6 @@ mod tests {
                     .get(&SigningSchemeType::Ecdsa256k1),
                 Some(verification_key.verf_key_id().as_slice())
             );
-        }
-        // Creating the same context again only confirms it again
-        {
-            let request = Request::new(new_mpc_context_request(new_context.clone()));
-            let response = context_manager.new_mpc_context(request).await;
-            assert!(response.is_ok());
-        }
-        // Creating a different context with the same context ID fails
-        {
-            let different_context = ContextInfo {
-                software_version: SoftwareVersion {
-                    major: 0,
-                    minor: 2,
-                    patch: 0,
-                    tag: None,
-                },
-                ..new_context
-            };
-            let request = Request::new(new_mpc_context_request(different_context));
-            let error = context_manager.new_mpc_context(request).await.unwrap_err();
-            assert_eq!(error.code(), tonic::Code::AlreadyExists);
         }
 
         // Seed some private data under an epoch in the same storage. Nothing links it to the
@@ -3393,7 +3348,7 @@ mod tests {
         );
 
         // Create a new context
-        let request = Request::new(new_mpc_context_request(new_context.clone()));
+        let request = Request::new(new_mpc_context_request(new_context));
         let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
@@ -3413,25 +3368,6 @@ mod tests {
                 .unwrap();
             assert_eq!(*stored_context.context_id(), context_id);
         }
-
-        // Creating the same context again only confirms it again
-        let request = Request::new(new_mpc_context_request(new_context.clone()));
-        let response = context_manager.new_mpc_context(request).await;
-        assert!(response.is_ok());
-
-        // Creating a different context with the same context ID fails
-        let different_context = ContextInfo {
-            software_version: SoftwareVersion {
-                major: 0,
-                minor: 2,
-                patch: 0,
-                tag: None,
-            },
-            ..new_context
-        };
-        let request = Request::new(new_mpc_context_request(different_context));
-        let error = context_manager.new_mpc_context(request).await.unwrap_err();
-        assert_eq!(error.code(), tonic::Code::AlreadyExists);
 
         // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
         // remaining context, so the target must not be the only one in storage.
