@@ -799,6 +799,11 @@ attested just as faithfully.
 Note also that the document's nonce is chosen by the enclave rather than by the caller, and AWS
 permits attestation reuse, so the document offers no freshness guarantee.
 
+Each key is checked on its own, so the command also rejects two parties returning the same key or
+being attested by the same enclave (the document's `module_id`), and prints each key as
+`party <PARTY_ID>: <KEY>`, sorted by party. The command does not compare the PCR values against
+expected ones.
+
 Cores with no security module configured return an empty attestation document, which this command
 rejects; it only works against enclave-backed deployments.
 

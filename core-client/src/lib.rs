@@ -67,6 +67,7 @@ use strum::VariantNames;
 use strum_macros::{Display, EnumString};
 use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_types::rng::AesRng;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -188,6 +189,16 @@ impl CoreClientConfig {
             None => Ok(dummy_domain()),
         }
     }
+
+    /// The number of responses, and of distinct signers, that a command requires: every
+    /// party when `expect_all` is set, and the majority vote count `num_majority` otherwise.
+    pub fn num_expected_responses(&self, expect_all: bool) -> usize {
+        if expect_all {
+            self.num_parties
+        } else {
+            self.num_majority
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
@@ -223,6 +234,11 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     // to `cores.len()` at deserialization time for backward compatibility). This
     // may exceed `conf.cores.len()` when the client only communicates with a subset.
     let num_parties = conf.num_parties;
+
+    if num_parties == 0 {
+        return Err(ValidationError::new("Number of Parties Error")
+            .with_message("Number of parties must be greater than 0.".into()));
+    }
 
     if conf.cores.len() > num_parties {
         return Err(ValidationError::new("Core Count Error").with_message(
@@ -1337,6 +1353,28 @@ pub(crate) struct SigVerificationMaterial {
     pub extra_data: Vec<u8>,
 }
 
+/// Require that `signers`, the `(party_id, address)` recovered from each verified response,
+/// name at least `required` distinct parties and that no party signed two responses.
+pub(crate) fn ensure_distinct_signers(
+    what: &str,
+    signers: &[(u32, alloy_primitives::Address)],
+    required: usize,
+) -> anyhow::Result<()> {
+    let mut seen = HashSet::new();
+    for (party_id, address) in signers {
+        anyhow::ensure!(
+            seen.insert(*address),
+            "{what}: party {party_id} ({address}) signed more than one response"
+        );
+    }
+    anyhow::ensure!(
+        seen.len() >= required,
+        "{what}: only {} distinct parties signed, but {required} are required",
+        seen.len()
+    );
+    Ok(())
+}
+
 /// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
 /// `None` (skip verification, with an error log) when `no_verify` is set. Otherwise the
 /// domain comes from the config (falling back to [`dummy_domain`]) and the `extra_data`
@@ -1941,11 +1979,6 @@ pub async fn execute_cmd(
 
     // use secure default params if nothing is set
     let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
-    let client_param = match fhe_params {
-        FheParameter::Test => TEST_PARAM,
-        _ => DEFAULT_PARAM,
-    };
-
     // Vector of KMS ethereum addresses
     let mut addr_vec = Vec::new();
 
@@ -2078,7 +2111,7 @@ pub async fn execute_cmd(
                 Client::new_client(
                     client_storage,
                     pub_storage,
-                    &client_param,
+                    &convert_dkg_param(&fhe_params),
                     cc_conf.decryption_mode,
                 )
                 .await?,
@@ -2108,11 +2141,7 @@ pub async fn execute_cmd(
         CCCommand::PublicDecrypt(cipher_args) => {
             validate_decrypt_rate_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let EncryptionResult {
                 cipher: ciphertext,
                 ct_format,
@@ -2581,6 +2610,7 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
+                let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2588,6 +2618,7 @@ pub async fn execute_cmd(
                     &req_id,
                     &verify_material,
                     &responses,
+                    num_expected_responses,
                 )?;
             }
             vec![(Some(req_id), "preproc result queried".to_string())]
@@ -2604,6 +2635,7 @@ pub async fn execute_cmd(
                 result_parameters.epoch_id,
             )?;
             if let Some(verify_material) = verify {
+                let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
                 keygen::check_preproc_responses(
                     internal_client
                         .as_ref()
@@ -2611,16 +2643,13 @@ pub async fn execute_cmd(
                     &req_id,
                     &verify_material,
                     &responses,
+                    num_expected_responses,
                 )?;
             }
             vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
@@ -2655,11 +2684,7 @@ pub async fn execute_cmd(
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &core_endpoints_req,
@@ -2693,11 +2718,7 @@ pub async fn execute_cmd(
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
         }
         CCCommand::PublicDecryptResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
 
             // External-signature verification requires the request's EIP-712 domain
@@ -2728,6 +2749,7 @@ pub async fn execute_cmd(
                 // `make_extra_data` (RFC-005 v2), matching what the request builder
                 // emits for the same context/epoch (defaults when not supplied).
                 Some(PubDecVerificationMaterial::External {
+                    request_id: req_id,
                     domain: cc_conf.default_domain()?,
                     external_handles,
                     extra_data: extra_data_from_context_epoch(
@@ -2753,11 +2775,7 @@ pub async fn execute_cmd(
             vec![(Some(req_id), res)]
         }
         CCCommand::CrsGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &core_endpoints_req,
@@ -2783,6 +2801,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2791,11 +2810,7 @@ pub async fn execute_cmd(
         }
         #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGenResult(result_parameters) => {
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                cc_conf.num_majority
-            };
+            let num_expected_responses = cc_conf.num_expected_responses(expect_all_responses);
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &core_endpoints_req,
@@ -2821,6 +2836,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 verify,
+                None,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2848,7 +2864,9 @@ pub async fn execute_cmd(
         }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
             let pks = do_get_operator_pub_keys(&core_endpoints_req).await?;
-            pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
+            pks.into_iter()
+                .map(|(party_id, pk)| (None, format!("party {party_id}: {pk}")))
+                .collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
@@ -3113,6 +3131,13 @@ fn print_phased_timings(
     );
     tracing::info!("{reconstruction_line}");
     println!("{reconstruction_line}");
+}
+
+pub(crate) fn convert_dkg_param(param: &FheParameter) -> DKGParams {
+    match param {
+        FheParameter::Test => TEST_PARAM,
+        FheParameter::Default => DEFAULT_PARAM,
+    }
 }
 
 #[cfg(test)]
@@ -3550,6 +3575,14 @@ mod tests {
     }
 
     #[test]
+    fn num_expected_responses_picks_all_parties_or_majority() {
+        let toml_str = build_test_toml("threshold", Some(4), 2, 3, &[1, 2, 3, 4]);
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(conf.num_expected_responses(true), 4);
+        assert_eq!(conf.num_expected_responses(false), 2);
+    }
+
+    #[test]
     fn default_domain_salt_must_be_32_bytes() {
         let cfg = Eip712DomainConfig {
             name: "n".to_string(),
@@ -3646,11 +3679,11 @@ mod tests {
             keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
                 .unwrap()
                 .expect("verification is on without --no-verify");
-        keygen::check_preproc_responses(&client, &req_id, &verify, &responses).unwrap();
+        keygen::check_preproc_responses(&client, &req_id, &verify, &responses, 1).unwrap();
 
         // the responses answer `req_id`, so checking them for another ID fails
         let other_id = derive_request_id("preproc_result_other_id").unwrap();
-        let err = keygen::check_preproc_responses(&client, &other_id, &verify, &responses)
+        let err = keygen::check_preproc_responses(&client, &other_id, &verify, &responses, 1)
             .unwrap_err()
             .to_string();
         assert!(err.contains("does not match"), "unexpected error: {err}");
@@ -3675,7 +3708,106 @@ mod tests {
             keygen_crs_verify_ctx(&cc_conf, args.no_verify, args.context_id, args.epoch_id)
                 .unwrap()
                 .expect("verification is on without --no-verify");
-        assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses).is_err());
+        assert!(keygen::check_preproc_responses(&client, &req_id, &verify, &responses, 1).is_err());
+    }
+
+    #[test]
+    fn ensure_distinct_signers_counts_parties_not_responses() {
+        let a = (1, alloy_primitives::Address::repeat_byte(1));
+        let b = (2, alloy_primitives::Address::repeat_byte(2));
+
+        ensure_distinct_signers("test", &[a, b], 2).unwrap();
+        // More distinct signers than required is fine.
+        ensure_distinct_signers("test", &[a, b], 1).unwrap();
+
+        let err = ensure_distinct_signers("test", &[a, a], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
+
+        let err = ensure_distinct_signers("test", &[a], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("only 1 distinct parties signed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A preprocessing response that one party signed verifies on its own, so the same
+    /// response replayed in place of another party's must be refused, and distinct responses
+    /// must still reach the required quorum.
+    #[test]
+    fn test_preproc_responses_reject_replayed_signer() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let req_id = derive_request_id("preproc_replayed_signer").unwrap();
+        let verify = SigVerificationMaterial {
+            domain: dummy_domain(),
+            extra_data: extra_data_from_context_epoch(None, None).unwrap(),
+        };
+        let sol_struct = PrepKeygenVerification::new(&req_id, verify.extra_data.clone());
+        let response_from = |sig_key| {
+            let sig = compute_eip712_signature(sig_key, &sol_struct, &verify.domain).unwrap();
+            KeyGenPreprocResult {
+                preprocessing_id: Some(req_id.into()),
+                external_signature: sig.clone(),
+                signatures: ecdsa_signatures(sig),
+            }
+        };
+        let from_1 = response_from(&sig_key_1);
+        let from_2 = response_from(&sig_key_2);
+
+        keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_2.clone()],
+            2,
+        )
+        .unwrap();
+
+        // Distinct signers are still too few when fewer parties answered than the quorum
+        // requires, as when the config lists fewer cores than `num_majority`.
+        let err = keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_2],
+            3,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("only 2 distinct parties signed"),
+            "unexpected error: {err}"
+        );
+
+        let err = keygen::check_preproc_responses(
+            &client,
+            &req_id,
+            &verify,
+            &[from_1.clone(), from_1],
+            2,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

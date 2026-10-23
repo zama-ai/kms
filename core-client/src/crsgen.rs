@@ -1,8 +1,10 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SigVerificationMaterial,
+    ensure_distinct_signers,
 };
 
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
@@ -11,11 +13,12 @@ use kms_grpc::rpc_types::{PubDataType, first_signature_with_scheme};
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::local_crypto::load_material_from_pub_storage;
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload, crs_sol_type};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::{max_num_bits_from_crs, max_num_messages};
 use threshold_types::rng::AesRng;
 use tokio::task::JoinSet;
 use tonic::Code;
@@ -39,11 +42,7 @@ pub(crate) async fn do_crsgen(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
+    let num_expected_responses = cc_conf.num_expected_responses(cmd_conf.expect_all_responses);
 
     // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
     // so the request built here and a later (Insecure)CrsGenResult fetch verify
@@ -123,6 +122,7 @@ pub(crate) async fn do_crsgen(
         destination_prefix,
         req_id,
         Some(SigVerificationMaterial { domain, extra_data }),
+        max_num_bits.map(|bits| (param, bits)),
         resp_response_vec,
         cmd_conf.download_all,
     )
@@ -142,6 +142,8 @@ pub(crate) async fn fetch_and_check_crsgen(
     // `None`, the CRS is still downloaded and request IDs checked, but the
     // external signature is not verified (an error is logged).
     verify: Option<SigVerificationMaterial>,
+    // The parameter set and `max_num_bits` of the request, when it is at hand.
+    requested_size: Option<(FheParameter, u32)>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
@@ -184,7 +186,11 @@ pub(crate) async fn fetch_and_check_crsgen(
         Some(core_config.object_folder.as_str()),
     )
     .await;
+    if let Some((param, max_num_bits)) = requested_size {
+        check_crs_size(&crs, param, max_num_bits)?;
+    }
 
+    let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         let signature_bytes = first_signature_with_scheme(
@@ -208,7 +214,7 @@ pub(crate) async fn fetch_and_check_crsgen(
 
         match verify.as_ref() {
             Some(material) => {
-                check_crsgen_signatures(
+                let signer = check_crsgen_signatures(
                     internal_client,
                     &crs,
                     &request_id,
@@ -218,6 +224,7 @@ pub(crate) async fn fetch_and_check_crsgen(
                     material.extra_data.clone(),
                 )
                 .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
+                signers.push(signer);
 
                 tracing::info!("Verification of every requested CRS signature successful.");
             }
@@ -230,6 +237,36 @@ pub(crate) async fn fetch_and_check_crsgen(
             }
         }
     }
+    if verify.is_some() {
+        ensure_distinct_signers(
+            &format!("CRS gen {request_id}"),
+            &signers,
+            num_expected_responses,
+        )?;
+    }
+    Ok(())
+}
+
+/// Check that `crs` has the size requested with `max_num_bits` under `param`.
+///
+/// The signatures cover whatever size the parties generated, so they do not show that it is
+/// exactly the size the request asked for.
+fn check_crs_size(
+    crs: &CompactPkeCrs,
+    param: FheParameter,
+    max_num_bits: u32,
+) -> anyhow::Result<()> {
+    let params = match param {
+        FheParameter::Test => TEST_PARAM,
+        FheParameter::Default => DEFAULT_PARAM,
+    };
+    let expected = max_num_messages(&params.compact_pk_enc_params(), max_num_bits as usize)?.0;
+    let actual = crs.max_num_messages().0;
+    anyhow::ensure!(
+        actual == expected,
+        "the CRS supports {actual} messages, but {max_num_bits} bits under the {} parameters need {expected}",
+        param.as_str_name()
+    );
     Ok(())
 }
 
@@ -346,6 +383,8 @@ pub(crate) async fn get_crsgen_responses(
 
 /// Check every signature the CRS result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
+///
+/// Returns the `(party_id, address)` of the signer.
 pub(crate) fn check_crsgen_signatures(
     internal_client: &Client,
     crs: &CompactPkeCrs,
@@ -354,7 +393,7 @@ pub(crate) fn check_crsgen_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     tracing::info!(
@@ -375,7 +414,7 @@ pub(crate) fn check_crsgen_signatures(
             &DSEP_PUBDATA_CRS,
             &signed_payload,
         )
-        .map(|(party_id, _address)| {
+        .inspect(|(party_id, _address)| {
             tracing::info!("CRS gen result verified as produced by party {party_id}");
         })
 }
@@ -590,6 +629,115 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains(UNKNOWN_PARTY)
+        );
+    }
+
+    /// A CRS passes when it has the size the request asked for, rounded up to whole messages,
+    /// and fails when the request asked for more.
+    #[tokio::test]
+    async fn test_check_crs_size() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let crs_id = &TEST_CENTRAL_CRS_ID;
+        ensure_central_crs_exists(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            crs_id,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let crs: CompactPkeCrs = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+        let bits = max_num_bits_from_crs(&crs) as u32;
+
+        check_crs_size(&crs, FheParameter::Test, bits).unwrap();
+        // One bit less still needs the same number of messages; internally rounded up
+        check_crs_size(&crs, FheParameter::Test, bits - 1).unwrap();
+
+        let err = check_crs_size(&crs, FheParameter::Test, bits + 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("the CRS supports"), "unexpected error: {err}");
+    }
+
+    /// Every CRS gen response verifies on its own, so one party's response returned twice
+    /// must not count as two signers.
+    #[tokio::test]
+    async fn test_crsgen_responses_reject_replayed_signer() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let crs_id = &TEST_CENTRAL_CRS_ID;
+        ensure_central_crs_exists(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            crs_id,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let crs: CompactPkeCrs = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let mut rng = AesRng::seed_from_u64(0xC125);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let domain = crate::dummy_domain();
+        let sol_struct = CrsgenVerification::new(
+            crs_id,
+            max_num_bits_from_crs(&crs),
+            hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap(),
+            default_extra_data(),
+        );
+        let signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &sol_struct, &domain).unwrap();
+            check_crsgen_signatures(
+                &client,
+                &crs,
+                crs_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        let (signer_1, signer_2) = (signer(&sig_key_1), signer(&sig_key_2));
+        assert_ne!(signer_1, signer_2);
+
+        ensure_distinct_signers("CRS gen", &[signer_1, signer_2], 2).unwrap();
+        let err = ensure_distinct_signers("CRS gen", &[signer_1, signer_1], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
         );
     }
 }

@@ -19,7 +19,10 @@ use observability::{
 use threshold_execution::{
     runtime::sessions::{base_session::BaseSession, session_parameters::GenericParameterHandles},
     tfhe_internals::parameters::DKGParams,
-    zk::ceremony::Ceremony,
+    zk::{
+        ceremony::{Ceremony, max_num_messages},
+        constants::ZK_DEFAULT_MAX_NUM_BITS,
+    },
 };
 use threshold_types::network::NetworkMode;
 use threshold_types::rng::AesRng;
@@ -419,17 +422,33 @@ impl<
             () = cancel_token.cancelled() => Err(format!(
                 "CRS generation of request {req_id} aborted before completion because of a cancellation event"
             )),
-            pp = generate_pp => pp
-                .and_then(|pp| compute_info_crs(
-                    &sk,
-                    &signing_schemes,
-                    &DSEP_PUBDATA_CRS,
-                    req_id,
-                    &pp,
-                    &domain_for_compute,
-                    extra_data_for_compute,
-                ).map(|info| (pp, info)))
-                .map_err(|e| e.to_string()),
+            pp = generate_pp => {
+                pp
+                .and_then(|pp| {
+                    // The signature covers whatever CRS the ceremony produced, so check that it
+                    // has the size the request asked for before signing it.
+                    let requested_bits =
+                        max_num_bits.map_or(ZK_DEFAULT_MAX_NUM_BITS, |bits| bits as usize);
+                    let expected = max_num_messages(&pke_params, requested_bits)?.0;
+                    let actual = pp.max_num_messages().0;
+                    if actual != expected {
+                        anyhow::bail!(
+                            "the CRS generated for request {req_id} supports {actual} messages, \
+                             but {requested_bits} bits need {expected}"
+                        );
+                    }
+                    compute_info_crs(
+                        &sk,
+                        &signing_schemes,
+                        &DSEP_PUBDATA_CRS,
+                        req_id,
+                        &pp,
+                        &domain_for_compute,
+                        extra_data_for_compute,
+                    ).map(|info| (pp, info))
+                })
+                .map_err(|e| e.to_string())
+            },
         };
 
         match outcome {

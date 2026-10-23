@@ -161,13 +161,15 @@ impl Client {
         })
     }
 
+    /// Verify one party's preprocessing result and return the `(party_id, address)` that
+    /// signed it.
     pub fn process_preproc_response(
         &self,
         preproc_id: &RequestId,
         domain: &Eip712Domain,
         resp: &KeyGenPreprocResult,
         extra_data: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(u32, alloy_primitives::Address)> {
         let sol_type = PrepKeygenVerification::new(preproc_id, extra_data);
         let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
@@ -189,12 +191,14 @@ impl Client {
             &DSEP_PUBDATA_KEY,
             &payload,
         )
-        .map(|_signer| ())
     }
 
-    // TODO(zama-ai/kms-internal#2727)
-    // this only checks the signature is valid against one of the server addresses
-    // we should fix it so that it does a proper verification
+    /// Retrieves the server key and public key of `key_gen_result` from `storage`, and checks
+    /// their digests against the digests in `key_gen_result`.
+    ///
+    /// The signature check accepts a valid signature from any server address this client
+    /// knows, and the signer is not returned. Thus the caller cannot tell which party signed.
+    // TODO(zama-ai/kms-internal#2727): could be refactoring to allow reuse to use internal client
     pub async fn retrieve_server_key_and_public_key<R: StorageReader>(
         &self,
         preproc_id: &RequestId,

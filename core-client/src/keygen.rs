@@ -3,8 +3,9 @@ use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
-    SigVerificationMaterial,
+    SigVerificationMaterial, ensure_distinct_signers,
 };
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
@@ -84,11 +85,7 @@ pub(crate) async fn do_keygen(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
+    let num_expected_responses = cc_conf.num_expected_responses(cmd_conf.expect_all_responses);
 
     // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
     // so the request built here and a later (Insecure)KeyGenResult fetch verify
@@ -241,12 +238,20 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = party_confs
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("no party configs returned from fetch_public_elements"))?
-        .party_id as usize;
-    let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
+    let core_config = cc_conf
+        .cores
+        .iter()
+        .find(|c| c == &&party_confs[0])
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "core client config not found for party {:?} in CRS gen",
+                party_confs[0].party_id
+            )
+        })?;
+    let pub_storage_prefix = Some(core_config.object_folder.as_str());
+
+    let mut signers = Vec::with_capacity(responses.len());
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
@@ -282,7 +287,7 @@ pub(crate) async fn fetch_and_check_keygen(
                             "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_compressed_keyset_signatures(
+                    let signer = check_compressed_keyset_signatures(
                         internal_client,
                         &compressed_keyset,
                         &compact_public_key,
@@ -294,6 +299,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         material.extra_data.clone(),
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+                    signers.push(signer);
 
                     tracing::info!(
                         "Verification of every requested CompressedXofKeySet signature successful."
@@ -339,7 +345,7 @@ pub(crate) async fn fetch_and_check_keygen(
                             "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_uncompressed_keyset_signatures(
+                    let signer = check_uncompressed_keyset_signatures(
                         internal_client,
                         &public_key,
                         &server_key,
@@ -351,6 +357,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         material.extra_data.clone(),
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+                    signers.push(signer);
 
                     tracing::info!(
                         "Verification of every requested Public Key and Server Key signature \
@@ -366,6 +373,13 @@ pub(crate) async fn fetch_and_check_keygen(
                 }
             }
         }
+    }
+    if verify.is_some() {
+        ensure_distinct_signers(
+            &format!("keygen {request_id}"),
+            &signers,
+            num_expected_responses,
+        )?;
     }
     Ok(())
 }
@@ -561,6 +575,8 @@ pub(crate) async fn do_abort_key_gen(
 
 /// Verify every signature a keygen result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
+///
+/// Returns the `(party_id, address)` of the signer.
 #[expect(clippy::too_many_arguments)]
 fn check_keyset_signatures(
     internal_client: &Client,
@@ -572,7 +588,7 @@ fn check_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
     let payload = keygen_payload(prep_id, key_id, &key_digests, &extra_data);
     internal_client
@@ -584,7 +600,7 @@ fn check_keyset_signatures(
             &DSEP_PUBDATA_KEY,
             &payload,
         )
-        .map(|(party_id, _address)| {
+        .inspect(|(party_id, _address)| {
             tracing::info!("Keygen result verified as produced by party {party_id}");
         })
 }
@@ -601,7 +617,7 @@ pub(crate) fn check_uncompressed_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
@@ -641,7 +657,7 @@ pub(crate) fn check_compressed_keyset_signatures(
     external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(u32, Address)> {
     let keyset_digest = hash_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
@@ -747,15 +763,13 @@ pub(crate) async fn do_preproc(
 
     let responses =
         get_preproc_keygen_responses(core_endpoints, req_id, max_iter, insecure).await?;
-    for response in responses {
-        // this part also verifies the signature
-        internal_client.process_preproc_response(
-            &req_id,
-            &domain,
-            &response,
-            extra_data.clone(),
-        )?;
-    }
+    check_preproc_responses(
+        internal_client,
+        &req_id,
+        &SigVerificationMaterial { domain, extra_data },
+        &responses,
+        num_parties,
+    )?;
 
     Ok(req_id)
 }
@@ -828,34 +842,37 @@ pub(crate) async fn do_partial_preproc(
     }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter, false).await?;
-    for response in responses {
-        internal_client.process_preproc_response(
-            &req_id,
-            &domain,
-            &response,
-            extra_data.clone(),
-        )?;
-    }
+    check_preproc_responses(
+        internal_client,
+        &req_id,
+        &SigVerificationMaterial { domain, extra_data },
+        &responses,
+        num_parties,
+    )?;
 
     Ok(req_id)
 }
 
 /// Check every signature each preprocessing response carries, under every scheme
-/// the client requested, and that each was produced by a known KMS party.
+/// the client requested, and that at least `required` different known KMS parties
+/// produced them.
 pub(crate) fn check_preproc_responses(
     internal_client: &Client,
     request_id: &RequestId,
     verify_material: &SigVerificationMaterial,
     responses: &[KeyGenPreprocResult],
+    required: usize,
 ) -> anyhow::Result<()> {
+    let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
-        internal_client.process_preproc_response(
+        signers.push(internal_client.process_preproc_response(
             request_id,
             &verify_material.domain,
             response,
             verify_material.extra_data.clone(),
-        )?;
+        )?);
     }
+    ensure_distinct_signers(&format!("preprocessing {request_id}"), &signers, required)?;
     tracing::info!(
         "Verified the signatures on {} preprocessing responses for {request_id}",
         responses.len()
@@ -1122,6 +1139,178 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains(UNKNOWN_PARTY)
+        );
+    }
+
+    /// Checks that two distinct signers meet a quorum of 2, and that one signer counted twice
+    /// does not.
+    fn assert_replayed_signer_rejected(signer_1: (u32, Address), signer_2: (u32, Address)) {
+        assert_ne!(signer_1, signer_2);
+        ensure_distinct_signers("keygen", &[signer_1, signer_2], 2).unwrap();
+        let err = ensure_distinct_signers("keygen", &[signer_1, signer_1], 2)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("signed more than one response"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Returns the keyset of the central test fixture: the compressed keyset, its compact
+    /// public key, and the server key that the compressed keyset decompresses to.
+    async fn test_keyset() -> (CompressedXofKeySet, tfhe::CompactPublicKey, ServerKey) {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let key_id = &TEST_CENTRAL_KEY_ID;
+        ensure_central_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            key_id,
+            &OTHER_CENTRAL_TEST_ID,
+            &DEFAULT_EPOCH_ID,
+            true,
+        )
+        .await;
+        let key_id = RequestId::from_str(&key_id.to_string()).unwrap();
+        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
+            &pub_storage,
+            &key_id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+        let public_key: tfhe::CompactPublicKey = read_versioned_at_request_id(
+            &pub_storage,
+            &key_id,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let (_, server_key) = compressed_keyset.decompress().into_raw_parts();
+        (compressed_keyset, public_key, server_key)
+    }
+
+    /// An uncompressed keyset signature verifies as the party that signed the server key and
+    /// public key digests. It fails for a client that does not know that party, and for
+    /// another key ID.
+    #[tokio::test]
+    async fn test_uncompressed_keyset_signatures() {
+        let (_, public_key, server_key) = test_keyset().await;
+        let mut rng = AesRng::seed_from_u64(0x5EED);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let client = client_knowing(verf_key.clone());
+        let key_id = RequestId::from_str(&TEST_CENTRAL_KEY_ID.to_string()).unwrap();
+        let other_key_id = RequestId::from_str(&OTHER_CENTRAL_TEST_ID.to_string()).unwrap();
+        let prep_id = &INSECURE_PREPROCESSING_ID;
+
+        let sol_struct = KeygenVerification::new_uncompressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap(),
+            hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap(),
+            default_extra_data(),
+        );
+        let sig = compute_eip712_signature(&sig_key, &sol_struct, &dummy_domain()).unwrap();
+        let check = |client: &Client, key_id: &RequestId| {
+            check_uncompressed_keyset_signatures(
+                client,
+                &public_key,
+                &server_key,
+                prep_id,
+                key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &dummy_domain(),
+                default_extra_data(),
+            )
+        };
+
+        assert_eq!(check(&client, &key_id).unwrap(), (1, verf_key.address()));
+
+        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
+        let err = check(&stranger, &key_id).unwrap_err().to_string();
+        assert!(err.contains(UNKNOWN_PARTY), "unexpected error: {err}");
+
+        assert!(check(&client, &other_key_id).is_err());
+    }
+
+    /// Every keygen response verifies on its own, so one party's response returned twice must
+    /// not count as two signers. This holds for both keyset layouts.
+    #[tokio::test]
+    async fn test_keyset_responses_reject_replayed_signer() {
+        let (compressed_keyset, public_key, server_key) = test_keyset().await;
+        let mut rng = AesRng::seed_from_u64(0x2E91A7);
+        let (verf_key_1, sig_key_1) = gen_sig_keys(&mut rng);
+        let (verf_key_2, sig_key_2) = gen_sig_keys(&mut rng);
+        let client = Client::new(
+            HashMap::from([(1, verf_key_1.clone()), (2, verf_key_2)]),
+            HashMap::new(),
+            verf_key_1.address(),
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let key_id = RequestId::from_str(&TEST_CENTRAL_KEY_ID.to_string()).unwrap();
+        let prep_id = &INSECURE_PREPROCESSING_ID;
+        let domain = dummy_domain();
+        let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+
+        let uncompressed = KeygenVerification::new_uncompressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap(),
+            public_key_digest.clone(),
+            default_extra_data(),
+        );
+        let uncompressed_signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &uncompressed, &domain).unwrap();
+            check_uncompressed_keyset_signatures(
+                &client,
+                &public_key,
+                &server_key,
+                prep_id,
+                &key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        assert_replayed_signer_rejected(
+            uncompressed_signer(&sig_key_1),
+            uncompressed_signer(&sig_key_2),
+        );
+
+        let compressed = KeygenVerification::new_compressed(
+            prep_id,
+            &key_id,
+            hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap(),
+            public_key_digest,
+            default_extra_data(),
+        );
+        let compressed_signer = |sig_key: &PrivateSigKey| {
+            let sig = compute_eip712_signature(sig_key, &compressed, &domain).unwrap();
+            check_compressed_keyset_signatures(
+                &client,
+                &compressed_keyset,
+                &public_key,
+                prep_id,
+                &key_id,
+                &ecdsa_signatures(sig.clone()),
+                &sig,
+                &domain,
+                default_extra_data(),
+            )
+            .unwrap()
+        };
+        assert_replayed_signer_rejected(
+            compressed_signer(&sig_key_1),
+            compressed_signer(&sig_key_2),
         );
     }
 }
