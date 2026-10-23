@@ -280,11 +280,12 @@ kmsInit:
   affinity:
   tolerations:
 
-# On an enclave node, the core pod runs kms-gen-keys in its own enclave
-# before kms-server. That pod already holds the hugepage pool, so the chart
-# does not schedule a second pod. Leave this false except for the install or
-# the one upgrade that must generate keys, then set it back to false so later
-# restarts boot the enclave once.
+# When enabled with Nitro, a pre-install and pre-upgrade hook writes the
+# certificates, then the core pod loads them into its config. The hook reads
+# this release's core pod and pins the keygen Job to that node. Helm lookup
+# cannot do that under helm template, which is how Argo CD renders the chart.
+# The Job uses system-cluster-critical so it preempts that core. Leave this
+# false except for the install or the one upgrade that must run the job.
 kmsGenCertAndKeys:
   enabled: false
   nameOverride:

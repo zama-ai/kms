@@ -1,4 +1,5 @@
-{{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.thresholdMode.enabled (not .Values.kmsCore.nitroEnclave.enabled) -}}
+{{- define "kmsGenCertAndKeysJobManifest" -}}
+{{- if and .Values.kmsGenCertAndKeys.enabled (or .Values.kmsCore.thresholdMode.enabled .Values.kmsCore.nitroEnclave.enabled) -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
@@ -11,10 +12,17 @@ metadata:
     app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
   annotations:
     {{- /*
-    Non-enclave threshold installs generate this party's TLS certificate and
-    upload it before the StatefulSet starts. Enclave nodes do not use this
-    Job: the template guard above excludes them. Key generation runs in the
-    core pod, which already owns the enclave slot.
+    In enclave mode, also run on upgrade: the enclave gets the kms-gen-keys
+    config only from this job, and kms-gen-keys keeps an existing signing key
+    and CA certificate and adds only missing material (e.g. the root signing
+    seed of v0.15). The non-enclave branch replaces the TLS certificates, and
+    the statefulset init container already runs kms-gen-keys at each start.
+    This job requests the whole hugepage pool, so it cannot schedule beside
+    the running core. It uses the built-in system-cluster-critical class so
+    the scheduler preempts that pod. The chart does not create a PriorityClass:
+    the deployer cannot get or delete them. On an enclave upgrade the pin hook
+    reads this release's core pod and sets the Job's node before it is created.
+    Helm lookup cannot do that under helm template.
     */}}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     "helm.sh/hook": pre-install,pre-upgrade
@@ -24,6 +32,7 @@ metadata:
     "helm.sh/hook-weight": "-1"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
   name: {{ $kmsGenCertAndKeysName }}
+  namespace: {{ .Release.Namespace }}
 spec:
   template:
     metadata:
@@ -40,6 +49,7 @@ spec:
         {{- end }}
       restartPolicy: Never
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
+      priorityClassName: system-cluster-critical
       initContainers:
         - image: {{ .Values.socat.image.name }}:{{ .Values.socat.image.tag }}
           imagePullPolicy: {{ .Values.socat.image.pullPolicy }}
@@ -372,6 +382,30 @@ spec:
         {{- end }}
       imagePullSecrets:
         - name: registry-credentials
+      {{- if .Values.kmsCore.nitroEnclave.enabled }}
+      {{- /* PIN_HOSTNAME_BLOCK is replaced from the core pod's node when this manifest is applied. */}}
+      {{- $nodeSelector := dict }}
+      {{- with .Values.kmsCore.nodeSelector }}
+      {{- range $key, $value := . }}
+      {{- $_ := set $nodeSelector $key $value }}
+      {{- end }}
+      {{- end }}
+      {{- if $nodeSelector }}
+      nodeSelector:
+        {{- toYaml $nodeSelector | nindent 8 }}
+        # PIN_HOSTNAME
+      {{- else }}
+      # PIN_HOSTNAME_BLOCK
+      {{- end }}
+      {{- if .Values.kmsCore.affinity }}
+      affinity:
+        {{- toYaml .Values.kmsCore.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmsCore.tolerations }}
+      tolerations:
+        {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
+      {{- end }}
+      {{- end }}
       volumes:
         {{- if .Values.kmsCore.nitroEnclave.enabled }}
         - name: keygen
@@ -400,3 +434,167 @@ spec:
           emptyDir: {}
         {{- end }}
 {{- end -}}
+{{- end -}}
+{{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.nitroEnclave.enabled }}
+{{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
+{{- $pinName := printf "%s-pin" $kmsGenCertAndKeysName }}
+{{- $corePodName := printf "%s-%d" (include "kmsCoreName" .) (include "kmsPeersStartID" . | int) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $kmsGenCertAndKeysName }}-spec
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kms-core
+    app.kubernetes.io/name: {{ $pinName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  job: |
+{{ include "kmsGenCertAndKeysJobManifest" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $pinName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $pinName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $pinName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+subjects:
+  - kind: ServiceAccount
+    name: {{ $pinName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $pinName }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $pinName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kms-core
+    app.kubernetes.io/name: {{ $pinName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: kms-core-gen-cert-and-keys-pin
+        app.kubernetes.io/name: {{ $pinName }}
+    spec:
+      serviceAccountName: {{ $pinName }}
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: pin
+          image: {{ .Values.kubectl.image.name }}:{{ .Values.kubectl.image.tag }}
+          imagePullPolicy: {{ .Values.kubectl.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+              NAME="{{ $kmsGenCertAndKeysName }}"
+              CORE="{{ $corePodName }}"
+              kubectl delete job "$NAME" -n "$NS" --ignore-not-found --wait=true
+              kubectl get configmap "{{ $kmsGenCertAndKeysName }}-spec" -n "$NS" -o jsonpath='{.data.job}' > /tmp/job.yaml
+              if kubectl get pod "$CORE" -n "$NS" >/dev/null 2>&1; then
+                NODE="$(kubectl get pod "$CORE" -n "$NS" -o jsonpath='{.spec.nodeName}')"
+                if [ -z "$NODE" ]; then
+                  echo "core pod $CORE is not scheduled; refusing an unpinned enclave job" >&2
+                  exit 1
+                fi
+              else
+                NODE=""
+              fi
+              case "$NODE" in
+                "" ) ;;
+                *[!A-Za-z0-9._-]*)
+                  echo "refusing to pin to node name: $NODE" >&2
+                  exit 1
+                  ;;
+              esac
+              awk -v node="$NODE" '
+                /^        # PIN_HOSTNAME$/ {
+                  if (node != "") print "        kubernetes.io/hostname: \"" node "\""
+                  next
+                }
+                /^      # PIN_HOSTNAME_BLOCK$/ {
+                  if (node != "") {
+                    print "      nodeSelector:"
+                    print "        kubernetes.io/hostname: \"" node "\""
+                  }
+                  next
+                }
+                { print }
+              ' /tmp/job.yaml > /tmp/job.pinned.yaml
+              if [ -n "$NODE" ]; then
+                echo "pinning $NAME to $NODE so it preempts only this party"
+              else
+                echo "core pod $CORE has no node; the job is not pinned"
+              fi
+              kubectl apply -n "$NS" -f /tmp/job.pinned.yaml
+              elapsed=0
+              while [ "$elapsed" -lt 1200 ]; do
+                succeeded="$(kubectl get job "$NAME" -n "$NS" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+                failed="$(kubectl get job "$NAME" -n "$NS" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
+                if [ "${succeeded:-0}" != "0" ] && [ -n "${succeeded}" ]; then
+                  kubectl logs -n "$NS" -l job-name="$NAME" --all-containers --tail=200 || true
+                  kubectl delete job "$NAME" -n "$NS" --ignore-not-found --wait=true
+                  exit 0
+                fi
+                if [ "${failed:-0}" != "0" ] && [ -n "${failed}" ]; then
+                  echo "keygen job failed" >&2
+                  kubectl logs -n "$NS" -l job-name="$NAME" --all-containers --tail=200 || true
+                  kubectl delete job "$NAME" -n "$NS" --ignore-not-found --wait=true
+                  exit 1
+                fi
+                sleep 5
+                elapsed=$((elapsed + 5))
+              done
+              echo "keygen job did not finish within 20 minutes" >&2
+              kubectl logs -n "$NS" -l job-name="$NAME" --all-containers --tail=200 || true
+              kubectl delete job "$NAME" -n "$NS" --ignore-not-found --wait=true
+              exit 1
+{{- else if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.thresholdMode.enabled }}
+{{ include "kmsGenCertAndKeysJobManifest" . }}
+{{- end }}

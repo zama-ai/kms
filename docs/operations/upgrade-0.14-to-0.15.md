@@ -111,11 +111,11 @@ No root signing seed found in storage "..."; this node can only sign under ECDSA
 
 - Centralized and threshold nodes must both do this step.
 - With the Helm chart, a node without an enclave runs `kms-gen-keys` at each pod start. That run generates the seed after the upgrade, so you only do the check in [Check the result](#check-the-result).
-- With the Helm chart, an enclave node generates the seed in its own core pod while `kmsGenCertAndKeys.enabled` is `true`. The pod boots the enclave once with the `kms-gen-keys` config, waits for that run to finish, then boots it again with the `kms-server` config. The chart does not schedule a second pod for this. Do these steps:
+- With the Helm chart, an enclave node generates the seed in the `kmsGenCertAndKeys` job. The job writes the certificates. The core pod then loads those certificates into its config. Do these steps:
   1. Use chart version 1.9.7 or later. Set `kmsGenCertAndKeys.enabled` to `true`, and upgrade the release.
-  2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes. The core pod starts the server after the keygen enclave exits, including when key generation failed.
-  3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade, so a restart boots the enclave once.
-- Chart 1.9.6 schedules a separate Job at `system-cluster-critical` and tries to pin it with Helm `lookup`. Argo CD renders charts with `helm template`, `lookup` returns nothing, and the Job preempts whichever enclave node the scheduler picks. That takes down another party's core as well as the party being upgraded.
+  2. Do the check in [Check the result](#check-the-result). This check is mandatory for enclave nodes, because the job reports success also when the seed generation failed.
+  3. Set `kmsGenCertAndKeys.enabled` back to `false` for each later upgrade.
+- Chart 1.9.7 keeps the Job at `system-cluster-critical`. Before the Job is created, the hook reads this release's core pod and pins the Job to that node, so preemption evicts that core. Chart 1.9.6 tried to do this with Helm `lookup`, which is empty when Argo CD renders the chart with `helm template`. The unpinned Job then preempts whichever enclave node the scheduler picks.
 - A node without Helm must run `kms-gen-keys`.
 
 ### Run kms-gen-keys

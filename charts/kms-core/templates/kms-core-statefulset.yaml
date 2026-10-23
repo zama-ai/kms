@@ -190,7 +190,7 @@ spec:
                (dict "name" "enclave-config"
                      "image" .Values.socat.image
                      "vsockPort" 4000
-                     "to" (printf "OPEN:enclave-config.toml,rdonly")
+                     "to" (printf "OPEN:kms-server.toml,rdonly")
                 ) | indent 10 | trim }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -382,40 +382,9 @@ spec:
             {{- if .Values.kmsCore.nitroEnclave.signed }}
               nitro-cli sign-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ .Values.kmsCore.nitroEnclave.eifSignKey }}
             {{- end }}
-            {{- if .Values.kmsGenCertAndKeys.enabled }}
-              # Generate missing signing material in this pod's enclave before
-              # the server starts. The pod already holds the hugepage pool.
-              # A second pod cannot be pinned to this node under helm template,
-              # which is how Argo CD renders the chart, so preemption would
-              # evict another party.
-              echo "running kms-gen-keys inside the enclave"
-              cp -f kms-gen-keys.toml enclave-config.toml
-              nitro-cli terminate-enclave --all || true
-              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
-              i=0
-              while ! nitro-cli describe-enclaves | grep -q '"EnclaveID"'; do
-                i=$((i + 1))
-                if [ "$i" -ge 60 ]; then
-                  echo "keygen enclave did not start" >&2
-                  exit 1
-                fi
-                sleep 1
-              done
-              i=0
-              while nitro-cli describe-enclaves | grep -q '"EnclaveID"'; do
-                i=$((i + 1))
-                if [ "$i" -ge 300 ]; then
-                  echo "keygen enclave did not finish within 10 minutes" >&2
-                  nitro-cli terminate-enclave --all || true
-                  exit 1
-                fi
-                sleep 2
-              done
-            {{- end }}
-              # Config vsock is hardcoded to 4000 in init_enclave.sh. The
-              # sidecar serves enclave-config.toml, which is the server config
-              # once key generation has finished.
-              cp -f kms-server.toml enclave-config.toml
+              # enclave config vsock is hardcoded to 4000 in init_enclave.sh
+              # it can't be a separate container because
+              # we had to serve kms-gen-keys.toml on the same port earlier
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               while true; do
                 nitro-cli describe-enclaves > /var/log/nitro_enclaves/status
