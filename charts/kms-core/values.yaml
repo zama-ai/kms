@@ -65,10 +65,8 @@ kmsCore:
   thresholdMode:
     enabled: false
     # When true, render no [[threshold.peers]] and skip the 3*t+1 party check.
-    # The server writes no default context and loads only the MPC contexts in its
-    # private storage, which the connector fills from the on-chain ProtocolConfig.
-    # Do not set it on the first deployment of a committee. An empty peersList still
-    # generates peers from kmsPeers.count. See README.md for when it is safe to use.
+    # The server then boots with no peer list and reads the committee from storage.
+    # An empty peersList still synthesizes peers from kmsPeers.count unless this is set.
     omitPeers: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
     peersList: []
@@ -327,12 +325,20 @@ grpcHeathProbe:
     tag: v0.4-dev
     pullPolicy: Always
 
-# Used by enclave proxy sidecars
+# Used by enclave proxy sidecars:
+# enclave-config, kms-core-enclave-logger, enclave-web-identity-token.
 socat:
   image:
     name: hub.zama.org/zama-protocol/zama.ai/socat
     tag: v1.8-dev
     pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 runMode: dev
 
