@@ -844,6 +844,64 @@ The endpoint queries the underlying storage directly and returns immediately wit
 
 </details>
 
+## MPC Context Creation
+
+<details>
+    <summary> NewMpcContext </summary>
+
+### Input
+
+```proto
+message NewMpcContextRequest {
+  MpcContext new_context = 1;
+  RequestId previous_context_id = 2;
+  bytes node_config_hash = 3;
+  Eip712DomainMsg domain = 4;
+  bytes extra_data = 5;
+  repeated SigningSchemeType signing_schemes = 6;
+}
+```
+
+### Output
+
+```proto
+message NewMpcContextResponse {
+  NewMpcContextPayload payload = 1;
+  repeated TypedSignature signatures = 2;
+}
+
+message NewMpcContextPayload {
+  RequestId previous_context_id = 1;
+  RequestId new_context_id = 2;
+  bytes node_config_hash = 3;
+  bytes extra_data = 4;
+}
+```
+
+### Description
+
+Stores `new_context` as an MPC context on this party, and returns a signed confirmation of the creation.
+Every party that receives the request signs the confirmation. This includes a party of the previous context that is not part of `new_context`.
+
+`previous_context_id` is the context that was active on the canonical `ProtocolConfig` contract when `new_context` was defined. For the first context, it is the ID of `new_context`.
+`node_config_hash` is `keccak256(abi.encode(KmsNode[] nodes, KmsThresholds thresholds))` of `new_context`. The caller computes it, and the party signs it as given.
+
+The `Ecdsa256k1` signature covers the EIP-712 hash of the following struct, under `domain`. Every other scheme in `signing_schemes` signs the serialized `payload`, see [Choosing the signature schemes of a response](../../guides/entry_points.md#choosing-the-signature-schemes-of-a-response).
+
+```solidity
+struct ContextCreationConfirmation {
+    uint256 previousContextId;
+    uint256 newContextId;
+    bytes32 nodeConfigHash;
+    bytes extraData;
+}
+```
+
+The request is validated, and the confirmation signed, before anything is stored. An invalid request, or a scheme that the party cannot sign with, fails with `InvalidArgument` and stores nothing.
+The call is idempotent, because no other call returns the confirmation. A repeated request with an identical `new_context` stores nothing, and the party signs the confirmation again.
+A different `new_context` under an existing context ID fails with `AlreadyExists`.
+</details>
+
 ## Health Status
 
 <details>

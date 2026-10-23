@@ -146,6 +146,14 @@ request, an ID of the key needed to decrypt (this will be the `RequestId` used t
 
 The user decryption process is very fast and should be expected to be done within a few seconds at the most.
 
+## Context creation
+
+An MPC context defines the set of KMS Cores that run the MPC protocols, and their threshold.
+Governance defines a context on the canonical `ProtocolConfig` contract, and each KMS Core receives it with `NewMpcContext`.
+Each KMS Core returns a confirmation of the context, signed under the requested signature schemes.
+The confirmation binds the previous context ID, the new context ID and a hash of the node configuration.
+A creation can safely be repeated, because a repeated request is confirmed again.
+
 ## Key reshare
 
 Key resharing allow each of MPC parties holding a share of a private FHE key to "refresh" these shares. More specifically it means that the pseudorandom values that each party hold, which when combined constitute the secret FHE key, change, but with the public key remaining the same. This also means, that if the parties were to reconstruct the private key it would also be the same. Hence this should _not_ be mistaken for key rolling or key rotation.
