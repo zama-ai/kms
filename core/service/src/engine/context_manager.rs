@@ -881,6 +881,7 @@ where
             let response = self
                 .inner
                 .confirm_existing_mpc_context(&verified, &stored_context)?;
+            self.cache.write().await.insert(*new_context.context_id());
             return Ok(Response::new(response));
         }
 
