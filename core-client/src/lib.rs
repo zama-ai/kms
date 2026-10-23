@@ -2749,6 +2749,7 @@ pub async fn execute_cmd(
                 // `make_extra_data` (RFC-005 v2), matching what the request builder
                 // emits for the same context/epoch (defaults when not supplied).
                 Some(PubDecVerificationMaterial::External {
+                    request_id: req_id,
                     domain: cc_conf.default_domain()?,
                     external_handles,
                     extra_data: extra_data_from_context_epoch(

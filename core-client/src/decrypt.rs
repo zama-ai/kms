@@ -265,9 +265,11 @@ fn check_pt_signatures(
     Ok((party_id, address))
 }
 
-/// Check every requested signature of every response, that each one decrypts to
-/// `expected_answer`, and that at least `num_expected_responses` distinct parties signed them.
-#[expect(clippy::too_many_arguments)]
+/// Check every requested signature of every response, and that each one decrypts to
+/// `expected_answer`.
+///
+/// Returns the `(party_id, address)` of the signer of each response, for the caller's
+/// distinct-signer check.
 fn check_external_decryption_signature(
     responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
@@ -276,8 +278,7 @@ fn check_external_decryption_signature(
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
     internal_client: &Client,
-    num_expected_responses: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<(u32, alloy_primitives::Address)>> {
     let mut results = Vec::new();
     let mut signers = Vec::with_capacity(responses.len());
     for response in responses {
@@ -317,10 +318,9 @@ fn check_external_decryption_signature(
             );
         }
     }
-    ensure_distinct_signers("public decryption", &signers, num_expected_responses)?;
 
     tracing::info!("Decryption response successfully processed.");
-    Ok(())
+    Ok(signers)
 }
 
 /// One public-decrypt request paired with its responses and collection latency.
@@ -2170,6 +2170,9 @@ pub(crate) enum PubDecVerificationMaterial {
     /// CLI) when the original request object is not available. Responses are still
     /// checked against the trusted KMS keys, but not bound to a specific request.
     External {
+        /// The ID of the request whose result was fetched. It only names the request in
+        /// error messages, since nothing binds the responses to it.
+        request_id: RequestId,
         domain: Eip712Domain,
         external_handles: Vec<Vec<u8>>,
         extra_data: Vec<u8>,
@@ -2186,8 +2189,9 @@ fn verify_public_decrypt_responses(
     kms_addrs: &[alloy_primitives::Address],
     num_expected_responses: usize,
 ) -> anyhow::Result<()> {
-    // Resolve the verification material into (domain, external handles, extra_data).
-    let (domain, external_handles, extra_data) = match verification {
+    // Resolve the verification material into (domain, external handles, extra_data), and keep
+    // the request ID of `External` material for its distinct-signer check.
+    let (domain, external_handles, extra_data, external_request_id) = match verification {
         PubDecVerificationMaterial::Request(decryption_request) => {
             // With the request at hand, the responses are also validated against it:
             // bound to it, and accepted by majority.
@@ -2207,13 +2211,19 @@ fn verify_public_decrypt_responses(
                 .iter()
                 .map(|ct| ct.external_handle.clone())
                 .collect();
-            (domain, external_handles, decryption_request.extra_data)
+            (
+                domain,
+                external_handles,
+                decryption_request.extra_data,
+                None,
+            )
         }
         PubDecVerificationMaterial::External {
+            request_id,
             domain,
             external_handles,
             extra_data,
-        } => (domain, external_handles, extra_data),
+        } => (domain, external_handles, extra_data, Some(request_id)),
     };
 
     // If an expected answer is provided, use it; otherwise consider the first answer.
@@ -2231,10 +2241,8 @@ fn verify_public_decrypt_responses(
             .clone(),
     };
 
-    // Check every response's signatures, signer and plaintext, and that enough distinct parties
-    // signed. For `External` material this is the only check, since without the request there is
-    // nothing to bind the responses to.
-    check_external_decryption_signature(
+    // Check every response's signatures, signer and plaintext.
+    let signers = check_external_decryption_signature(
         resp_response_vec,
         ptxt,
         &external_handles,
@@ -2242,8 +2250,18 @@ fn verify_public_decrypt_responses(
         kms_addrs,
         &extra_data,
         internal_client,
-        num_expected_responses,
     )?;
+
+    // On the `Request` path, `process_decryption_resp` already requires `num_expected_responses`
+    // responses with distinct verification keys. `External` material has no request to bind the
+    // responses to, so check here that enough distinct parties signed them.
+    if let Some(request_id) = external_request_id {
+        ensure_distinct_signers(
+            &format!("public decryption {request_id}"),
+            &signers,
+            num_expected_responses,
+        )?;
+    }
 
     Ok(())
 }
@@ -2685,11 +2703,13 @@ mod tests {
         };
         let from_1 = response_from(&sig_key_1);
         let from_2 = response_from(&sig_key_2);
+        let request_id = kms_lib::engine::base::derive_request_id("pdec_replayed_signer").unwrap();
 
         let verify = |responses: &[PublicDecryptionResponse]| {
             verify_public_decrypt_responses(
                 responses,
                 PubDecVerificationMaterial::External {
+                    request_id,
                     domain: domain.clone(),
                     external_handles: external_handles.clone(),
                     extra_data: extra_data.clone(),
