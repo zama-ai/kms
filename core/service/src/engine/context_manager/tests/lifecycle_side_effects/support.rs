@@ -46,7 +46,15 @@ impl TestContextManager {
         &self,
         context: &ContextInfo,
     ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
-        let request = Request::new(new_mpc_context_request(context.clone()));
+        self.new_mpc_context_with(new_mpc_context_request(context.clone()))
+            .await
+    }
+
+    pub(super) async fn new_mpc_context_with(
+        &self,
+        request: NewMpcContextRequest,
+    ) -> Result<Response<NewMpcContextResponse>, MetricedError> {
+        let request = Request::new(request);
         match self {
             Self::Centralized(manager) => manager.new_mpc_context(request).await,
             Self::Threshold(manager) => manager.new_mpc_context(request).await,

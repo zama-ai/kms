@@ -1,6 +1,7 @@
 use super::super::*;
 use super::support::*;
 use crate::engine::rng_source::test_rng_source;
+use crate::testing::helpers::client_knowing;
 use crate::vault::storage::test_support::{
     FaultPhase, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
 };
@@ -327,23 +328,35 @@ async fn failed_session_update_rolls_back_the_stored_context() {
     );
 }
 
-/// A repeated creation of the same context is confirmed again, and a different context under the
-/// same ID is refused. Neither changes the stored context or its surrounding state.
+/// A context creation is confirmed, and so is a repeated creation of the same context, while a
+/// different context under the same ID is refused. The repetitions do not change the stored
+/// context or its surrounding state.
 #[rstest::rstest]
 #[case::centralized(KMSType::Centralized)]
 #[case::threshold(KMSType::Threshold)]
 #[tokio::test]
-async fn duplicate_context_creation_keeps_the_stored_context(#[case] kms_type: KMSType) {
+async fn repeated_context_creation_is_confirmed_again(#[case] kms_type: KMSType) {
     let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
     let manager = fixture.manager(kms_type).await;
+    let request = new_mpc_context_request(fixture.target.clone());
+    let client = client_knowing(
+        &NodeSigningIdentity::ecdsa_only(fixture.signing_key.clone()),
+        &[SigningSchemeType::Ecdsa256k1],
+    );
+    for _round in 0..2 {
+        let response = manager
+            .new_mpc_context_with(request.clone())
+            .await
+            .unwrap()
+            .into_inner();
 
-    manager.new_mpc_context(&fixture.target).await.unwrap();
-    let response = manager
-        .new_mpc_context(&fixture.target)
-        .await
-        .unwrap()
-        .into_inner();
-    assert!(!response.signatures.is_empty());
+        assert_eq!(
+            client
+                .process_new_mpc_context_response(&response, &request)
+                .unwrap(),
+            1
+        );
+    }
     let different_target = ContextInfo {
         software_version: SoftwareVersion {
             patch: fixture.target.software_version.patch + 1,
@@ -381,6 +394,64 @@ async fn duplicate_context_creation_keeps_the_stored_context(#[case] kms_type: K
             StorageOutcome::Created,
         )],
     );
+}
+
+/// A request that is invalid, or asks for a scheme the node cannot sign with, is refused before
+/// anything is stored.
+#[rstest::rstest]
+#[case::centralized(KMSType::Centralized)]
+#[case::threshold(KMSType::Threshold)]
+#[tokio::test]
+async fn invalid_context_creation_requests_change_nothing(#[case] kms_type: KMSType) {
+    let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
+    let manager = fixture.manager(kms_type).await;
+    let valid = new_mpc_context_request(fixture.target.clone());
+    let invalid = [
+        NewMpcContextRequest {
+            domain: None,
+            ..valid.clone()
+        },
+        // The fixture's node only holds an ECDSA key.
+        NewMpcContextRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32],
+            ..valid.clone()
+        },
+    ];
+
+    for request in invalid {
+        let error = manager.new_mpc_context_with(request).await.unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    }
+
+    assert_eq!(fixture.state().await, fixture.before);
+    assert!(fixture.events().await.is_empty());
+    assert!(
+        !manager
+            .mpc_context_exists_and_consistent(fixture.target.context_id())
+            .await
+    );
+}
+
+/// A context that is stored but not loaded in the session maker is only partially created, so it
+/// is refused rather than confirmed again.
+#[tokio::test]
+async fn partially_created_context_is_not_confirmed() {
+    let fixture = ContextFixture::new(InitialTargetContextState::Absent).await;
+    let manager = fixture.manager(KMSType::Threshold).await;
+    {
+        let mut private = fixture.storage.private_storage.lock().await;
+        store_context_at_id(&mut *private, fixture.target.context_id(), &fixture.target)
+            .await
+            .unwrap();
+        private.clear_events();
+    }
+    let before = fixture.state().await;
+
+    let error = manager.new_mpc_context(&fixture.target).await.unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::AlreadyExists);
+    assert_eq!(fixture.state().await, before);
+    assert!(fixture.events().await.is_empty());
 }
 
 #[derive(Clone, Copy, Debug)]

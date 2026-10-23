@@ -91,3 +91,25 @@ pub fn new_mpc_context_request(
         signing_schemes: Vec::new(),
     }
 }
+
+/// A client that knows `identity` as party 1, holds its verification key for every scheme in
+/// `schemes`, and requests them all.
+pub fn client_knowing(
+    identity: &crate::cryptography::signatures::NodeSigningIdentity,
+    schemes: &[crate::cryptography::signatures::SigningSchemeType],
+) -> crate::client::client_wasm::Client {
+    let pk = identity.verf_key();
+    let mut client = crate::client::client_wasm::Client::new(
+        std::collections::HashMap::from([(1, pk.clone())]),
+        std::collections::HashMap::from([(
+            1,
+            crate::cryptography::signatures::VerfKeySet::from_identity(identity, schemes).unwrap(),
+        )]),
+        pk.address(),
+        None,
+        crate::consts::TEST_PARAM,
+        None,
+    );
+    client.set_signing_schemes(schemes).unwrap();
+    client
+}

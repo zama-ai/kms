@@ -100,3 +100,127 @@ impl Client {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cryptography::signatures::{
+        NodeSigningIdentity, SigningSchemeType, test_support::seeded_identity,
+    };
+    use crate::cryptography::signing::composite::sign_result_entries;
+    use crate::dummy_domain;
+    use crate::engine::context::SoftwareVersion;
+    use crate::testing::helpers::client_knowing;
+    use alloy_sol_types::SolStruct;
+    use kms_grpc::kms::v1::TypedSignature;
+    use rand::SeedableRng;
+    use threshold_types::rng::AesRng;
+
+    const SCHEMES: [SigningSchemeType; 2] =
+        [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+    /// A response confirming `payload`, signed by `identity` the way a node signs it.
+    fn response(
+        identity: &NodeSigningIdentity,
+        payload: &NewMpcContextSignedPayload,
+    ) -> NewMpcContextResponse {
+        let eip712_hash = ContextCreationConfirmation::new(
+            &payload.previous_context_id,
+            &payload.new_context_id,
+            payload.node_config_hash.into(),
+            payload.extra_data.clone(),
+        )
+        .eip712_signing_hash(&dummy_domain());
+        let signatures = sign_result_entries(
+            identity,
+            &SCHEMES,
+            &DSEP_NEW_CONTEXT,
+            &eip712_hash,
+            payload,
+        )
+        .unwrap();
+        NewMpcContextResponse {
+            payload: Some(payload.into()),
+            signatures: signatures.iter().map(TypedSignature::from).collect(),
+        }
+    }
+
+    #[test]
+    fn new_context_response_matches_the_request() {
+        let mut rng = AesRng::seed_from_u64(0xC0DE);
+        let identity = seeded_identity(&mut rng);
+        let client = client_knowing(&identity, &SCHEMES);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![],
+            context_id: ContextId::from_bytes([1u8; 32]),
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let requested = NewMpcContextSignedPayload {
+            previous_context_id: ContextId::from_bytes([2u8; 32]),
+            new_context_id: new_context.context_id,
+            node_config_hash: [3u8; 32],
+            extra_data: vec![7u8; 3],
+        };
+        let request = client
+            .new_mpc_context_request(
+                new_context,
+                &requested.previous_context_id,
+                requested.node_config_hash,
+                &dummy_domain(),
+                requested.extra_data.clone(),
+            )
+            .unwrap();
+
+        let valid = response(&identity, &requested);
+        assert_eq!(
+            client
+                .process_new_mpc_context_response(&valid, &request)
+                .unwrap(),
+            1
+        );
+
+        // A correctly signed confirmation of anything else is not a confirmation of the request.
+        let others = [
+            NewMpcContextSignedPayload {
+                new_context_id: ContextId::from_bytes([4u8; 32]),
+                ..requested.clone()
+            },
+            NewMpcContextSignedPayload {
+                previous_context_id: ContextId::from_bytes([5u8; 32]),
+                ..requested.clone()
+            },
+            NewMpcContextSignedPayload {
+                node_config_hash: [6u8; 32],
+                ..requested.clone()
+            },
+            NewMpcContextSignedPayload {
+                extra_data: vec![],
+                ..requested.clone()
+            },
+        ];
+        for other in &others {
+            assert!(
+                client
+                    .process_new_mpc_context_response(&response(&identity, other), &request)
+                    .is_err()
+            );
+        }
+
+        let without_payload = NewMpcContextResponse {
+            payload: None,
+            ..valid
+        };
+        assert!(
+            client
+                .process_new_mpc_context_response(&without_payload, &request)
+                .is_err()
+        );
+    }
+}
